@@ -12,13 +12,13 @@ refresh-quarterly-estate sync --apply
 estate.document.stored
                 |
         per-consumer receipt
-                |
-    verified PDF/HTML/text -> Markdown
-                |
-                v
-estate.document.parsed
-                |
-       optional Alpha Go projection
+        +-------+----------------------+
+        |                              |
+PDF/HTML/text -> Markdown       raw XBRL -> facts
+        |                              |
+estate.document.parsed    estate.document.facts_extracted
+        |
+optional Alpha Go projection
 ```
 
 An estate commit is not proof of downstream delivery. Delivery health belongs
@@ -53,31 +53,46 @@ python3 scripts/process_estate_outbox.py status \
   --database data/document_estate/catalog.db --json
 ```
 
-`status` exits nonzero when the consumer schema is absent or active delivery
-state has ready, expired, missing, or dead receipts. Future-scheduled retries
-and disabled historical receipts are reported without being mistaken for
-active failures. That is an operational finding, not permission to initialize
-the live schema.
+`status` exits nonzero when the consumer schema is absent, any enabled receipt
+is pending/running/retryable/dead, an enabled receipt is missing, or any outbox
+event remains unpublished. This includes future-scheduled retries; disabled
+historical receipts do not affect health. That is an operational finding, not
+permission to initialize the live schema.
 
 ## Write boundary and consumers
 
 `process-estate-outbox run` refuses to start without `--apply`. Starting it may
 migrate acquisition/consumer tables, register subscriptions, backfill matching
-historical events into receipts, write Markdown derivatives, emit parsed events,
-and update an explicitly selected Alpha Go index.
+historical events into receipts, write Markdown or XBRL-facts derivatives, emit
+their downstream events, and update an explicitly selected Alpha Go index.
 
-The default derivative subscription is generated from its parser name and
-version (`root.pdf-markdown.v1:<contract-hash>`):
+The default worker enables two independently versioned derivative
+subscriptions and one stable terminal verifier:
 
-- accepts `estate.document.stored` and routing/facet revision events;
-- reads current project pins and memberships from the estate rather than
+- `root.pdf-markdown.v1:<contract-hash>` parses PDF/HTML/text;
+- `root.xbrl-facts.v1:<contract-hash>` converts raw BMV XBRL JSON/JSON.GZ.
+- `root.derivative-publication-verifier.v1` verifies parsed/facts event output
+  paths, hashes, blobs, catalog ownership, and immutable lineage.
+
+Both subscriptions:
+
+- accept `estate.document.stored` and routing/facet revision events;
+- read current project pins and memberships from the estate rather than
   trusting an old event payload;
-- verifies the original bytes and catalogued SHA-256;
-- parses PDFs and derives searchable Markdown directly from HTML/news or text
-  originals;
-- stores immutable content-addressed Markdown and parser-version lineage;
-- emits `estate.document.parsed`;
-- explicitly skips raw XBRL, which still needs a facts consumer.
+- verify the original bytes and catalogued SHA-256;
+- store immutable content-addressed output and processor-version lineage.
+
+The document subscription emits `estate.document.parsed`. The XBRL
+subscription writes project `root`, role `xbrl_facts`, format `json` under
+`views/reports/<issuer>/xbrl/<TICKER>_<PERIOD>_facts.json` (using a
+document/hash-qualified name only on an immutable-path collision), then emits
+`estate.document.facts_extracted`. The terminal verifier subscribes to both
+derived event types, so they can publish successfully without an optional
+application consumer.
+
+Every managed root run atomically disables old PDF and XBRL consumer
+generations after registering the selected parser/processor versions. Historical
+receipts remain auditable but no stale generation can gate new events.
 
 Alpha Go projection is disabled by default. With `--enable-alpha-go`, the
 target-specific `alpha-go.search-projection.v1:<target-hash>` subscription
@@ -85,8 +100,11 @@ accepts parsed events currently pinned to Alpha Go. It projects up to 64
 receipts in one subprocess/model load and holds an Alpha-owned file lock around
 manifest/index replacement. `--alpha-index` is required. A new target path gets
 a new receipt generation automatically; pass and deliberately change
-`--alpha-target-id` when rebuilding a target in place. Soft and Earnings
-consumers are not implemented.
+`--alpha-target-id` when rebuilding a target in place. Enabling one managed
+target atomically disables older Alpha generations. A root-only run preserves
+the currently enabled Alpha target; use explicit `--disable-alpha-go` to retire
+all Alpha projection generations. Soft and Earnings do not use outbox delivery
+handlers.
 
 Do not use the following commands on the live estate until the rollout checklist
 below has been completed:
@@ -107,6 +125,11 @@ python3 scripts/process_estate_outbox.py run --apply \
   --alpha-index alpha-go/data/index/alpha_go_expanded_hashing.db \
   --alpha-target-id expanded-multilingual-v1 \
   --alpha-config alpha-go/configs/alpha_go.yaml --json
+
+# Explicitly retire every managed Alpha projection generation.
+python3 scripts/process_estate_outbox.py run --apply \
+  --estate-root data/document_estate --max-deliveries 0 \
+  --disable-alpha-go --json
 ```
 
 Claims are fenced, heartbeat-renewed, and reclaimable. One active batch per
@@ -165,7 +188,10 @@ prerequisite for testing the exportable stack.
 7. Project into a disposable Alpha Go index and verify PDF and HTML news, a
    late Alpha project pin/facet revision, a corrected version, a repeated
    event, and a 100-event bounded batch without duplicate chunks.
-8. Implement and certify the missing XBRL, Soft, and Earnings consumers.
+8. Certify the root XBRL facts derivative and the Soft/Earnings read-side facts
+   integrations with a corrected-version fixture. Treat the separately recorded
+   MD&A sidecar limitation as a known freshness boundary, not as numeric-facts
+   coverage.
 9. Deploy a single non-overlapping worker with retained logs and alerting for
    retryable/dead receipts. Only then review an applied acquisition schedule.
 

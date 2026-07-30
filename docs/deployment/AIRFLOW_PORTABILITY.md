@@ -37,6 +37,12 @@ refresh-quarterly-estate sync --apply --allow-coverage-gaps --json
         +--> shared BMV XBRL adapter
         +--> shared issuer-IR/BMV PDF adapters
         +--> mounted document estate
+        |
+        v
+process_estate_outbox.py run --apply
+        |
+        +--> root parsed/facts derivatives
+        +--> optional Alpha Go shared-estate projection
 ```
 
 Issuer differences remain declarative in `configs/issuers.yaml`. New adapter
@@ -68,7 +74,7 @@ consistent filesystem.
 | DAG | Default schedule | Initial state | Mutation |
 |---|---|---|---|
 | `quarterly_estate_audit` | Weekdays, 07:00 Mexico City | enabled | none |
-| `quarterly_estate_sync` | Every six hours at minute 17 | paused plus environment write gate | estate |
+| `quarterly_estate_sync` | Every six hours at minute 17 | paused plus environment write gate | estate plus downstream derivatives |
 
 Both DAGs have `catchup=False` and `max_active_runs=1`. The applied task uses
 the one-slot `estate_writer` pool, has no automatic retries, and times out
@@ -79,6 +85,28 @@ The sync task refuses to start unless
 allows the repository and DAG to be exported safely while the first canary is
 still pending on the other computer. The local disposable-estate canary and its
 idempotent repeat have passed.
+
+After a successful sync, a second task in the same one-slot `estate_writer`
+pool drains the durable estate outbox in bounded batches. It runs the root
+derivative consumers and fails visibly if a delivery is retryable/dead, returns
+invalid machine output, or remains nonterminal at its configured batch ceiling.
+After the final applied batch it runs the read-only status check, so delayed
+retries and unpublished events cannot produce a false-green task. The downstream
+task also requires `PDFS_AIRFLOW_SYNC_ENABLED=true`; it cannot become an
+independent ungated writer. `PDFS_AIRFLOW_POST_SYNC_ENABLED=false` is an
+emergency kill switch. The generated configuration leaves this post-sync step
+enabled so an intentionally authorized sync refreshes both originals and their
+root derivatives. `PDFS_AIRFLOW_PDF_PARSER_VERSION` and
+`PDFS_AIRFLOW_XBRL_PROCESSOR_VERSION` are durable contract generations: bump
+the corresponding value whenever parser behavior changes materially so the
+outbox creates a new, auditable delivery generation.
+
+Alpha Go projection remains independently disabled. When enabled, it uses the
+Alpha-owned Python 3.12 environment while its corpus and SQLite index live under
+the shared estate. This keeps Airflow native and avoids importing Alpha's
+application package into the root/Airflow interpreter. Turning the Airflow
+switch off explicitly disables prior Alpha subscription generations; it does
+not leave undrainable receipts behind.
 
 The initial sync includes `--allow-coverage-gaps`. Missing primary-PDF
 configuration remains visible in the JSON report, but it does not prevent
@@ -163,8 +191,33 @@ PDFS_AIRFLOW_SYNC_ENABLED="true"
 ```
 
 Reload the environment, start Airflow again, leave the sync DAG paused, and
-manually trigger it. Repeat the same canary and verify idempotency. Only then
-clear `PDFS_AIRFLOW_ONLY` and decide whether to unpause the schedule.
+manually trigger it. The run must finish both `sync_fleet` and
+`process_estate_outbox`. Repeat the same canary and verify that acquisition and
+delivery claim no new work. Only then clear `PDFS_AIRFLOW_ONLY` and decide
+whether to unpause the schedule.
+
+### 5. Opt in to Alpha Go projection
+
+Install Alpha's separately declared Python 3.12 environment:
+
+```bash
+python3.12 -m venv alpha-go/.venv312
+alpha-go/.venv312/bin/pip install -r alpha-go/requirements.txt
+```
+
+Confirm or edit the generated `PDFS_AIRFLOW_ALPHA_ROOT`,
+`PDFS_AIRFLOW_ALPHA_PYTHON`, `PDFS_AIRFLOW_ALPHA_CONFIG`,
+`PDFS_AIRFLOW_ALPHA_CORPUS`, and `PDFS_AIRFLOW_ALPHA_INDEX` paths. The default
+index path is `<estate>/indexes/alpha_go.db`, which is also the shared-estate
+dashboard target. Then set:
+
+```text
+PDFS_AIRFLOW_ALPHA_ENABLED="true"
+```
+
+Leave `PDFS_AIRFLOW_ALPHA_TARGET_ID` stable for the life of that target. Change
+it deliberately only when replaying all projection receipts for a replacement
+generation.
 
 ## Always-on native service
 

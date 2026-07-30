@@ -71,6 +71,30 @@ def render_environment(
         "PDFS_AIRFLOW_ONLY": "",
         "PDFS_AIRFLOW_AUDIT_SCHEDULE": "0 7 * * 1-5",
         "PDFS_AIRFLOW_SYNC_SCHEDULE": "17 */6 * * *",
+        # This worker is safe only as the downstream task of the gated sync
+        # DAG. Keep the kill switch explicit for operational recovery.
+        "PDFS_AIRFLOW_POST_SYNC_ENABLED": "true",
+        "PDFS_AIRFLOW_OUTBOX_BATCH_SIZE": "250",
+        "PDFS_AIRFLOW_OUTBOX_MAX_BATCHES": "20",
+        "PDFS_AIRFLOW_OUTBOX_BATCH_TIMEOUT_SECONDS": "3600",
+        "PDFS_AIRFLOW_PDF_PARSER_VERSION": "1",
+        "PDFS_AIRFLOW_XBRL_PROCESSOR_VERSION": "1",
+        # Alpha Go runs in its own declared Python 3.12 environment and is
+        # therefore a separate, explicit opt-in.
+        "PDFS_AIRFLOW_ALPHA_ENABLED": "false",
+        "PDFS_AIRFLOW_ALPHA_ROOT": str(PROJECT_ROOT / "alpha-go"),
+        "PDFS_AIRFLOW_ALPHA_CORPUS": str(
+            estate / "indexes" / "alpha_go" / "corpus"
+        ),
+        "PDFS_AIRFLOW_ALPHA_INDEX": str(estate / "indexes" / "alpha_go.db"),
+        "PDFS_AIRFLOW_ALPHA_CONFIG": str(
+            PROJECT_ROOT / "alpha-go" / "configs" / "alpha_go.yaml"
+        ),
+        "PDFS_AIRFLOW_ALPHA_TARGET_ID": "shared-estate-v1",
+        "PDFS_AIRFLOW_ALPHA_PYTHON": str(
+            PROJECT_ROOT / "alpha-go" / ".venv312" / "bin" / "python"
+        ),
+        "PDFS_AIRFLOW_ALPHA_TIMEOUT_SECONDS": "1800",
     }
     heading = (
         "# Generated locally by scripts/configure_airflow.py.\n"

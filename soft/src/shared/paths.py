@@ -30,7 +30,10 @@ OUTPUTS_DIR = Path(os.environ.get("PDFS_OUTPUTS_DIR", PROJECT_ROOT / "outputs"))
 
 
 # ── shared document estate (lazy) ──────────────────────────────────────────────
-# soft is self-contained: it reads its own data/reports/, never the root estate.
+# Soft remains importable standalone, where REPORTS_DIR defaults to its private
+# data/reports/. Deployments can point PDFS_REPORTS_DIR at the root estate's
+# views/reports directory without importing the parent package.
+#
 # This module nevertheless used to walk up the filesystem for the parent's
 # estate_bridge.py and call load_estate_bridge() AT IMPORT TIME, binding three
 # names — DOCUMENT_ESTATE_DIR, DOCUMENT_ESTATE_DB, SHARED_REPORTS_DIR — that a

@@ -67,9 +67,13 @@ def test_project_filter_separates_soft_and_root_facts(synthetic_catalog: Path) -
     with EstateReader(synthetic_catalog) as reader:
         soft_map = reader.xbrl_facts_map("walmex", project="soft")
         root_map = reader.xbrl_facts_map("walmex", project="root")
+        canonical_root_map = reader.xbrl_facts_map(
+            "walmex", project="root", role="xbrl_facts"
+        )
     assert set(soft_map) == {"2023-1T"} and set(root_map) == {"2023-1T"}
     assert "/soft/" in str(soft_map["2023-1T"])
     assert "/root/" in str(root_map["2023-1T"])
+    assert canonical_root_map == {}
 
 
 def test_membership_alias_resolves(synthetic_catalog: Path) -> None:

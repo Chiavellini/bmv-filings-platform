@@ -98,12 +98,18 @@ Opt-in SEC EDGAR fetches also require `SEC_EDGAR_USER_AGENT` to contain a
 descriptive application name and a monitored contact address. Keep the real
 contact in the untracked local environment, not in Git.
 
-Re-sync the vendored infra from the parent (records provenance, never edits the parent):
+Verify the vendored infra against the parent:
 
 ```bash
-.venv312/bin/python scripts/vendor_sync.py --check     # dry-run
-.venv312/bin/python scripts/vendor_sync.py --sync
+.venv312/bin/python scripts/vendor_sync.py --check
+.venv312/bin/python scripts/vendor_sync.py --sync      # refuses while any divergence exists
 ```
+
+`vendor_divergences.json` exact-hash approves the current app-compatibility
+forks. `--check` succeeds only while every parent/vendor byte pair still matches
+that reviewed snapshot; new, changed, missing, or stale approvals fail. This is
+provenance control, not proof that the fork is semantically equivalent to root.
+`--sync` still requires `--force` whenever any divergence would be overwritten.
 
 ## Tests
 

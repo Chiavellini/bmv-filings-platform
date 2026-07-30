@@ -1,9 +1,12 @@
 """Idempotent document derivatives for the shared estate.
 
-The first supported derivative is an original PDF parsed to UTF-8 Markdown.
-XBRL derivation is intentionally not implemented here: regulatory artifacts
-are skipped with an explicit result so they can be routed to a purpose-built
-facts consumer later.
+Supported root-owned derivatives are:
+
+* original PDF/HTML/text to UTF-8 Markdown; and
+* raw BMV XBRL JSON (plain or gzip-compressed) to canonical numeric facts.
+
+Both consumers retain immutable input/output lineage in the estate catalog,
+publish content-addressed blobs, and expose portable compatibility paths.
 """
 
 from __future__ import annotations
@@ -33,9 +36,11 @@ _SAFE_COMPONENT = re.compile(r"[^A-Za-z0-9._-]+")
 _STORED_EVENT = "estate.document.stored"
 _ROUTING_CHANGED_EVENT = "estate.document.routing_changed"
 _PARSED_EVENT = "estate.document.parsed"
+_FACTS_EXTRACTED_EVENT = "estate.document.facts_extracted"
 _SUPPORTED_ORIGINAL_FORMATS = frozenset(
     {"pdf", "html", "htm", "md", "markdown", "txt", "text"}
 )
+_SUPPORTED_XBRL_FORMATS = frozenset({"json", "gz"})
 
 
 class DerivativeInputError(RuntimeError):
@@ -154,6 +159,35 @@ def _html_to_markdown(path: Path) -> str:
     if not body.strip():
         raise ValueError("HTML original contains no searchable text")
     return body
+
+
+def _default_xbrl_facts_extractor(path: Path) -> bytes:
+    """Run the canonical root XBRL splitter and return its facts artifact.
+
+    ``extract_artifacts`` also produces an MD&A sidecar.  That sidecar is kept
+    in a temporary directory here because this consumer has one deliberately
+    narrow contract: one raw XBRL input yields one catalogued ``xbrl_facts``
+    output.  A future narrative consumer can own MD&A independently without
+    weakening this derivative's lineage or idempotency.
+    """
+
+    from src.download.bmv_xbrl import extract_artifacts
+
+    with tempfile.TemporaryDirectory(prefix="root-xbrl-facts-") as temporary:
+        result = extract_artifacts(path, Path(temporary))
+        facts_path = Path(result["facts"])
+        content = facts_path.read_bytes()
+    try:
+        payload = json.loads(content)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise DerivativeInputError(
+            "root XBRL extractor produced invalid UTF-8 JSON"
+        ) from exc
+    if not isinstance(payload, dict) or not isinstance(payload.get("facts"), dict):
+        raise DerivativeInputError(
+            "root XBRL extractor output must contain a facts object"
+        )
+    return content
 
 
 def _publish_bytes(target: Path, content: bytes) -> None:
@@ -744,3 +778,455 @@ class PdfMarkdownDerivativeConsumer:
             output_artifact_id=row["output_artifact_id"],
             output_sha256=row["output_sha256"],
         )
+
+
+class XbrlFactsDerivativeConsumer(PdfMarkdownDerivativeConsumer):
+    """Create canonical numeric facts from one acquired raw BMV XBRL filing.
+
+    The class reuses the PDF consumer's catalog schema and verified immutable
+    storage helpers, while owning an independent consumer generation and event
+    contract.  ``processor_version`` must be bumped whenever the root
+    ``bmv_xbrl.extract_artifacts`` fact-flattening behavior changes materially.
+    """
+
+    event_types = (_STORED_EVENT, _ROUTING_CHANGED_EVENT)
+
+    def __init__(
+        self,
+        database: str | Path,
+        estate_root: str | Path,
+        *,
+        extractor: Callable[[Path], bytes] | None = None,
+        processor_name: str = "root.bmv_xbrl.extract_artifacts",
+        processor_version: str = "1",
+    ):
+        self.database = Path(database)
+        self.estate_root = Path(estate_root).resolve()
+        self.estate_root.mkdir(parents=True, exist_ok=True)
+        self.extractor = extractor or _default_xbrl_facts_extractor
+        self.processor_name = processor_name.strip()
+        self.processor_version = processor_version.strip()
+        if not self.processor_name or not self.processor_version:
+            raise ValueError("processor_name and processor_version are required")
+        contract_digest = hashlib.sha256(
+            f"{self.processor_name}\0{self.processor_version}".encode("utf-8")
+        ).hexdigest()[:16]
+        self.consumer_id = f"root.xbrl-facts.v1:{contract_digest}"
+        self.estate = DocumentEstate(self.database)
+        self.estate.conn.execute("PRAGMA busy_timeout=5000")
+        self._migrate()
+
+    def __enter__(self) -> "XbrlFactsDerivativeConsumer":
+        return self
+
+    def process(
+        self,
+        document_id: str,
+        *,
+        emit_existing_route: bool = False,
+    ) -> DerivativeResult:
+        """Extract and durably register one raw XBRL filing's numeric facts."""
+
+        with EstateReader(self.database) as reader:
+            document = reader.document(document_id)
+            if document is None:
+                raise KeyError(f"estate document not found: {document_id}")
+            sources = [
+                ref
+                for ref in reader.artifacts_for_document(
+                    document_id, role="raw_xbrl"
+                )
+                if ref.format.lower() in _SUPPORTED_XBRL_FORMATS
+            ]
+            sources.sort(
+                key=lambda ref: (
+                    0 if ref.format.lower() == "gz" else 1,
+                    str(ref.path),
+                )
+            )
+            if not sources:
+                return DerivativeResult(
+                    "skipped", document_id, reason="no_raw_xbrl"
+                )
+            if not document.period:
+                return DerivativeResult(
+                    "skipped", document_id, reason="missing_period"
+                )
+            source = sources[0]
+            selected_projects = sorted(
+                {
+                    str(project).strip()
+                    for project in reader.projects_for_document(document_id)
+                    if str(project).strip()
+                }
+            )
+
+        ticker = self._ticker(document.company, document.metadata)
+        input_artifact_id = self._artifact_id(source)
+        self._verify_source(source)
+        derivation_id = hashlib.sha256(
+            (
+                f"xbrl_facts\0{input_artifact_id}\0{source.sha256}\0"
+                f"{self.processor_name}\0{self.processor_version}"
+            ).encode("utf-8")
+        ).hexdigest()
+        existing = self._existing_result(derivation_id)
+        if existing is not None:
+            if emit_existing_route:
+                return self._route_existing_facts(
+                    document_id,
+                    derivation_id,
+                    selected_projects,
+                    existing,
+                    ticker=ticker,
+                )
+            return existing
+
+        content = self._facts_content(source.path)
+        output_sha256 = hashlib.sha256(content).hexdigest()
+        object_key = f"blobs/{output_sha256[:2]}/{output_sha256}"
+        blob = self.estate_root / object_key
+        _publish_bytes(blob, content)
+        if file_sha256(blob) != output_sha256:
+            raise DerivativeInputError(
+                f"XBRL facts content object failed verification: {object_key}"
+            )
+        output_path = self._facts_output_path(
+            document.company,
+            ticker,
+            document.period,
+            document_id,
+            output_sha256,
+        )
+        _link_or_copy(blob, output_path)
+        if file_sha256(output_path) != output_sha256:
+            raise DerivativeInputError(
+                f"XBRL facts compatibility path failed verification: {output_path}"
+            )
+
+        conn = self.estate.conn
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            concurrent = self._existing_result(derivation_id)
+            if concurrent is not None:
+                conn.rollback()
+                if emit_existing_route:
+                    return self._route_existing_facts(
+                        document_id,
+                        derivation_id,
+                        selected_projects,
+                        concurrent,
+                        ticker=ticker,
+                    )
+                return concurrent
+
+            now = _now()
+            stat = blob.stat()
+            conn.execute(
+                """INSERT INTO content_objects(
+                       sha256,blob_path,size_bytes,st_dev,st_ino,verified_at,object_key
+                   ) VALUES(?,?,?,?,?,?,?)
+                   ON CONFLICT(sha256) DO NOTHING""",
+                (
+                    output_sha256,
+                    str(blob),
+                    len(content),
+                    stat.st_dev,
+                    stat.st_ino,
+                    now,
+                    object_key,
+                ),
+            )
+            stored_object = conn.execute(
+                """SELECT blob_path,object_key FROM content_objects
+                   WHERE sha256=?""",
+                (output_sha256,),
+            ).fetchone()
+            if stored_object["object_key"] is None:
+                conn.execute(
+                    "UPDATE content_objects SET object_key=? WHERE sha256=?",
+                    (object_key, output_sha256),
+                )
+            elif stored_object["object_key"] != object_key:
+                raise RuntimeError(
+                    f"content object {output_sha256} has conflicting object key"
+                )
+
+            artifact_sha = self.estate.add_artifact(
+                document_id,
+                output_path,
+                project="root",
+                role="xbrl_facts",
+                portable_root=self.estate_root,
+            )
+            if artifact_sha != output_sha256:
+                raise RuntimeError("XBRL facts artifact differs from content object")
+            output_artifact_id = self._artifact_id_for_path(output_path)
+            if (
+                self.estate.artifact_document(
+                    output_path,
+                    portable_root=self.estate_root,
+                )
+                != document_id
+            ):
+                raise RuntimeError(
+                    "XBRL facts path is owned by another estate document: "
+                    f"{output_path}"
+                )
+
+            conn.execute(
+                """INSERT INTO document_derivations(
+                       derivation_id,document_id,derivative_kind,input_artifact_id,
+                       input_sha256,processor_name,processor_version,
+                       output_artifact_id,output_sha256,output_object_key,created_at
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    derivation_id,
+                    document_id,
+                    "xbrl_facts",
+                    input_artifact_id,
+                    source.sha256,
+                    self.processor_name,
+                    self.processor_version,
+                    output_artifact_id,
+                    output_sha256,
+                    object_key,
+                    now,
+                ),
+            )
+            self._insert_facts_event_locked(
+                document_id,
+                derivation_id,
+                selected_projects,
+                ticker=ticker,
+                now=now,
+            )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+
+        return DerivativeResult(
+            status="succeeded",
+            document_id=document_id,
+            derivation_id=derivation_id,
+            output_artifact_id=output_artifact_id,
+            output_sha256=output_sha256,
+        )
+
+    def _facts_content(self, path: Path) -> bytes:
+        content = self.extractor(path)
+        if not isinstance(content, bytes) or not content:
+            raise DerivativeInputError(
+                "XBRL facts extractor must return non-empty UTF-8 JSON bytes"
+            )
+        try:
+            payload = json.loads(content)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise DerivativeInputError(
+                "XBRL facts extractor returned invalid UTF-8 JSON"
+            ) from exc
+        if not isinstance(payload, dict) or not isinstance(payload.get("facts"), dict):
+            raise DerivativeInputError(
+                "XBRL facts extractor output must contain a facts object"
+            )
+        return content
+
+    @staticmethod
+    def _ticker(company: str, metadata: Mapping[str, Any] | None) -> str:
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        candidate = (
+            metadata.get("ticker")
+            or metadata.get("archive_ticker")
+            or company
+        )
+        return _safe_component(str(candidate).upper(), "UNKNOWN")
+
+    def _facts_output_path(
+        self,
+        company: str,
+        ticker: str,
+        period: str,
+        document_id: str,
+        output_sha256: str,
+    ) -> Path:
+        company_part = _safe_component(company, "unknown")
+        ticker_part = _safe_component(ticker, "UNKNOWN")
+        period_part = _safe_component(period, "period")
+        document_key = hashlib.sha256(document_id.encode("utf-8")).hexdigest()[:12]
+        directory = self.estate_root / "views" / "reports" / company_part / "xbrl"
+        candidates = (
+            directory / f"{ticker_part}_{period_part}_facts.json",
+            directory
+            / f"{ticker_part}_{document_key}_{period_part}_facts.json",
+            directory
+            / (
+                f"{ticker_part}_{document_key}_{output_sha256[:12]}_"
+                f"{period_part}_facts.json"
+            ),
+        )
+        for candidate in candidates:
+            if not candidate.exists():
+                return candidate
+            owner = self.estate.artifact_document(
+                candidate,
+                portable_root=self.estate_root,
+            )
+            if (
+                file_sha256(candidate) == output_sha256
+                and owner in {None, document_id}
+            ):
+                return candidate
+        raise RuntimeError(
+            f"could not allocate immutable XBRL facts path for {company} {period}"
+        )
+
+    def _route_existing_facts(
+        self,
+        document_id: str,
+        derivation_id: str,
+        projects: Sequence[str],
+        existing: DerivativeResult,
+        *,
+        ticker: str,
+    ) -> DerivativeResult:
+        conn = self.estate.conn
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            current_projects = [
+                row["project"]
+                for row in conn.execute(
+                    """SELECT project FROM document_projects
+                       WHERE document_id=? ORDER BY project""",
+                    (document_id,),
+                )
+            ]
+            inserted = self._insert_facts_event_locked(
+                document_id,
+                derivation_id,
+                current_projects or projects,
+                ticker=ticker,
+                now=_now(),
+            )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        if not inserted:
+            return existing
+        return DerivativeResult(
+            status="succeeded",
+            document_id=document_id,
+            reason="routing_reemitted",
+            derivation_id=derivation_id,
+            output_artifact_id=existing.output_artifact_id,
+            output_sha256=existing.output_sha256,
+        )
+
+    def _insert_facts_event_locked(
+        self,
+        document_id: str,
+        derivation_id: str,
+        projects: Sequence[str],
+        *,
+        ticker: str,
+        now: str,
+    ) -> bool:
+        row = self.estate.conn.execute(
+            """SELECT doc.company,doc.doc_type,doc.period,
+                      d.processor_name,d.processor_version,
+                      d.input_artifact_id,d.input_sha256,
+                      d.output_artifact_id,d.output_sha256,d.output_object_key,
+                      ia.role AS input_role,ia.format AS input_format,
+                      ia.path AS input_path,
+                      oa.role AS output_role,oa.format AS output_format,
+                      oa.path AS output_path,
+                      ico.object_key AS input_object_key
+               FROM document_derivations d
+               JOIN documents doc ON doc.document_id=d.document_id
+               JOIN artifacts ia ON ia.artifact_id=d.input_artifact_id
+               JOIN artifacts oa ON oa.artifact_id=d.output_artifact_id
+               LEFT JOIN content_objects ico ON ico.sha256=d.input_sha256
+               WHERE d.derivation_id=? AND d.document_id=?""",
+            (derivation_id, document_id),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError(
+                f"derivation disappeared before routing: {derivation_id}"
+            )
+        selected_projects = sorted(
+            {str(project).strip() for project in projects if str(project).strip()}
+        )
+        memberships = [
+            {
+                "company": membership["company"],
+                "industry": membership["industry"],
+            }
+            for membership in self.estate.conn.execute(
+                """SELECT company,industry FROM memberships
+                   WHERE document_id=? ORDER BY company""",
+                (document_id,),
+            )
+        ]
+        routing_fingerprint = hashlib.sha256(
+            json.dumps(
+                {
+                    "projects": selected_projects,
+                    "memberships": memberships,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
+        payload = {
+            "schema_version": 1,
+            "document_id": document_id,
+            "company": row["company"],
+            "ticker": ticker,
+            "document_type": row["doc_type"],
+            "period": row["period"],
+            "projects": selected_projects,
+            "memberships": memberships,
+            "routing_fingerprint": routing_fingerprint,
+            "derivation_id": derivation_id,
+            "derivative_kind": "xbrl_facts",
+            "processor": {
+                "name": row["processor_name"],
+                "version": row["processor_version"],
+            },
+            "input": {
+                "artifact_id": row["input_artifact_id"],
+                "role": row["input_role"],
+                "format": row["input_format"],
+                "path": row["input_path"],
+                "content_sha256": row["input_sha256"],
+                "object_key": row["input_object_key"],
+            },
+            "output": {
+                "artifact_id": row["output_artifact_id"],
+                "role": row["output_role"],
+                "format": row["output_format"],
+                "path": row["output_path"],
+                "content_sha256": row["output_sha256"],
+                "object_key": row["output_object_key"],
+            },
+        }
+        cursor = self.estate.conn.execute(
+            """INSERT OR IGNORE INTO outbox(
+                   event_id,event_type,aggregate_id,dedupe_key,payload_json,
+                   created_at,available_at
+               ) VALUES(?,?,?,?,?,?,?)""",
+            (
+                uuid.uuid4().hex,
+                _FACTS_EXTRACTED_EVENT,
+                document_id,
+                (
+                    f"{_FACTS_EXTRACTED_EVENT}:{derivation_id}:"
+                    f"{routing_fingerprint}"
+                ),
+                json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                now,
+                now,
+            ),
+        )
+        return cursor.rowcount == 1

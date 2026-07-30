@@ -61,10 +61,17 @@ The unit suite runs without it and cleanly skips corpus-only golden checks. The
 WALMEX build itself requires cached filings under `data/reports/walmex/` (or the
 equivalent directory beneath `PDFS_REPORTS_DIR`) and then needs no network.
 
+`vendor_divergences.json` exact-hash approves Soft's current
+app-compatibility forks. The vendor check fails on any unapproved divergence,
+parent/vendor hash change, missing managed file, or stale approval. A passing
+check proves only that the reviewed byte snapshot is unchanged—not semantic
+parity with root. Destructive `--sync` continues to refuse all divergences
+unless an operator explicitly supplies `--force`.
+
 ## Layout
 
-- `src/{download,parse,extract,shared,model,excel,eval}/` — **vendored** (do not edit; re-sync via
-  `scripts/vendor_sync.py --sync`).
+- `src/{download,parse,extract,shared,model,excel,eval}/` — **vendored**; intentional forks are
+  hash-pinned in `vendor_divergences.json`, and re-sync requires deliberate `--force`.
 - `src/bloomberg/` — template emit + ingest (the `[bbg]` side).
 - `src/coverage/` — spec parsing, filings fundamentals, valuation math, peer cross-section.
 - `src/sheets/` — one module per workbook sheet.

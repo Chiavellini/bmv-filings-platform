@@ -1,0 +1,14 @@
+company:
+  name: Quálitas
+  ticker: Q
+  exchange: BMV
+  language: es
+  currency: MXN
+  unit: millions
+
+ir_website:
+  url: "https://qinversionistas.qualitas.com.mx/ES/reportes-trimestrales"
+  xbrl_ticker: Q
+  max_reports: 120
+  floor_year: 2016
+  delay_ms: 250

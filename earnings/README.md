@@ -30,11 +30,11 @@ Two modes, both rooted in `earnlib/bootstrap.py`:
   under `earnings/`. The large `data/` inputs are deliberately not stored in
   Git. This mode reproduces the certified v2 record.
 - **`EARNINGS_V3=1` (current baseline)** — shared-infra mode: XBRL facts come
-  from the monorepo document estate view
-  (`data/document_estate/views/reports/<slug>/xbrl/`, read-only, filtered to
-  soft-project symlink targets and pinned to `configs/facts_vintage.csv`), and
-  the `src` package resolves to the ROOT extraction engine instead of the
-  vendored alpha-go copy. Certified equivalent by `scripts/parity_check.py`
+  from root-owned `xbrl_facts` artifacts in the portable estate catalog
+  (`views/reports/<slug>/xbrl/`, read-only, verified by catalog role and content
+  hash, then pinned to `configs/facts_vintage.csv`), and the `src` package
+  resolves to the ROOT extraction engine instead of the vendored alpha-go copy.
+  Certified equivalent by `scripts/parity_check.py`
   (the separately transferred research bundle contains the dated parity
   record). v3 additionally applies the W2 timing correction and writes
   `*_v3` artifacts / `results_v3/` into that external research bundle so v2
@@ -43,7 +43,8 @@ Two modes, both rooted in `earnlib/bootstrap.py`:
 | input | location inside earnings/ |
 |---|---|
 | filing timestamps (minute-level) | external bundle materialized at `vendor/alpha-go/data/bmv/archive_index.html` for the frozen v2 path |
-| quarterly metrics | `data/soft/data/reports/<slug>/xbrl/*_facts.json` via vendored `extract_from_xbrl` |
+| quarterly metrics (v3) | shared estate `catalog.db` + root-owned `views/reports/<slug>/xbrl/*_facts.json`, read with root `extract_from_xbrl` |
+| quarterly metrics (legacy/v2) | external bundle at `data/soft/data/reports/<slug>/xbrl/*_facts.json`, read with the frozen vendored extractor |
 | MD&A narrative (sentiment refinement) | `data/soft/data/reports/<slug>/xbrl/*_mdna.html` |
 | historical pdf-md extraction | `data/legacy_reports/`, `data/legacy_outputs/`, `data/legacy_configs/` |
 | daily OHLCV (6y, 200 symbols) | frozen snapshot in `data/snapshots/` (source cache mirrored at `data/soft/.cache/market_data/`) |

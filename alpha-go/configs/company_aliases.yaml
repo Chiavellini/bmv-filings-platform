@@ -1,0 +1,5 @@
+# Canonical Soft-universe slug -> equivalent slugs used by another subproject.
+# These are issuer identities, not query-term synonyms.
+canonical:
+  gfnorte: [banorte]
+  gmexico_transportes: [gmxt]

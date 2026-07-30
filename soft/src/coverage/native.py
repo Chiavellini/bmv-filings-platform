@@ -9,9 +9,10 @@ from pathlib import Path
 import yaml
 
 from src.bloomberg.schema import BloombergPack, history_years
-from src.coverage.fundamentals import load_fundamentals
+from src.coverage.fundamentals import load_fundamentals, _selected_canonical_fact_files
 from src.download import market_data
 from src.download import macro as macro_mod
+from src.shared.paths import REPORTS_DIR
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -65,16 +66,14 @@ def _native_dividend_yield(reports_dir, px_last, shares_out):
     TOTAL peso amount for others (Banco del Bajío 6.6bn); we compute both interpretations and keep
     whichever lands in a plausible 0-15% band. Returns a percentage (e.g. 6.8), or None if neither
     is plausible / the tag is absent (never a guess)."""
-    import glob
     import json
     if px_last is None or px_last <= 0:
         return None
-    xdir = Path(reports_dir) / "xbrl"
-    files = [f for f in sorted(glob.glob(str(xdir / "*_facts.json"))) if "_facts_facts" not in f]
+    files = _selected_canonical_fact_files(Path(reports_dir))
     if not files:
         return None
     try:
-        facts = json.loads(Path(files[-1]).read_text(encoding="utf-8")).get("facts", {})
+        facts = json.loads(files[-1].read_text(encoding="utf-8")).get("facts", {})
     except Exception:
         return None
     entries = facts.get("ifrs_mx-cor_20141205_CashDividendsDeclaredPerShare") or []
@@ -148,10 +147,8 @@ def _native_fcf(reports_dir, rev_millions, currency="MXN"):
     """Latest full-fiscal-year free cash flow (millions) = FY cfo − |FY capex| from raw XBRL. Fills the
     FCF the quarter-summing cascade misses (BMV cash-flow is YTD-only). Returns None if either leg is
     untagged or the magnitude is implausible vs revenue (blank-not-wrong). USD filers restated to MXN."""
-    import glob
     import json
-    xd = Path(reports_dir) / "xbrl"
-    files = [f for f in sorted(glob.glob(str(xd / "*_facts.json"))) if "_facts_facts" not in f]
+    files = _selected_canonical_fact_files(Path(reports_dir))
     if not files:
         return None
     cfo = _latest_fy_flow(files, _CFO_CONCEPT)
@@ -161,7 +158,7 @@ def _native_fcf(reports_dir, rev_millions, currency="MXN"):
     fcf = (cfo - abs(capex)) / 1e6
     try:
         from src.extract.xbrl_facts import _USDMXN, detect_reporting_currency
-        facts = json.loads(Path(files[-1]).read_text(encoding="utf-8")).get("facts", {})
+        facts = json.loads(files[-1].read_text(encoding="utf-8")).get("facts", {})
         cur = detect_reporting_currency(facts) or str(currency).upper()
         if str(cur).upper() == "USD":
             fcf *= _USDMXN
@@ -180,14 +177,12 @@ def _native_net_debt(reports_dir, rev_millions, currency="MXN"):
     The raw XBRL facts are as-filed, so a USD reporter's debt is in USD; restate to MXN (×USDMXN)
     so the EV bridge stays currency-consistent with the MXN market cap, and the revenue-scaled
     guard (``rev_millions`` is MXN) compares like with like."""
-    import glob
     import json
-    xd = Path(reports_dir) / "xbrl"
-    files = [f for f in sorted(glob.glob(str(xd / "*_facts.json"))) if "_facts_facts" not in f]
+    files = _selected_canonical_fact_files(Path(reports_dir))
     if not files:
         return None
     try:
-        facts = json.loads(Path(files[-1]).read_text(encoding="utf-8")).get("facts", {})
+        facts = json.loads(files[-1].read_text(encoding="utf-8")).get("facts", {})
     except Exception:
         return None
     debt = [(_latest_fact(facts, c) or 0.0) for c in _DEBT_CONCEPTS if facts.get(c)]
@@ -241,14 +236,12 @@ def _native_shares_out(reports_dir, shares_per_unit: float | None = None):
     divided by it so ``shares_out`` is in traded-unit terms, consistent with the quoted price. Only
     supply it for names whose divided count is corroborated by an independent reference (golden range
     or Yahoo); leave unset otherwise and let the plausibility gate blank the multiples honestly."""
-    import glob
     import json
-    xd = Path(reports_dir) / "xbrl"
-    files = [f for f in sorted(glob.glob(str(xd / "*_facts.json"))) if "_facts_facts" not in f]
+    files = _selected_canonical_fact_files(Path(reports_dir))
     if not files:
         return None
     try:
-        facts = json.loads(Path(files[-1]).read_text(encoding="utf-8")).get("facts", {})
+        facts = json.loads(files[-1].read_text(encoding="utf-8")).get("facts", {})
     except Exception:
         return None
     v = _latest_fact(facts, _SHARES_CONCEPT)
@@ -373,7 +366,7 @@ def build_native_pack(spec, fund, *, verify_ssl: bool = True, with_prices: bool 
     _scfg = (_company_cfg(spec.slug).get("company") or {})
     _spu = _scfg.get("shares_per_unit")
     _ni_eps_sh = pack.subject.get("shares_out")   # independent ni/eps corroborator (may be None)
-    _sh = _native_shares_out(ROOT / "data" / "reports" / spec.slug, _spu)  # direct XBRL count
+    _sh = _native_shares_out(REPORTS_DIR / spec.slug, _spu)  # direct XBRL count
     _chart_dvd_ttm = None  # trailing-12m cash dividend from Yahoo's chart events (reliable endpoint)
     if with_prices and (clave or ticker):
         # A PDF-sourced name (e.g. Grupo Bafar) has no xbrl_ticker → clave is None, but its trading
@@ -409,7 +402,7 @@ def build_native_pack(spec, fund, *, verify_ssl: bool = True, with_prices: bool 
         peer_row: dict = {}
         if pclave:
             try:
-                pfund = load_fundamentals(p.slug, ROOT / "data" / "reports" / p.slug,
+                pfund = load_fundamentals(p.slug, REPORTS_DIR / p.slug,
                                           ROOT / "configs" / f"{p.slug}.yaml",
                                           _fund_list(eng, ptemplate), offline=offline,
                                           facts_only=True,   # peers need XBRL facts only, not MD&A
@@ -418,7 +411,7 @@ def build_native_pack(spec, fund, *, verify_ssl: bool = True, with_prices: bool 
                 _pcompany = (pcfg.get("company") or {})
                 _pspu = _pcompany.get("shares_per_unit")
                 _pni_eps = peer_row.get("shares_out")   # ni/eps corroborator
-                _psh = _native_shares_out(ROOT / "data" / "reports" / p.slug, _pspu)
+                _psh = _native_shares_out(REPORTS_DIR / p.slug, _pspu)
             except Exception:
                 _pcompany, _pni_eps, _psh = {}, None, None
         if with_prices and (pclave or pticker):
@@ -441,7 +434,7 @@ def build_native_pack(spec, fund, *, verify_ssl: bool = True, with_prices: bool 
     if getattr(spec, "template", "") == "financials":
         try:
             from src.extract.bank_ratios import extract_bank_ratios, latest_annual_json
-            j = latest_annual_json(ROOT / "data" / "reports" / spec.slug)
+            j = latest_annual_json(REPORTS_DIR / spec.slug)
             if j is not None:
                 for k, v in extract_bank_ratios(j).items():
                     pack.subject.setdefault(k, v)  # filing value; block reads pack.subject.get(k)
@@ -462,7 +455,7 @@ def build_native_pack(spec, fund, *, verify_ssl: bool = True, with_prices: bool 
     # --- dividend yield: XBRL dividends-per-share ÷ live price (most precise), then the Yahoo CHART
     # trailing-dividend (reliable — same endpoint as prices, no crumb-gated quoteSummary call) -------
     try:
-        dy = _native_dividend_yield(ROOT / "data" / "reports" / spec.slug,
+        dy = _native_dividend_yield(REPORTS_DIR / spec.slug,
                                     pack.subject.get("px_last"), pack.subject.get("shares_out"))
         if dy is not None:
             pack.subject.setdefault("dvd_yield", dy)
@@ -492,7 +485,7 @@ def build_native_pack(spec, fund, *, verify_ssl: bool = True, with_prices: bool 
         try:
             _cur = str(((_company_cfg(spec.slug).get("company") or {}).get("currency"))
                        or "MXN").upper()
-            nd = _native_net_debt(ROOT / "data" / "reports" / spec.slug, fund.get("revenue"),
+            nd = _native_net_debt(REPORTS_DIR / spec.slug, fund.get("revenue"),
                                   currency=_cur)
             if nd is not None:
                 pack.subject.setdefault("net_debt", nd)
@@ -506,7 +499,7 @@ def build_native_pack(spec, fund, *, verify_ssl: bool = True, with_prices: bool 
         if getattr(spec, "template", "") == "industrial":
             try:
                 _curf = str(((_company_cfg(spec.slug).get("company") or {}).get("currency")) or "MXN").upper()
-                fcf = _native_fcf(ROOT / "data" / "reports" / spec.slug, fund.get("revenue"), currency=_curf)
+                fcf = _native_fcf(REPORTS_DIR / spec.slug, fund.get("revenue"), currency=_curf)
                 if fcf is not None:
                     pack.subject.setdefault("fcf_ltm", fcf)
             except Exception:
@@ -548,7 +541,7 @@ def build_native_pack(spec, fund, *, verify_ssl: bool = True, with_prices: bool 
     if getattr(spec, "template", "") == "reit":
         try:
             from src.extract.fibra_kpis import extract_fibra_kpis, latest_mdna
-            m = latest_mdna(ROOT / "data" / "reports" / spec.slug)
+            m = latest_mdna(REPORTS_DIR / spec.slug)
             if m is not None:
                 for k, v in extract_fibra_kpis(m).items():
                     pack.subject.setdefault(k, v)

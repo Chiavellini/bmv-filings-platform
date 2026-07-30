@@ -1,0 +1,15 @@
+company:
+  name: Regional
+  ticker: R
+  exchange: BMV
+  language: es
+  currency: MXN
+  unit: millions
+
+ir_website:
+  url: "https://www.regional.mx/"
+  xbrl_ticker: R
+  max_reports: 120
+  floor_year: 2016
+  delay_ms: 250
+  use_playwright: true

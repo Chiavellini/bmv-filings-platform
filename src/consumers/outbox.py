@@ -246,6 +246,7 @@ class OutboxDispatcher:
         retry_max_seconds: int = 3600,
         heartbeat_seconds: float | None = None,
         clock: Callable[[], datetime] = _utc_now,
+        managed_generations: Mapping[str, Sequence[str]] | None = None,
     ):
         validated: list[tuple[Consumer, str, tuple[str, ...]]] = []
         seen_consumer_ids: set[str] = set()
@@ -284,6 +285,7 @@ class OutboxDispatcher:
         self.clock = clock
         self.consumers: dict[str, Consumer] = {}
         self._maintenance_failures: list[DeliveryFailure] = []
+        managed = self._normalize_managed_generations(managed_generations)
         self._migrate()
         now = _iso(self.clock())
         self._begin()
@@ -295,11 +297,21 @@ class OutboxDispatcher:
                     max_attempts=self.default_max_attempts,
                     now=now,
                 )
+            disabled: list[str] = []
+            for prefix, keep_consumer_ids in managed:
+                disabled.extend(
+                    self._disable_prefix_locked(
+                        prefix,
+                        keep_consumer_ids=keep_consumer_ids,
+                        now=now,
+                    )
+                )
             self.conn.commit()
         except BaseException:
             self.conn.rollback()
             self.close()
             raise
+        self.disabled_consumer_ids = tuple(sorted(set(disabled)))
         self.consumers = {
             consumer_id: consumer
             for consumer, consumer_id, _event_types in validated
@@ -472,6 +484,75 @@ class OutboxDispatcher:
     def _begin(self) -> None:
         self.conn.execute("BEGIN IMMEDIATE")
 
+    @staticmethod
+    def _normalize_managed_generations(
+        managed: Mapping[str, Sequence[str]] | None,
+    ) -> tuple[tuple[str, tuple[str, ...]], ...]:
+        normalized: list[tuple[str, tuple[str, ...]]] = []
+        for raw_prefix, raw_keep in (managed or {}).items():
+            prefix = str(raw_prefix).strip()
+            if not prefix:
+                raise ValueError("managed consumer prefix cannot be empty")
+            keep = tuple(
+                sorted(
+                    {
+                        str(consumer_id).strip()
+                        for consumer_id in raw_keep
+                        if str(consumer_id).strip()
+                    }
+                )
+            )
+            if any(not consumer_id.startswith(prefix) for consumer_id in keep):
+                raise ValueError(
+                    f"managed consumer IDs must start with prefix {prefix!r}"
+                )
+            normalized.append((prefix, keep))
+        prefixes = [prefix for prefix, _keep in normalized]
+        if any(
+            left != right
+            and (left.startswith(right) or right.startswith(left))
+            for left in prefixes
+            for right in prefixes
+        ):
+            raise ValueError("managed consumer prefixes cannot overlap")
+        return tuple(sorted(normalized))
+
+    def _disable_prefix_locked(
+        self,
+        prefix: str,
+        *,
+        keep_consumer_ids: Sequence[str],
+        now: str,
+    ) -> tuple[str, ...]:
+        clauses = [
+            "enabled=1",
+            "substr(consumer_id,1,?)=?",
+        ]
+        params: list[object] = [len(prefix), prefix]
+        keep = tuple(dict.fromkeys(keep_consumer_ids))
+        if keep:
+            placeholders = ",".join("?" for _ in keep)
+            clauses.append(f"consumer_id NOT IN ({placeholders})")
+            params.extend(keep)
+        rows = self.conn.execute(
+            f"""SELECT DISTINCT consumer_id FROM outbox_subscriptions
+                WHERE {' AND '.join(clauses)}
+                ORDER BY consumer_id""",
+            params,
+        ).fetchall()
+        consumer_ids = tuple(row["consumer_id"] for row in rows)
+        if not consumer_ids:
+            return ()
+        placeholders = ",".join("?" for _ in consumer_ids)
+        self.conn.execute(
+            f"""UPDATE outbox_subscriptions SET enabled=0,updated_at=?
+                WHERE enabled=1 AND consumer_id IN ({placeholders})""",
+            (now, *consumer_ids),
+        )
+        for row in self.conn.execute("SELECT event_id FROM outbox"):
+            self._refresh_event_locked(row["event_id"])
+        return consumer_ids
+
     def _register_locked(
         self,
         consumer_id: str,
@@ -603,6 +684,39 @@ class OutboxDispatcher:
         except BaseException:
             self.conn.rollback()
             raise
+
+    def disable_prefix(
+        self,
+        consumer_id_prefix: str,
+        *,
+        keep_consumer_ids: Sequence[str] = (),
+    ) -> tuple[str, ...]:
+        """Disable enabled generations sharing a stable consumer-ID prefix.
+
+        Historical receipts and attempt history are retained. ``keep`` allows
+        a managed deployment to activate one generation while atomically
+        retiring every older generation for the same logical consumer.
+        """
+
+        managed = self._normalize_managed_generations(
+            {consumer_id_prefix: tuple(keep_consumer_ids)}
+        )
+        prefix, keep = managed[0]
+        self._begin()
+        try:
+            disabled = self._disable_prefix_locked(
+                prefix,
+                keep_consumer_ids=keep,
+                now=_iso(self.clock()),
+            )
+            self.conn.commit()
+        except BaseException:
+            self.conn.rollback()
+            raise
+        self.disabled_consumer_ids = tuple(
+            sorted(set(self.disabled_consumer_ids) | set(disabled))
+        )
+        return disabled
 
     def requeue_dead(
         self,

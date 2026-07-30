@@ -1,0 +1,948 @@
+# Canonical issuer and acquisition-source registry.
+#
+# The grouped roster was migrated from soft/scripts/gen_universe.py.  Root
+# company/IR configurations are embedded below as overlays so acquisition does
+# not import Soft or depend on working-directory-specific config lookup.
+version: 1
+
+defaults:
+  exchange: BMV
+  currency: MXN
+  memberships:
+    alpha_go: false
+    soft: false
+    earnings: false
+
+# Membership snapshots are explicit and come from each product's current
+# committed universe.  Adding an issuer to this registry never silently adds it
+# to an application.
+memberships:
+  alpha_go:
+    - ac
+    - alpek
+    - alsea
+    - america_movil
+    - consorcio_ara
+    - asur
+    - autlan
+    - axtel
+    - farmacias_benavides
+    - bimbo
+    - bolsa_mexicana
+    - grupo_cable
+    - cadu
+    - cemex
+    - chedraui
+    - cie
+    - cementos_moctezuma
+    - cmr
+    - becle
+    - cultiba
+    - fibra_danhos
+    - dine
+    - femsa
+    - fibra_hd
+    - fibra_macquarie
+    - fibra_prologis
+    - fibra_nova
+    - fibra_ideal
+    - fibra_hotel
+    - fibra_inn
+    - fibra_mty
+    - corporativo_fragua
+    - fibra_shop
+    - fibra_sites
+    - fibra_uno
+    - gap
+    - gfnorte
+    - grupo_carso
+    - gcc
+    - grupo_mexico
+    - gmexico_transportes
+    - gruma
+    - herdez
+    - kimber
+    - kof
+    - lab
+    - lacomer
+    - liverpool
+    - soriana
+    - sports_world
+    - walmex
+  soft:
+    - gfnorte
+    - banco_del_bajio
+    - regional
+    - gfinbursa
+    - gentera
+    - gf_multiva
+    - financiera_independencia
+    - invex
+    - alterna
+    - banco_santander_mexico
+    - unifin
+    - bbva_mexico
+    - monex
+    - credito_real
+    - gbm
+    - actinver
+    - value_gf
+    - finamex
+    - bolsa_mexicana
+    - procorp
+    - qualitas
+    - gnp
+    - pena_verde
+    - profuturo
+    - latinoamericana_seguros
+    - fibra_uno
+    - fibra_prologis
+    - fibra_macquarie
+    - fibra_mty
+    - fibra_danhos
+    - fibra_shop
+    - fibra_hotel
+    - fibra_inn
+    - fibra_nova
+    - fibra_exi
+    - fibra_plus
+    - fibra_cfe
+    - fibra_storage
+    - fibra_uptown
+    - fibra_hd
+    - fibra_sites
+    - fibra_hipotecaria
+    - fibra_via
+    - fibra_orion
+    - fibra_ideal
+    - fibra_next
+    - fibra_mx
+    - grupo_gav
+    - vesta
+    - gicsa
+    - dine
+    - grupo_aristos
+    - soma
+    - xfra
+    - planigrupo
+    - inmuebles_carso
+    - grupo_mexico
+    - penoles
+    - autlan
+    - minera_frisco
+    - fresnillo
+    - industrias_ch
+    - simec
+    - grupo_collado
+    - tenaris
+    - cemex
+    - gcc
+    - cementos_moctezuma
+    - vitro
+    - grupo_lamosa
+    - elementia_materiales
+    - fortaleza_materiales
+    - interceramic
+    - orbia
+    - alpek
+    - cydsa
+    - pochteca
+    - tekchem
+    - america_movil
+    - telesites
+    - lasite
+    - telmex
+    - megacable
+    - televisa
+    - axtel
+    - ct_axtel
+    - grupo_cable
+    - cidmega
+    - grupo_radio_centro
+    - tv_azteca
+    - femsa
+    - kof
+    - ac
+    - becle
+    - gruma
+    - bimbo
+    - sigma
+    - herdez
+    - grupo_bafar
+    - cultiba
+    - minsa
+    - grupo_kuo
+    - grupo_lala
+    - industrias_bachoco
+    - ingeal
+    - grupo_qumma
+    - kimber
+    - walmex
+    - chedraui
+    - lacomer
+    - soriana
+    - grupo_gigante
+    - corporativo_fragua
+    - farmacias_benavides
+    - nutrisa
+    - liverpool
+    - palacio_de_hierro
+    - alsea
+    - grupo_famsa
+    - grupo_elektra
+    - grupo_sanborns
+    - edoardos_martin
+    - gap
+    - asur
+    - oma
+    - volaris
+    - aeromexico
+    - traxion
+    - tmm
+    - gmexico_transportes
+    - pinfra
+    - ideal
+    - esentia
+    - gmd
+    - pasa
+    - rotoplas
+    - aleatica
+    - empresas_ica
+    - vista
+    - nemak
+    - grupo_carso
+    - grupo_gis
+    - convertidora
+    - accel
+    - vasconia
+    - consorcio_ara
+    - vinte
+    - cadu
+    - homex
+    - javer
+    - urbi
+    - sare
+    - grupo_hotelero
+    - hoteles_city
+    - grupo_posadas
+    - rlh_properties
+    - sports_world
+    - cmr
+    - cie
+    - club_america
+    - diablos_rojos
+    - lab
+    - medica_sur
+    - proteak
+    - grupo_agro
+    - savia
+    - agroexportadora
+    - globc
+    - aleatica_educa
+    - coxa
+    - kamosa
+    - alfa
+    - anb
+    - grupo_gomo
+    - iasa
+    - qb_industrial
+    - san
+    - sre
+  earnings:
+    - ac
+    - accel
+    - aeromexico
+    - aleatica_educa
+    - alpek
+    - alsea
+    - alterna
+    - america_movil
+    - asur
+    - autlan
+    - axtel
+    - becle
+    - bimbo
+    - bolsa_mexicana
+    - cadu
+    - cementos_moctezuma
+    - cemex
+    - chedraui
+    - cidmega
+    - cie
+    - club_america
+    - cmr
+    - consorcio_ara
+    - convertidora
+    - corporativo_fragua
+    - ct_axtel
+    - cultiba
+    - cydsa
+    - diablos_rojos
+    - dine
+    - farmacias_benavides
+    - femsa
+    - fibra_cfe
+    - fibra_danhos
+    - fibra_hd
+    - fibra_hotel
+    - fibra_inn
+    - fibra_macquarie
+    - fibra_mty
+    - fibra_nova
+    - fibra_plus
+    - fibra_prologis
+    - fibra_shop
+    - fibra_storage
+    - fibra_uno
+    - fibra_uptown
+    - fibra_via
+    - gap
+    - gcc
+    - gicsa
+    - gmd
+    - gruma
+    - grupo_aristos
+    - grupo_cable
+    - grupo_carso
+    - grupo_collado
+    - grupo_famsa
+    - grupo_gav
+    - grupo_gigante
+    - grupo_gis
+    - grupo_hotelero
+    - grupo_kuo
+    - grupo_lamosa
+    - grupo_mexico
+    - grupo_posadas
+    - grupo_radio_centro
+    - herdez
+    - homex
+    - hoteles_city
+    - ideal
+    - industrias_ch
+    - kimber
+    - kof
+    - lab
+    - lacomer
+    - lasite
+    - liverpool
+    - medica_sur
+    - megacable
+    - minera_frisco
+    - minsa
+    - nemak
+    - nutrisa
+    - oma
+    - orbia
+    - palacio_de_hierro
+    - pasa
+    - penoles
+    - pinfra
+    - planigrupo
+    - pochteca
+    - procorp
+    - proteak
+    - rlh_properties
+    - rotoplas
+    - simec
+    - soriana
+    - sports_world
+    - televisa
+    - tmm
+    - traxion
+    - unifin
+    - vasconia
+    - vesta
+    - vinte
+    - vista
+    - vitro
+    - volaris
+    - walmex
+
+groups:
+  banks:
+    template: financials
+    issuers:
+      - {slug: "gfnorte", ticker: "GFNORTE", name: "GFNorte"}
+      - {slug: "banco_del_bajio", ticker: "BBAJIO", name: "Banco del Bajio"}
+      - {slug: "regional", ticker: "R", name: "Regional"}
+      - {slug: "gfinbursa", ticker: "GFINBUR", name: "GFInbursa"}
+      - {slug: "gentera", ticker: "GENTERA", name: "Gentera"}
+      - {slug: "gf_multiva", ticker: "GFMULTI", name: "GF Multiva"}
+      - {slug: "financiera_independencia", ticker: "FINDEP", name: "Financiera Independencia"}
+      - {slug: "invex", ticker: "INVEX", name: "Invex"}
+      - {slug: "alterna", ticker: "ALTERNA", name: "Alterna"}
+      - {slug: "banco_santander_mexico", ticker: "BSMX", name: "Banco Santander Mexico"}
+      - {slug: "unifin", ticker: "UNIFIN", name: "Unifin"}
+      - {slug: "bbva_mexico", ticker: "BBVA", name: "BBVA Mexico"}
+      - {slug: "monex", ticker: "MONEX", name: "Monex"}
+      - {slug: "credito_real", ticker: "CREAL", name: "Credito Real"}
+  brokers_exchange:
+    template: financials
+    issuers:
+      - {slug: "gbm", ticker: "GBM", name: "GBM"}
+      - {slug: "actinver", ticker: "ACTINVR", name: "Actinver"}
+      - {slug: "value_gf", ticker: "VALUEGF", name: "Value GF"}
+      - {slug: "finamex", ticker: "FINAMEX", name: "Finamex"}
+      - {slug: "bolsa_mexicana", ticker: "BOLSA", name: "Bolsa Mexicana"}
+      - {slug: "procorp", ticker: "PROCORP", name: "Procorp"}
+  insurers_afores:
+    template: financials
+    issuers:
+      - {slug: "qualitas", ticker: "Q", name: "Qualitas"}
+      - {slug: "gnp", ticker: "GNP", name: "GNP"}
+      - {slug: "pena_verde", ticker: "PV", name: "Pena Verde"}
+      - {slug: "profuturo", ticker: "GPROFUT", name: "Profuturo"}
+      - {slug: "latinoamericana_seguros", ticker: "LASEG", name: "Latinoamericana Seguros"}
+  fibras:
+    template: reit
+    issuers:
+      - {slug: "fibra_uno", ticker: "FUNO", name: "Fibra Uno"}
+      - {slug: "fibra_prologis", ticker: "FIBRAPL", name: "Fibra Prologis"}
+      - {slug: "fibra_macquarie", ticker: "FIBRAMQ", name: "Fibra Macquarie"}
+      - {slug: "fibra_mty", ticker: "FMTY", name: "Fibra Mty"}
+      - {slug: "fibra_danhos", ticker: "DANHOS", name: "Fibra Danhos"}
+      - {slug: "fibra_shop", ticker: "FSHOP", name: "Fibra Shop"}
+      - {slug: "fibra_hotel", ticker: "FIHO", name: "Fibra Hotel"}
+      - {slug: "fibra_inn", ticker: "FINN", name: "Fibra Inn"}
+      - {slug: "fibra_nova", ticker: "FNOVA", name: "Fibra Nova"}
+      - {slug: "fibra_exi", ticker: "FEXI", name: "Fibra Exi"}
+      - {slug: "fibra_plus", ticker: "FPLUS", name: "Fibra Plus"}
+      - {slug: "fibra_cfe", ticker: "FCFE", name: "Fibra CFE"}
+      - {slug: "fibra_storage", ticker: "STORAGE", name: "Fibra Storage"}
+      - {slug: "fibra_uptown", ticker: "FIBRAUP", name: "Fibra Uptown"}
+      - {slug: "fibra_hd", ticker: "FIBRAHD", name: "Fibra HD"}
+      - {slug: "fibra_sites", ticker: "FSITES", name: "Fibra Sites"}
+      - {slug: "fibra_hipotecaria", ticker: "FHIP", name: "Fibra Hipotecaria"}
+      - {slug: "fibra_via", ticker: "FVIA", name: "Fibra Via"}
+      - {slug: "fibra_orion", ticker: "FORION", name: "Fibra Orion"}
+      - {slug: "fibra_ideal", ticker: "FIDEAL", name: "Fibra Ideal"}
+      - {slug: "fibra_next", ticker: "NEXT", name: "Fibra Next"}
+      - {slug: "fibra_mx", ticker: "FMX", name: "Fibra Mx"}
+      - {slug: "grupo_gav", ticker: "GAV", name: "Grupo GAV"}
+  real_estate:
+    template: reit
+    issuers:
+      - {slug: "vesta", ticker: "VESTA", name: "Vesta"}
+      - {slug: "gicsa", ticker: "GICSA", name: "GICSA"}
+      - {slug: "dine", ticker: "DINE", name: "Dine"}
+      - {slug: "grupo_aristos", ticker: "ARISTOS", name: "Grupo Aristos"}
+      - {slug: "soma", ticker: "SOMA", name: "Soma"}
+      - {slug: "xfra", ticker: "XFRA", name: "Xfra"}
+      - {slug: "planigrupo", ticker: "PLANI", name: "Planigrupo"}
+      - {slug: "inmuebles_carso", ticker: "INCARSO", name: "Inmuebles Carso"}
+  metals_mining:
+    template: industrial
+    issuers:
+      - {slug: "grupo_mexico", ticker: "GMEXICO", name: "Grupo Mexico"}
+      - {slug: "penoles", ticker: "PE&OLES", name: "Penoles"}
+      - {slug: "autlan", ticker: "AUTLAN", name: "Autlan"}
+      - {slug: "minera_frisco", ticker: "MFRISCO", name: "Minera Frisco"}
+      - {slug: "fresnillo", ticker: "FRES", name: "Fresnillo"}
+  steel:
+    template: industrial
+    issuers:
+      - {slug: "industrias_ch", ticker: "ICH", name: "Industrias CH"}
+      - {slug: "simec", ticker: "SIMEC", name: "Simec"}
+      - {slug: "grupo_collado", ticker: "COLLADO", name: "Grupo Collado"}
+      - {slug: "tenaris", ticker: "TS", name: "Tenaris"}
+  cement_materials:
+    template: industrial
+    issuers:
+      - {slug: "cemex", ticker: "CEMEX", name: "Cemex"}
+      - {slug: "gcc", ticker: "GCC", name: "GCC"}
+      - {slug: "cementos_moctezuma", ticker: "CMOCTEZ", name: "Cementos Moctezuma"}
+      - {slug: "vitro", ticker: "VITRO", name: "Vitro"}
+      - {slug: "grupo_lamosa", ticker: "LAMOSA", name: "Grupo Lamosa"}
+      - {slug: "elementia_materiales", ticker: "ELEMAT", name: "Elementia Materiales"}
+      - {slug: "fortaleza_materiales", ticker: "FORTALE", name: "Fortaleza Materiales"}
+      - {slug: "interceramic", ticker: "CERAMIC", name: "Interceramic"}
+  chemicals:
+    template: industrial
+    issuers:
+      - {slug: "orbia", ticker: "ORBIA", name: "Orbia"}
+      - {slug: "alpek", ticker: "ALPEK", name: "Alpek"}
+      - {slug: "cydsa", ticker: "CYDSASA", name: "Cydsa"}
+      - {slug: "pochteca", ticker: "POCHTEC", name: "Pochteca"}
+      - {slug: "tekchem", ticker: "TEKCHEM", name: "Tekchem"}
+  telecom_towers:
+    template: industrial
+    issuers:
+      - {slug: "america_movil", ticker: "AMX", name: "America Movil"}
+      - {slug: "telesites", ticker: "SITES1", name: "Telesites"}
+      - {slug: "lasite", ticker: "LASITE", name: "LaSite"}
+      - {slug: "telmex", ticker: "TELMEX", name: "Telmex"}
+  cable_media:
+    template: industrial
+    issuers:
+      - {slug: "megacable", ticker: "MEGA", name: "Megacable"}
+      - {slug: "televisa", ticker: "TLEVISA", name: "Televisa"}
+      - {slug: "axtel", ticker: "AXTEL", name: "Axtel"}
+      - {slug: "ct_axtel", ticker: "CTAXTEL", name: "CT Axtel"}
+      - {slug: "grupo_cable", ticker: "CABLE", name: "Grupo Cable"}
+      - {slug: "cidmega", ticker: "CIDMEGA", name: "Cidmega"}
+      - {slug: "grupo_radio_centro", ticker: "RCENTRO", name: "Grupo Radio Centro"}
+      - {slug: "tv_azteca", ticker: "AZTECA", name: "TV Azteca"}
+  beverages:
+    template: industrial
+    issuers:
+      - {slug: "femsa", ticker: "FEMSA", name: "FEMSA"}
+      - {slug: "kof", ticker: "KOF", name: "KOF"}
+      - {slug: "ac", ticker: "AC", name: "AC"}
+      - {slug: "becle", ticker: "CUERVO", name: "Becle"}
+  food_staples:
+    template: industrial
+    issuers:
+      - {slug: "gruma", ticker: "GRUMA", name: "Gruma"}
+      - {slug: "bimbo", ticker: "BIMBO", name: "Bimbo"}
+      - {slug: "sigma", ticker: "SIGMA", name: "Sigma"}
+      - {slug: "herdez", ticker: "HERDEZ", name: "Herdez"}
+      - {slug: "grupo_bafar", ticker: "BAFAR", name: "Grupo Bafar"}
+      - {slug: "cultiba", ticker: "CULTIBA", name: "Cultiba"}
+      - {slug: "minsa", ticker: "MINSA", name: "Minsa"}
+      - {slug: "grupo_kuo", ticker: "KUO", name: "Grupo Kuo"}
+      - {slug: "grupo_lala", ticker: "LALA", name: "Grupo Lala"}
+      - {slug: "industrias_bachoco", ticker: "BACHOCO", name: "Industrias Bachoco"}
+      - {slug: "ingeal", ticker: "INGEAL", name: "Ingeal"}
+      - {slug: "grupo_qumma", ticker: "QUMMA", name: "Grupo Qumma"}
+  household_personal:
+    template: industrial
+    issuers:
+      - {slug: "kimber", ticker: "KIMBER", name: "Kimber"}
+  retail_selfservice:
+    template: industrial
+    issuers:
+      - {slug: "walmex", ticker: "WALMEX", name: "Walmex"}
+      - {slug: "chedraui", ticker: "CHDRAUI", name: "Chedraui"}
+      - {slug: "lacomer", ticker: "LACOMER", name: "Lacomer"}
+      - {slug: "soriana", ticker: "SORIANA", name: "Soriana"}
+      - {slug: "grupo_gigante", ticker: "GIGANTE", name: "Grupo Gigante"}
+  retail_pharma:
+    template: industrial
+    issuers:
+      - {slug: "corporativo_fragua", ticker: "FRAGUA", name: "Corporativo Fragua"}
+      - {slug: "farmacias_benavides", ticker: "BEVIDES", name: "Farmacias Benavides"}
+      - {slug: "nutrisa", ticker: "NUTRISA", name: "Nutrisa"}
+  dept_specialty:
+    template: industrial
+    issuers:
+      - {slug: "liverpool", ticker: "LIVERPOL", name: "Liverpool"}
+      - {slug: "palacio_de_hierro", ticker: "GPH", name: "Palacio de Hierro"}
+      - {slug: "alsea", ticker: "ALSEA", name: "Alsea"}
+      - {slug: "grupo_famsa", ticker: "GFAMSA", name: "Grupo Famsa"}
+      - {slug: "grupo_elektra", ticker: "ELEKTRA", name: "Grupo Elektra"}
+      - {slug: "grupo_sanborns", ticker: "GSANBOR", name: "Grupo Sanborns"}
+      - {slug: "edoardos_martin", ticker: "EDOARDO", name: "Edoardos Martin"}
+  airports:
+    template: industrial
+    issuers:
+      - {slug: "gap", ticker: "GAP", name: "GAP"}
+      - {slug: "asur", ticker: "ASUR", name: "ASUR"}
+      - {slug: "oma", ticker: "OMA", name: "OMA"}
+  transport:
+    template: industrial
+    issuers:
+      - {slug: "volaris", ticker: "VOLAR", name: "Volaris"}
+      - {slug: "aeromexico", ticker: "AERO", name: "Aeromexico"}
+      - {slug: "traxion", ticker: "TRAXION", name: "Traxion"}
+      - {slug: "tmm", ticker: "TMM", name: "TMM"}
+      - {slug: "gmexico_transportes", ticker: "GMXT", name: "GMexico Transportes"}
+  infra:
+    template: industrial
+    issuers:
+      - {slug: "pinfra", ticker: "PINFRA", name: "Pinfra"}
+      - {slug: "ideal", ticker: "IDEAL", name: "Ideal"}
+      - {slug: "esentia", ticker: "ESENTIA", name: "Esentia"}
+      - {slug: "gmd", ticker: "GMD", name: "GMD"}
+      - {slug: "pasa", ticker: "PASA", name: "PASA"}
+      - {slug: "rotoplas", ticker: "AGUA", name: "Rotoplas"}
+      - {slug: "aleatica", ticker: "ALEATIC", name: "Aleatica"}
+      - {slug: "empresas_ica", ticker: "ICA", name: "Empresas ICA"}
+  energy:
+    template: industrial
+    issuers:
+      - {slug: "vista", ticker: "VISTA", name: "Vista"}
+  auto_capital_goods:
+    template: industrial
+    issuers:
+      - {slug: "nemak", ticker: "NEMAK", name: "Nemak"}
+      - {slug: "grupo_carso", ticker: "GCARSO", name: "Grupo Carso"}
+      - {slug: "grupo_gis", ticker: "GISSA", name: "Grupo GIS"}
+      - {slug: "convertidora", ticker: "CONVER", name: "Convertidora"}
+      - {slug: "accel", ticker: "ACCELSA", name: "Accel"}
+      - {slug: "vasconia", ticker: "VASCONI", name: "Vasconia"}
+  homebuilders:
+    template: industrial
+    issuers:
+      - {slug: "consorcio_ara", ticker: "ARA", name: "Consorcio ARA"}
+      - {slug: "vinte", ticker: "VINTE", name: "Vinte"}
+      - {slug: "cadu", ticker: "CADU", name: "Cadu"}
+      - {slug: "homex", ticker: "HOMEX", name: "Homex"}
+      - {slug: "javer", ticker: "JAVER", name: "Javer"}
+      - {slug: "urbi", ticker: "URBI", name: "Urbi"}
+      - {slug: "sare", ticker: "SARE", name: "Sare"}
+  hotels_leisure:
+    template: industrial
+    issuers:
+      - {slug: "grupo_hotelero", ticker: "HOTEL", name: "Grupo Hotelero"}
+      - {slug: "hoteles_city", ticker: "HCITY", name: "Hoteles City"}
+      - {slug: "grupo_posadas", ticker: "POSADAS", name: "Grupo Posadas"}
+      - {slug: "rlh_properties", ticker: "RLH", name: "RLH Properties"}
+      - {slug: "sports_world", ticker: "SPORT", name: "Sports World"}
+      - {slug: "cmr", ticker: "CMR", name: "CMR"}
+      - {slug: "cie", ticker: "CIE", name: "CIE"}
+  sports_ent:
+    template: industrial
+    issuers:
+      - {slug: "club_america", ticker: "AGUILAS", name: "Club America"}
+      - {slug: "diablos_rojos", ticker: "DIABLOS", name: "Diablos Rojos"}
+  healthcare:
+    template: industrial
+    issuers:
+      - {slug: "lab", ticker: "LAB", name: "Lab"}
+      - {slug: "medica_sur", ticker: "MEDICA", name: "Medica Sur"}
+  agro_forestry:
+    template: industrial
+    issuers:
+      - {slug: "proteak", ticker: "TEAK", name: "Proteak"}
+      - {slug: "grupo_agro", ticker: "AGRO", name: "Grupo Agro"}
+      - {slug: "savia", ticker: "SAVIA", name: "Savia"}
+      - {slug: "agroexportadora", ticker: "AGRIEXP", name: "Agroexportadora"}
+  misc_industrial:
+    template: industrial
+    issuers:
+      - {slug: "globc", ticker: "GLOBC", name: "Globc"}
+      - {slug: "aleatica_educa", ticker: "EDUCA", name: "Aleatica Educa"}
+      - {slug: "coxa", ticker: "COXA", name: "Coxa"}
+      - {slug: "kamosa", ticker: "KAMOSA", name: "Kamosa"}
+      - {slug: "alfa", ticker: "ALFA", name: "Alfa"}
+      - {slug: "anb", ticker: "ANB", name: "ANB"}
+      - {slug: "grupo_gomo", ticker: "GOMO", name: "Grupo GOMO"}
+      - {slug: "iasa", ticker: "IASASA", name: "IASA"}
+      - {slug: "qb_industrial", ticker: "QBINDUS", name: "QB Industrial"}
+      - {slug: "san", ticker: "SAN", name: "SAN"}
+      - {slug: "sre", ticker: "SRE", name: "SRE"}
+  retail_discount:
+    template: industrial
+    issuers:
+      - {slug: "tiendas_3b", ticker: "TBBB", name: "Tiendas 3B (BBB Foods)"}
+
+# Root per-company identity and IR discovery settings.  These replace the
+# minimal roster values above while retaining the canonical Soft clave as
+# `ticker`; exchange-specific series symbols are stored as `market_ticker`.
+overlays:
+  ac:
+    name: Arca Continental
+    market_ticker: AC
+    language: en
+    unit: millions
+    ir:
+      url: http://arcacontal.com/en/investors/financial-reports
+      pdf_link_pattern: '(?i)\.pdf'
+      use_playwright: true
+      max_reports: 120
+      delay_ms: 500
+      xbrl_ticker: AC
+  banco_del_bajio:
+    name: Banco del Bajío
+    market_ticker: BBAJIO
+    language: es
+    unit: millions
+    ir:
+      url: https://www.bb.com.mx/webcenter/portal/BanBajio/home/inversionistas/informacion-financiera
+      xbrl_ticker: BBAJIO
+      max_reports: 120
+      floor_year: 2016
+      delay_ms: 250
+      use_playwright: false
+      direct_url_templates:
+        - https://www.bb.com.mx/cs/BanBajio/home/Inversionistas/Informaci%C3%B3n%20Financiera/{quarter}T{year2}/Quarterly-Report-{quarter}Q{year2}.pdf
+  becle:
+    name: Becle (Jose Cuervo)
+    market_ticker: CUERVO
+    language: en
+    unit: millions
+    ir:
+      url: https://www.ircuervo.com/investors/results-and-presentatios/
+      pdf_link_pattern: '(?i)\.pdf'
+      use_playwright: true
+      max_reports: 120
+      delay_ms: 500
+      xbrl_ticker: CUERVO
+  bimbo:
+    name: Grupo Bimbo
+    market_ticker: BIMBOA
+    language: en
+    unit: millions
+    ir:
+      url: https://www.grupobimbo.com/en/investors/reports/quarterly-reports
+      pdf_link_pattern: '(?i)bimbo.*results.*\.pdf'
+      xbrl_ticker: BIMBO
+  penoles:
+    xbrl_ticker: PEOLES
+  chedraui:
+    name: Grupo Chedraui
+    market_ticker: CHDRAUI
+    language: es
+    unit: millions
+    ir:
+      url: https://inversionistas.grupochedraui.com.mx/reportes-trimestrales/
+      pdf_link_pattern: 'Reporte-BMV.*\.pdf'
+      xbrl_ticker: CHDRAUI
+      use_playwright: true
+      max_reports: 120
+  femsa:
+    name: Fomento Económico Mexicano (FEMSA)
+    market_ticker: FEMSAUBD
+    language: en
+    unit: millions
+    ir:
+      url: https://femsa.gcs-web.com/financial-reports/
+      pdf_link_pattern: '(?i)(?:^|[^0-9a-z])[1-4]Q\s*(?:20)?\d{2}(?:[^0-9a-z]|$).*(?:results?|quarterly|earnings?|report)'
+      strict_pdf_link_pattern: true
+      use_playwright: false
+      floor_year: 2024
+      coverage_from_period: 2024-1T
+      max_reports: 20
+      delay_ms: 500
+      xbrl_ticker: FEMSA
+      live_verified_period: 2026-2T
+      live_verified_on: 2026-07-30
+      live_verified_url: https://femsa.gcs-web.com/static-files/c9f9b971-f7e5-4c9c-b76c-f5a21c2c3f88
+  gentera:
+    market_ticker: GENTERA
+    language: es
+    unit: millions
+    ir:
+      url: https://www.gentera.com.mx/gentera/relacion-inversionistas/informacion_trimestral
+      xbrl_ticker: GENTERA
+      max_reports: 120
+      floor_year: 2016
+      delay_ms: 250
+      pdf_link_pattern: '(?:press\s*release|reporte\s*trimestral)'
+  gfnorte:
+    name: Grupo Financiero Banorte
+    market_ticker: GFNORTEO
+    language: es
+    unit: millions
+    # The BMV archive exposes GFNORTE annual filings, not quarterly XBRL.
+    xbrl_enabled: false
+    ir:
+      url: https://investors.banorte.com/es/financial-information/quarterly-reports
+      pdf_link_pattern: '(?i)/(?:[1-4]T\d{2}(?:_[a-z0-9]*)*)\.pdf(?:[?#]|$)'
+      strict_pdf_link_pattern: true
+      floor_year: 2021
+      max_reports: 40
+      delay_ms: 500
+      live_verified_period: 2026-2T
+      live_verified_on: 2026-07-30
+      live_verified_url: https://investors.banorte.com/~/media/Files/B/Banorte-IR/financial-information/quarterly-results/es/2026/2T26/2T26.pdf
+  gnp:
+    language: es
+    unit: millions
+    sources:
+      - key: bmv_issuer_pdf
+        kind: bmv_issuer_pdf
+        url: https://www.bmv.com.mx/es/emisoras/informacionfinanciera/GNP-5444-CGEN_CAPIT
+        coverage_from_period: 2026-2T
+        live_verified_period: 2026-2T
+        live_verified_on: 2026-07-30
+        live_verified_url: https://www.bmv.com.mx/docs-pub/infinasg/asginfin_1576481_2026-02_2.pdf
+        delay_ms: 1000
+  gruma:
+    name: GRUMA
+    market_ticker: GRUMAB
+    language: es
+    currency: USD
+    unit: millions
+    ir:
+      url: https://www.gruma.com/es/inversionistas/inversionistas-gruma/informacion-financiera/reportes-trimestrales.aspx
+      pdf_link_pattern: '(?:gruma[-_]?e|reporte(?:s)?\s+de\s+resultados|resultados).*\.pdf'
+      max_reports: 160
+      delay_ms: 100
+      use_playwright: false
+  grupo_bafar:
+    name: Grupo Bafar
+    market_ticker: BAFAR
+    language: es
+    unit: millions
+    ir:
+      url: https://ribafar-dd6854e34196.herokuapp.com/
+      direct_url_templates:
+        - "https://grupobafar.s3.us-east-1.amazonaws.com/CentroReportes/ReportesTrimestrales/{quarter}T{year2}/GB_PR_{quarter}T{year2}.pdf"
+      pdf_link_pattern: '(?i)GB_PR_\dT\d{2}\.pdf'
+      # The locally verified S3 history begins in 2024; older template URLs
+      # return 403 and are not treated as evidence of a listing boundary.
+      floor_year: 2024
+      max_reports: 40
+      delay_ms: 400
+  grupo_mexico:
+    name: Grupo México
+    market_ticker: GMEXICOB
+    language: es
+    currency: USD
+    unit: millions
+    ir:
+      url: https://www.gmexico.com/Pages/reportes-financieros.aspx
+      direct_url_templates:
+        - https://gmexico.com/GMDocs/ReportesFinancieros/Esp/{year}/RF_ES_{year}_{quarter}T.pdf
+      xbrl_ticker: GMEXICO
+      delay_ms: 400
+  herdez:
+    name: Grupo Herdez
+    market_ticker: HERDEZ
+    language: es
+    unit: millions
+    ir:
+      url: https://grupoherdez.com.mx/investors-financial-information#reportarchive
+      use_playwright: true
+      max_reports: 120
+      delay_ms: 500
+  kimber:
+    name: Kimberly-Clark de México
+    market_ticker: KIMBERA
+    language: es
+    unit: millions
+    ir:
+      url: https://www.kimberly-clark.com.mx/finanzas/reportes-trimestrales
+      pdf_link_pattern: '(?i)\.pdf'
+      use_playwright: true
+      max_reports: 120
+      delay_ms: 500
+      xbrl_ticker: KIMBER
+  kof:
+    name: Coca-Cola FEMSA
+    market_ticker: KOFUBL
+    language: en
+    unit: millions
+    ir:
+      url: https://investors.coca-colafemsa.com/en/financial-information/quarterly-reports/
+      pdf_link_pattern: '(?i)\.pdf'
+      use_playwright: true
+      max_reports: 120
+      delay_ms: 500
+      xbrl_ticker: KOF
+  lab:
+    name: Genomma Lab Internacional
+    market_ticker: LABB
+    language: es
+    unit: millions
+    ir:
+      url: https://inversionistas.genommalab.com/informacion-financiera/
+      pdf_link_pattern: '(?i)\.pdf'
+      use_playwright: false
+      max_reports: 120
+      delay_ms: 500
+      xbrl_ticker: LAB
+  lacomer:
+    name: La Comer
+    market_ticker: LACOMER
+    language: es
+    unit: millions
+    ir:
+      url: https://lacomerfinanzas.com.mx/informacion-financiera/reportes-trimestrales-bmv/
+      xbrl_ticker: LACOMER
+  liverpool:
+    name: El Puerto de Liverpool
+    market_ticker: LIVEPOL
+    language: es
+    unit: millions
+    ir:
+      url: https://www.elpuertodeliverpool.mx/trimestral.html
+      pdf_link_pattern: '(?i)(trimestre|trimestral|xbrl|resultados).*\.pdf'
+      xbrl_ticker: LIVEPOL
+      use_playwright: true
+      max_reports: 120
+      delay_ms: 500
+  orbia:
+    name: Orbia Advance Corporation
+    market_ticker: ORBIA
+    language: en
+    currency: USD
+    unit: millions
+    ir:
+      url: https://www.orbia.com/investor-relations/financials/quarterly-earnings/
+      pdf_link_pattern: '(?i)(?:earnings-release-eng\.pdf$|orbia[-_][^/]*?(?:earnings|press)-release(?![^/]*(?:esp|spa|[-_.]es\b|[-_.]sp\b))[^/]*\.pdf$|/(?:orbia_)?pr[-_][^/]*(?:eng|[-_.]en\b|[-_.]en[-_.])(?![^/]*(?:esp|spa))[^/]*\.pdf$|/orb_prq[1-4]20\d{2}_eng[^/]*\.pdf$|/download---en\.pdf$)'
+      use_playwright: false
+      max_reports: 120
+      delay_ms: 400
+      xbrl_ticker: ORBIA
+  qualitas:
+    name: Quálitas
+    market_ticker: Q
+    language: es
+    unit: millions
+    ir:
+      url: https://qinversionistas.qualitas.com.mx/ES/reportes-trimestrales
+      xbrl_ticker: Q
+      max_reports: 120
+      floor_year: 2016
+      delay_ms: 250
+  regional:
+    market_ticker: R
+    language: es
+    unit: millions
+    ir:
+      url: https://www.regional.mx/
+      xbrl_ticker: R
+      max_reports: 120
+      floor_year: 2016
+      delay_ms: 250
+      use_playwright: true
+  soriana:
+    name: Organizacion Soriana
+    market_ticker: SORIANA
+    language: en
+    unit: millions
+    ir:
+      url: https://www.organizacionsoriana.com/principales_reportes_en.html
+      impersonate: chrome
+      xbrl_ticker: SORIANA
+      max_reports: 120
+      delay_ms: 500
+  sports_world:
+    name: Grupo Sports World
+    market_ticker: SPORT
+    language: es
+    unit: miles_mxn
+    ir:
+      url: https://www.sportsworld.com.mx/inversionistas/
+      pdf_link_pattern: '(?i)/gsw_reporte_[1-4]T\d{2}\.pdf(?:[?#]|$)'
+      strict_pdf_link_pattern: true
+      xbrl_ticker: SPORT
+      floor_year: 2024
+      coverage_from_period: 2024-1T
+      max_reports: 20
+      delay_ms: 500
+      live_verified_period: 2026-2T
+      live_verified_on: 2026-07-30
+      live_verified_url: https://www.sportsworld.com.mx/uploads/es/documents/reports_quarterly/gsw_reporte_2T26.pdf
+  tiendas_3b:
+    market_ticker: TBBB
+    exchange: NYSE/BMV
+    language: en
+    unit: millions
+    memberships:
+      soft: false
+    xbrl_enabled: false
+    ir:
+      url: https://www.investorstiendas3b.com/financials/quarterly-results/default.aspx
+      year_api_urls:
+        - https://www.investorstiendas3b.com/feed/FinancialReport.svc/GetFinancialReportList?LanguageId=1&reportTypes=First%20Quarter%7CSecond%20Quarter%7CThird%20Quarter%7CFourth%20Quarter&pageSize=-1&pageNumber=0
+      pdf_link_pattern: '(?i)/(?:tiendas-3b-)?earnings-release-[^/?]*[1-4]Q\d{2}[^/?]*\.pdf(?:[?#]|$)'
+      strict_pdf_link_pattern: true
+      floor_year: 2024
+      coverage_from_period: 2024-1T
+      max_reports: 20
+      delay_ms: 500
+      live_verified_period: 2026-1T
+      live_verified_on: 2026-07-30
+      live_verified_url: https://s203.q4cdn.com/155743495/files/doc_financials/2026/q1/Earnings-Release-1Q26.pdf
+  walmex:
+    market_ticker: WALMEX
+    language: en
+    unit: millions
+    ir:
+      url: https://www.walmex.mx/en/financial-information/quarterly.html
+      pdf_link_pattern: '(?:reporte|report|trimest|quarter|result|earning).*\.pdf'
+      xbrl_ticker: WALMEX

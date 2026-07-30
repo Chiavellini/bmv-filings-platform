@@ -1,0 +1,17 @@
+company:
+  name: Banco del Bajío
+  ticker: BBAJIO
+  exchange: BMV
+  language: es
+  currency: MXN
+  unit: millions
+
+ir_website:
+  url: "https://www.bb.com.mx/webcenter/portal/BanBajio/home/inversionistas/informacion-financiera"
+  xbrl_ticker: BBAJIO
+  max_reports: 120
+  floor_year: 2016
+  delay_ms: 250
+  use_playwright: false
+  direct_url_templates:
+    - "https://www.bb.com.mx/cs/BanBajio/home/Inversionistas/Informaci%C3%B3n%20Financiera/{quarter}T{year2}/Quarterly-Report-{quarter}Q{year2}.pdf"

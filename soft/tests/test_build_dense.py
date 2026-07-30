@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import csv
 
+import pytest
+
 from scripts import build_dense
 
 
@@ -47,3 +49,56 @@ def test_default_metric_block_is_the_thirteen():
     assert "FCF yield" not in build_dense.DENSE_METRICS
     assert "NI CAGR 5y" not in build_dense.DENSE_METRICS
     assert "P/E" in build_dense.DENSE_METRICS and "EV/EBITDA" in build_dense.DENSE_METRICS
+
+
+def test_empty_company_block_is_a_hard_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(build_dense, "MASTER_CSV", _master(tmp_path, [
+        ["A", "S", "industrial", "A", "", "1.0", "9", "2"],
+        ["B", "S", "industrial", "B", "12", "", "8", "1"],
+    ]))
+
+    with pytest.raises(build_dense.DenseMatrixError, match="no company"):
+        build_dense.build(["P/E", "P/BV"])
+
+
+def test_failed_emit_removes_stale_success_artifacts(tmp_path, monkeypatch):
+    monkeypatch.setattr(build_dense, "MASTER_CSV", _master(tmp_path, [
+        ["A", "S", "industrial", "A", "", "1.0", "9", "2"],
+    ]))
+    out = tmp_path / "outputs"
+    out.mkdir()
+    stale_csv = out / "soft_coverage_dense.csv"
+    stale_html = out / "soft_coverage_dense.html"
+    stale_csv.write_text("stale", encoding="utf-8")
+    stale_html.write_text("stale", encoding="utf-8")
+
+    with pytest.raises(build_dense.DenseMatrixError):
+        build_dense.emit(["P/E", "P/BV"], out)
+
+    assert not stale_csv.exists()
+    assert not stale_html.exists()
+    marker = out / "soft_coverage_dense_FAILED.txt"
+    assert marker.is_file()
+    assert "no company" in marker.read_text(encoding="utf-8")
+
+
+def test_successful_emit_is_nonempty_and_clears_failure_marker(tmp_path, monkeypatch):
+    monkeypatch.setattr(build_dense, "MASTER_CSV", _master(tmp_path, [
+        ["A", "S", "industrial", "A", "10", "1.0", "9", "2"],
+    ]))
+    out = tmp_path / "outputs"
+    out.mkdir()
+    marker = out / "soft_coverage_dense_FAILED.txt"
+    marker.write_text("old failure", encoding="utf-8")
+
+    rows, metrics = build_dense.emit(["P/E", "P/BV"], out)
+
+    assert len(rows) == 1 and metrics == ["P/E", "P/BV"]
+    assert (out / "soft_coverage_dense.csv").is_file()
+    assert (out / "soft_coverage_dense.html").is_file()
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf", float("nan"), float("inf")])
+def test_nonfinite_values_are_not_real_dense_cells(value):
+    assert build_dense._num(value) is None

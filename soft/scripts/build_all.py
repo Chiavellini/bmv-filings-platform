@@ -26,6 +26,7 @@ if str(ROOT) not in sys.path:
 
 from scripts.build_coverage import BuildResult, build_one  # noqa: E402
 from scripts.gen_universe import UNIVERSE, slugify  # noqa: E402
+from src.shared.paths import REPORTS_DIR  # noqa: E402
 
 # XBRL reported in USD while the equity lists in MXN — multiples mix currencies until the
 # Bloomberg pack supplies MXN market data. Flagged, not blocked.
@@ -39,7 +40,7 @@ def roster():
 
 
 def _has_filings(slug: str) -> bool:
-    d = ROOT / "data" / "reports" / slug
+    d = REPORTS_DIR / slug
     return d.is_dir() and any(d.rglob("*"))
 
 

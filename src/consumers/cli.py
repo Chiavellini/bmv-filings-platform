@@ -14,14 +14,21 @@ from pathlib import Path
 import sys
 
 from src.consumers.alpha_go import AlphaGoProjectionConsumer
-from src.consumers.derivatives import PdfMarkdownDerivativeConsumer
+from src.consumers.derivatives import (
+    PdfMarkdownDerivativeConsumer,
+    XbrlFactsDerivativeConsumer,
+)
 from src.consumers.outbox import OutboxDispatcher
+from src.consumers.publication import DerivativePublicationVerifier
 from src.shared.paths import DOCUMENT_ESTATE_DB, DOCUMENT_ESTATE_DIR, PROJECT_ROOT
 
 
 DEFAULT_ALPHA_ROOT = PROJECT_ROOT / "alpha-go"
 DEFAULT_ALPHA_CORPUS = DEFAULT_ALPHA_ROOT / "data" / "corpus"
 DEFAULT_ALPHA_CONFIG = DEFAULT_ALPHA_ROOT / "configs" / "alpha_go.yaml"
+_PDF_CONSUMER_PREFIX = "root.pdf-markdown.v1:"
+_XBRL_CONSUMER_PREFIX = "root.xbrl-facts.v1:"
+_ALPHA_CONSUMER_PREFIX = "alpha-go.search-projection.v1:"
 
 
 def _add_catalog_arguments(parser: argparse.ArgumentParser) -> None:
@@ -82,9 +89,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="root PDF parser contract version",
     )
     run.add_argument(
+        "--xbrl-processor-version",
+        default="1",
+        help="root BMV XBRL-to-facts processor contract version",
+    )
+    alpha_mode = run.add_mutually_exclusive_group()
+    alpha_mode.add_argument(
         "--enable-alpha-go",
         action="store_true",
         help="also deliver parsed documents into an Alpha Go index",
+    )
+    alpha_mode.add_argument(
+        "--disable-alpha-go",
+        action="store_true",
+        help=(
+            "explicitly disable all previously registered managed Alpha Go "
+            "projection generations"
+        ),
     )
     run.add_argument(
         "--alpha-root",
@@ -166,10 +187,17 @@ def _status(args: argparse.Namespace) -> int:
     deliveries = status.get("deliveries", {})
     return int(
         bool(
-            deliveries.get("dead")
-            or status.get("ready_receipts")
-            or status.get("expired_running_receipts")
+            any(
+                deliveries.get(delivery_status)
+                for delivery_status in (
+                    "pending",
+                    "running",
+                    "retryable",
+                    "dead",
+                )
+            )
             or status.get("missing_receipts")
+            or status.get("unpublished_events")
         )
     )
 
@@ -185,28 +213,50 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     database = _database(args)
     estate_root = Path(args.estate_root)
     with ExitStack() as stack:
+        pdf_consumer = stack.enter_context(
+            PdfMarkdownDerivativeConsumer(
+                database,
+                estate_root,
+                parser_version=args.parser_version,
+            )
+        )
+        xbrl_consumer = stack.enter_context(
+            XbrlFactsDerivativeConsumer(
+                database,
+                estate_root,
+                processor_version=args.xbrl_processor_version,
+            )
+        )
+        publication_verifier = DerivativePublicationVerifier(
+            database, estate_root
+        )
         consumers: list[object] = [
-            stack.enter_context(
-                PdfMarkdownDerivativeConsumer(
-                    database,
-                    estate_root,
-                    parser_version=args.parser_version,
-                )
-            )
+            pdf_consumer,
+            xbrl_consumer,
+            publication_verifier,
         ]
+        managed_generations: dict[str, tuple[str, ...]] = {
+            _PDF_CONSUMER_PREFIX: (pdf_consumer.consumer_id,),
+            _XBRL_CONSUMER_PREFIX: (xbrl_consumer.consumer_id,),
+        }
+        alpha_consumer: AlphaGoProjectionConsumer | None = None
         if args.enable_alpha_go:
-            consumers.append(
-                AlphaGoProjectionConsumer(
-                    database,
-                    project_root=args.alpha_root,
-                    corpus=args.alpha_corpus,
-                    index_db=args.alpha_index,
-                    config=args.alpha_config,
-                    target_id=args.alpha_target_id,
-                    python_executable=args.alpha_python,
-                    timeout_seconds=args.alpha_timeout_seconds,
-                )
+            alpha_consumer = AlphaGoProjectionConsumer(
+                database,
+                project_root=args.alpha_root,
+                corpus=args.alpha_corpus,
+                index_db=args.alpha_index,
+                config=args.alpha_config,
+                target_id=args.alpha_target_id,
+                python_executable=args.alpha_python,
+                timeout_seconds=args.alpha_timeout_seconds,
             )
+            consumers.append(alpha_consumer)
+            managed_generations[_ALPHA_CONSUMER_PREFIX] = (
+                alpha_consumer.consumer_id,
+            )
+        elif args.disable_alpha_go:
+            managed_generations[_ALPHA_CONSUMER_PREFIX] = ()
         dispatcher = stack.enter_context(
             OutboxDispatcher(
                 database,
@@ -215,10 +265,14 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
                 max_attempts=args.max_attempts,
                 retry_base_seconds=args.retry_base_seconds,
                 retry_max_seconds=args.retry_max_seconds,
+                managed_generations=managed_generations,
             )
         )
         report = dispatcher.run(max_deliveries=args.max_deliveries)
-    _print(report.as_dict(), as_json=args.json)
+        disabled_consumer_ids = dispatcher.disabled_consumer_ids
+    payload = report.as_dict()
+    payload["disabled_consumer_ids"] = list(disabled_consumer_ids)
+    _print(payload, as_json=args.json)
     return report.exit_code
 
 
