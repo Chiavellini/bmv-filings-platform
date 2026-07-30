@@ -30,7 +30,7 @@ jobs:
     name: Root / Python 3.13 / no estate
     runs-on: ubuntu-latest
     env:
-      PDFS_DOCUMENT_ESTATE: ${{ runner.temp }}/absent-estate
+      PDFS_DOCUMENT_ESTATE: ${{ github.workspace }}/.ci/absent-estate
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v6
@@ -45,7 +45,7 @@ jobs:
     name: Alpha Go / Python 3.12 / no estate
     runs-on: ubuntu-latest
     env:
-      PDFS_DOCUMENT_ESTATE: ${{ runner.temp }}/absent-estate
+      PDFS_DOCUMENT_ESTATE: ${{ github.workspace }}/.ci/absent-estate
     defaults:
       run:
         working-directory: alpha-go
@@ -64,7 +64,7 @@ jobs:
     name: Soft / Python 3.11 / no estate
     runs-on: ubuntu-latest
     env:
-      PDFS_DOCUMENT_ESTATE: ${{ runner.temp }}/absent-estate
+      PDFS_DOCUMENT_ESTATE: ${{ github.workspace }}/.ci/absent-estate
     defaults:
       run:
         working-directory: soft
@@ -83,7 +83,7 @@ jobs:
     name: Earnings / Python 3.11 / no estate
     runs-on: ubuntu-latest
     env:
-      PDFS_DOCUMENT_ESTATE: ${{ runner.temp }}/absent-estate
+      PDFS_DOCUMENT_ESTATE: ${{ github.workspace }}/.ci/absent-estate
     defaults:
       run:
         working-directory: earnings

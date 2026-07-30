@@ -32,13 +32,13 @@ jobs:
   test:
     runs-on: ubuntu-latest
     env:
-      AIRFLOW_HOME: ${{ runner.temp }}/airflow
+      AIRFLOW_HOME: ${{ github.workspace }}/.ci/airflow
       AIRFLOW__CORE__DAGS_FOLDER: ${{ github.workspace }}/deploy/airflow/dags
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-      PDFS_DOCUMENT_ESTATE: ${{ runner.temp }}/estate
+      PDFS_DOCUMENT_ESTATE: ${{ github.workspace }}/.ci/estate
       PDFS_PROJECT_ROOT: ${{ github.workspace }}
       PDFS_AIRFLOW_PYTHON: python3.13
-      PDFS_AIRFLOW_VENV: ${{ runner.temp }}/airflow-venv
+      PDFS_AIRFLOW_VENV: ${{ github.workspace }}/.ci/airflow-venv
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v6
