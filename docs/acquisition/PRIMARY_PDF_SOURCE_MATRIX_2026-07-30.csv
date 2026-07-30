@@ -1,0 +1,180 @@
+issuer_slug,ticker,name,sector,active,listed_from,listed_to,source_state,source_keys,source_kinds,source_urls,coverage_from_periods,live_verified_periods,live_verified_ons,live_verified_urls,known_period_count,latest_known_period,in_source_window_period_count,latest_in_source_window_period,readiness_gaps
+gfnorte,GFNORTE,Grupo Financiero Banorte,banks,True,,,configured_with_in_window_catalog_coverage,ir,investor_relations,https://investors.banorte.com/es/financial-information/quarterly-reports,,2026-2T,2026-07-30,https://investors.banorte.com/~/media/Files/B/Banorte-IR/financial-information/quarterly-results/es/2026/2T26/2T26.pdf,21,2026-1T,21,2026-1T,listing_start_unverified
+banco_del_bajio,BBAJIO,Banco del Bajío,banks,True,,,configured_with_in_window_catalog_coverage,ir,investor_relations,https://www.bb.com.mx/webcenter/portal/BanBajio/home/inversionistas/informacion-financiera,,,,,15,2025-3T,15,2025-3T,listing_start_unverified|primary_pdf_source_live_verification_unrecorded
+regional,R,Regional,banks,True,,,configured_with_in_window_catalog_coverage,ir,investor_relations,https://www.regional.mx/,,,,,33,2026-2T,33,2026-2T,listing_start_unverified|primary_pdf_source_live_verification_unrecorded
+gfinbursa,GFINBUR,GFInbursa,banks,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+gentera,GENTERA,Gentera,banks,True,,,configured_with_in_window_catalog_coverage,ir,investor_relations,https://www.gentera.com.mx/gentera/relacion-inversionistas/informacion_trimestral,,,,,42,2026-2T,42,2026-2T,listing_start_unverified|primary_pdf_source_live_verification_unrecorded
+gf_multiva,GFMULTI,GF Multiva,banks,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+financiera_independencia,FINDEP,Financiera Independencia,banks,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+invex,INVEX,Invex,banks,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+alterna,ALTERNA,Alterna,banks,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+banco_santander_mexico,BSMX,Banco Santander Mexico,banks,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+unifin,UNIFIN,Unifin,banks,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+bbva_mexico,BBVA,BBVA Mexico,banks,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+monex,MONEX,Monex,banks,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+credito_real,CREAL,Credito Real,banks,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+gbm,GBM,GBM,brokers_exchange,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+actinver,ACTINVR,Actinver,brokers_exchange,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+value_gf,VALUEGF,Value GF,brokers_exchange,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+finamex,FINAMEX,Finamex,brokers_exchange,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+bolsa_mexicana,BOLSA,Bolsa Mexicana,brokers_exchange,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+procorp,PROCORP,Procorp,brokers_exchange,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+qualitas,Q,Quálitas,insurers_afores,True,,,configured_with_in_window_catalog_coverage,ir,investor_relations,https://qinversionistas.qualitas.com.mx/ES/reportes-trimestrales,,,,,15,2025-3T,15,2025-3T,listing_start_unverified|primary_pdf_source_live_verification_unrecorded
+gnp,GNP,GNP,insurers_afores,True,,,configured_without_catalog_coverage,bmv_issuer_pdf,bmv_issuer_pdf,https://www.bmv.com.mx/es/emisoras/informacionfinanciera/GNP-5444-CGEN_CAPIT,2026-2T,2026-2T,2026-07-30,https://www.bmv.com.mx/docs-pub/infinasg/asginfin_1576481_2026-02_2.pdf,0,,0,,listing_start_unverified|configured_source_has_no_catalog_coverage
+pena_verde,PV,Pena Verde,insurers_afores,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+profuturo,GPROFUT,Profuturo,insurers_afores,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+latinoamericana_seguros,LASEG,Latinoamericana Seguros,insurers_afores,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+fibra_uno,FUNO,Fibra Uno,fibras,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+fibra_prologis,FIBRAPL,Fibra Prologis,fibras,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+fibra_macquarie,FIBRAMQ,Fibra Macquarie,fibras,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+fibra_mty,FMTY,Fibra Mty,fibras,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+fibra_danhos,DANHOS,Fibra Danhos,fibras,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+fibra_shop,FSHOP,Fibra Shop,fibras,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+fibra_hotel,FIHO,Fibra Hotel,fibras,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+fibra_inn,FINN,Fibra Inn,fibras,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+fibra_nova,FNOVA,Fibra Nova,fibras,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+fibra_exi,FEXI,Fibra Exi,fibras,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+fibra_plus,FPLUS,Fibra Plus,fibras,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+fibra_cfe,FCFE,Fibra CFE,fibras,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+fibra_storage,STORAGE,Fibra Storage,fibras,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+fibra_uptown,FIBRAUP,Fibra Uptown,fibras,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+fibra_hd,FIBRAHD,Fibra HD,fibras,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+fibra_sites,FSITES,Fibra Sites,fibras,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+fibra_hipotecaria,FHIP,Fibra Hipotecaria,fibras,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+fibra_via,FVIA,Fibra Via,fibras,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+fibra_orion,FORION,Fibra Orion,fibras,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+fibra_ideal,FIDEAL,Fibra Ideal,fibras,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+fibra_next,NEXT,Fibra Next,fibras,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+fibra_mx,FMX,Fibra Mx,fibras,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+grupo_gav,GAV,Grupo GAV,fibras,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+vesta,VESTA,Vesta,real_estate,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+gicsa,GICSA,GICSA,real_estate,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+dine,DINE,Dine,real_estate,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+grupo_aristos,ARISTOS,Grupo Aristos,real_estate,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+soma,SOMA,Soma,real_estate,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+xfra,XFRA,Xfra,real_estate,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+planigrupo,PLANI,Planigrupo,real_estate,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+inmuebles_carso,INCARSO,Inmuebles Carso,real_estate,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+grupo_mexico,GMEXICO,Grupo México,metals_mining,True,,,configured_with_in_window_catalog_coverage,ir,investor_relations,https://www.gmexico.com/Pages/reportes-financieros.aspx,,,,,33,2026-1T,33,2026-1T,listing_start_unverified|primary_pdf_source_live_verification_unrecorded
+penoles,PE&OLES,Penoles,metals_mining,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+autlan,AUTLAN,Autlan,metals_mining,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+minera_frisco,MFRISCO,Minera Frisco,metals_mining,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+fresnillo,FRES,Fresnillo,metals_mining,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+industrias_ch,ICH,Industrias CH,steel,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+simec,SIMEC,Simec,steel,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+grupo_collado,COLLADO,Grupo Collado,steel,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+tenaris,TS,Tenaris,steel,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+cemex,CEMEX,Cemex,cement_materials,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+gcc,GCC,GCC,cement_materials,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+cementos_moctezuma,CMOCTEZ,Cementos Moctezuma,cement_materials,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+vitro,VITRO,Vitro,cement_materials,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+grupo_lamosa,LAMOSA,Grupo Lamosa,cement_materials,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+elementia_materiales,ELEMAT,Elementia Materiales,cement_materials,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+fortaleza_materiales,FORTALE,Fortaleza Materiales,cement_materials,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+interceramic,CERAMIC,Interceramic,cement_materials,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+orbia,ORBIA,Orbia Advance Corporation,chemicals,True,,,configured_with_in_window_catalog_coverage,ir,investor_relations,https://www.orbia.com/investor-relations/financials/quarterly-earnings/,,,,,33,2026-1T,33,2026-1T,listing_start_unverified|primary_pdf_source_live_verification_unrecorded
+alpek,ALPEK,Alpek,chemicals,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+cydsa,CYDSASA,Cydsa,chemicals,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+pochteca,POCHTEC,Pochteca,chemicals,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+tekchem,TEKCHEM,Tekchem,chemicals,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+america_movil,AMX,America Movil,telecom_towers,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+telesites,SITES1,Telesites,telecom_towers,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+lasite,LASITE,LaSite,telecom_towers,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+telmex,TELMEX,Telmex,telecom_towers,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+megacable,MEGA,Megacable,cable_media,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+televisa,TLEVISA,Televisa,cable_media,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+axtel,AXTEL,Axtel,cable_media,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+ct_axtel,CTAXTEL,CT Axtel,cable_media,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+grupo_cable,CABLE,Grupo Cable,cable_media,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+cidmega,CIDMEGA,Cidmega,cable_media,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+grupo_radio_centro,RCENTRO,Grupo Radio Centro,cable_media,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+tv_azteca,AZTECA,TV Azteca,cable_media,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+femsa,FEMSA,Fomento Económico Mexicano (FEMSA),beverages,True,,,configured_without_catalog_coverage,ir,investor_relations,https://femsa.gcs-web.com/financial-reports/,2024-1T,2026-2T,2026-07-30,https://femsa.gcs-web.com/static-files/c9f9b971-f7e5-4c9c-b76c-f5a21c2c3f88,0,,0,,listing_start_unverified|configured_source_has_no_catalog_coverage
+kof,KOF,Coca-Cola FEMSA,beverages,True,,,configured_with_in_window_catalog_coverage,ir,investor_relations,https://investors.coca-colafemsa.com/en/financial-information/quarterly-reports/,,,,,39,2026-1T,39,2026-1T,listing_start_unverified|primary_pdf_source_live_verification_unrecorded
+ac,AC,Arca Continental,beverages,True,,,configured_with_in_window_catalog_coverage,ir,investor_relations,http://arcacontal.com/en/investors/financial-reports,,,,,46,2026-1T,46,2026-1T,listing_start_unverified|primary_pdf_source_live_verification_unrecorded
+becle,CUERVO,Becle (Jose Cuervo),beverages,True,,,configured_with_in_window_catalog_coverage,ir,investor_relations,https://www.ircuervo.com/investors/results-and-presentatios/,,,,,43,2026-1T,43,2026-1T,listing_start_unverified|primary_pdf_source_live_verification_unrecorded
+gruma,GRUMA,GRUMA,food_staples,True,,,configured_with_in_window_catalog_coverage,ir,investor_relations,https://www.gruma.com/es/inversionistas/inversionistas-gruma/informacion-financiera/reportes-trimestrales.aspx,,,,,41,2026-1T,41,2026-1T,listing_start_unverified|primary_pdf_source_live_verification_unrecorded
+bimbo,BIMBO,Grupo Bimbo,food_staples,True,,,configured_with_in_window_catalog_coverage,ir,investor_relations,https://www.grupobimbo.com/en/investors/reports/quarterly-reports,,,,,96,2026-1T,96,2026-1T,listing_start_unverified|primary_pdf_source_live_verification_unrecorded
+sigma,SIGMA,Sigma,food_staples,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+herdez,HERDEZ,Grupo Herdez,food_staples,True,,,configured_with_in_window_catalog_coverage,ir,investor_relations,https://grupoherdez.com.mx/investors-financial-information#reportarchive,,,,,41,2026-1T,41,2026-1T,listing_start_unverified|primary_pdf_source_live_verification_unrecorded
+grupo_bafar,BAFAR,Grupo Bafar,food_staples,True,,,configured_with_in_window_catalog_coverage,ir,investor_relations,https://ribafar-dd6854e34196.herokuapp.com/,,,,,6,2026-1T,6,2026-1T,listing_start_unverified|primary_pdf_source_live_verification_unrecorded
+cultiba,CULTIBA,Cultiba,food_staples,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+minsa,MINSA,Minsa,food_staples,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+grupo_kuo,KUO,Grupo Kuo,food_staples,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+grupo_lala,LALA,Grupo Lala,food_staples,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+industrias_bachoco,BACHOCO,Industrias Bachoco,food_staples,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+ingeal,INGEAL,Ingeal,food_staples,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+grupo_qumma,QUMMA,Grupo Qumma,food_staples,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+kimber,KIMBER,Kimberly-Clark de México,household_personal,True,,,configured_with_in_window_catalog_coverage,ir,investor_relations,https://www.kimberly-clark.com.mx/finanzas/reportes-trimestrales,,,,,39,2026-1T,39,2026-1T,listing_start_unverified|primary_pdf_source_live_verification_unrecorded
+walmex,WALMEX,Walmex,retail_selfservice,True,,,configured_with_in_window_catalog_coverage,ir,investor_relations,https://www.walmex.mx/en/financial-information/quarterly.html,,,,,49,2026-1T,49,2026-1T,listing_start_unverified|primary_pdf_source_live_verification_unrecorded
+chedraui,CHDRAUI,Grupo Chedraui,retail_selfservice,True,,,configured_with_in_window_catalog_coverage,ir,investor_relations,https://inversionistas.grupochedraui.com.mx/reportes-trimestrales/,,,,,64,2026-1T,64,2026-1T,listing_start_unverified|primary_pdf_source_live_verification_unrecorded
+lacomer,LACOMER,La Comer,retail_selfservice,True,,,configured_with_in_window_catalog_coverage,ir,investor_relations,https://lacomerfinanzas.com.mx/informacion-financiera/reportes-trimestrales-bmv/,,,,,41,2026-1T,41,2026-1T,listing_start_unverified|primary_pdf_source_live_verification_unrecorded
+soriana,SORIANA,Organizacion Soriana,retail_selfservice,True,,,configured_with_in_window_catalog_coverage,ir,investor_relations,https://www.organizacionsoriana.com/principales_reportes_en.html,,,,,41,2026-1T,41,2026-1T,listing_start_unverified|primary_pdf_source_live_verification_unrecorded
+grupo_gigante,GIGANTE,Grupo Gigante,retail_selfservice,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+corporativo_fragua,FRAGUA,Corporativo Fragua,retail_pharma,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+farmacias_benavides,BEVIDES,Farmacias Benavides,retail_pharma,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+nutrisa,NUTRISA,Nutrisa,retail_pharma,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+liverpool,LIVERPOL,El Puerto de Liverpool,dept_specialty,True,,,configured_with_in_window_catalog_coverage,ir,investor_relations,https://www.elpuertodeliverpool.mx/trimestral.html,,,,,61,2026-1T,61,2026-1T,listing_start_unverified|primary_pdf_source_live_verification_unrecorded
+palacio_de_hierro,GPH,Palacio de Hierro,dept_specialty,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+alsea,ALSEA,Alsea,dept_specialty,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+grupo_famsa,GFAMSA,Grupo Famsa,dept_specialty,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+grupo_elektra,ELEKTRA,Grupo Elektra,dept_specialty,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+grupo_sanborns,GSANBOR,Grupo Sanborns,dept_specialty,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+edoardos_martin,EDOARDO,Edoardos Martin,dept_specialty,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+gap,GAP,GAP,airports,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+asur,ASUR,ASUR,airports,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+oma,OMA,OMA,airports,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+volaris,VOLAR,Volaris,transport,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+aeromexico,AERO,Aeromexico,transport,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+traxion,TRAXION,Traxion,transport,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+tmm,TMM,TMM,transport,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+gmexico_transportes,GMXT,GMexico Transportes,transport,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+pinfra,PINFRA,Pinfra,infra,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+ideal,IDEAL,Ideal,infra,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+esentia,ESENTIA,Esentia,infra,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+gmd,GMD,GMD,infra,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+pasa,PASA,PASA,infra,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+rotoplas,AGUA,Rotoplas,infra,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+aleatica,ALEATIC,Aleatica,infra,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+empresas_ica,ICA,Empresas ICA,infra,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+vista,VISTA,Vista,energy,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+nemak,NEMAK,Nemak,auto_capital_goods,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+grupo_carso,GCARSO,Grupo Carso,auto_capital_goods,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+grupo_gis,GISSA,Grupo GIS,auto_capital_goods,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+convertidora,CONVER,Convertidora,auto_capital_goods,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+accel,ACCELSA,Accel,auto_capital_goods,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+vasconia,VASCONI,Vasconia,auto_capital_goods,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+consorcio_ara,ARA,Consorcio ARA,homebuilders,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+vinte,VINTE,Vinte,homebuilders,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+cadu,CADU,Cadu,homebuilders,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+homex,HOMEX,Homex,homebuilders,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+javer,JAVER,Javer,homebuilders,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+urbi,URBI,Urbi,homebuilders,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+sare,SARE,Sare,homebuilders,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+grupo_hotelero,HOTEL,Grupo Hotelero,hotels_leisure,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+hoteles_city,HCITY,Hoteles City,hotels_leisure,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+grupo_posadas,POSADAS,Grupo Posadas,hotels_leisure,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+rlh_properties,RLH,RLH Properties,hotels_leisure,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+sports_world,SPORT,Grupo Sports World,hotels_leisure,True,,,configured_without_catalog_coverage,ir,investor_relations,https://www.sportsworld.com.mx/inversionistas/,2024-1T,2026-2T,2026-07-30,https://www.sportsworld.com.mx/uploads/es/documents/reports_quarterly/gsw_reporte_2T26.pdf,0,,0,,listing_start_unverified|configured_source_has_no_catalog_coverage
+cmr,CMR,CMR,hotels_leisure,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+cie,CIE,CIE,hotels_leisure,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+club_america,AGUILAS,Club America,sports_ent,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+diablos_rojos,DIABLOS,Diablos Rojos,sports_ent,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+lab,LAB,Genomma Lab Internacional,healthcare,True,,,configured_with_in_window_catalog_coverage,ir,investor_relations,https://inversionistas.genommalab.com/informacion-financiera/,,,,,40,2026-2T,40,2026-2T,listing_start_unverified|primary_pdf_source_live_verification_unrecorded
+medica_sur,MEDICA,Medica Sur,healthcare,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+proteak,TEAK,Proteak,agro_forestry,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+grupo_agro,AGRO,Grupo Agro,agro_forestry,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+savia,SAVIA,Savia,agro_forestry,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+agroexportadora,AGRIEXP,Agroexportadora,agro_forestry,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+globc,GLOBC,Globc,misc_industrial,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+aleatica_educa,EDUCA,Aleatica Educa,misc_industrial,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+coxa,COXA,Coxa,misc_industrial,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+kamosa,KAMOSA,Kamosa,misc_industrial,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+alfa,ALFA,Alfa,misc_industrial,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+anb,ANB,ANB,misc_industrial,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+grupo_gomo,GOMO,Grupo GOMO,misc_industrial,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+iasa,IASASA,IASA,misc_industrial,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+qb_industrial,QBINDUS,QB Industrial,misc_industrial,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+san,SAN,SAN,misc_industrial,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+sre,SRE,SRE,misc_industrial,True,,,unconfigured_without_coverage,,,,,,,,0,,0,,listing_start_unverified|primary_pdf_source_unconfigured
+tiendas_3b,TBBB,Tiendas 3B (BBB Foods),retail_discount,True,,,configured_without_catalog_coverage,ir,investor_relations,https://www.investorstiendas3b.com/financials/quarterly-results/default.aspx,2024-1T,2026-1T,2026-07-30,https://s203.q4cdn.com/155743495/files/doc_financials/2026/q1/Earnings-Release-1Q26.pdf,0,,0,,listing_start_unverified|configured_source_has_no_catalog_coverage

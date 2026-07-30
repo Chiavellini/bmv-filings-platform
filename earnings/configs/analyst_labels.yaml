@@ -1,0 +1,17 @@
+# Analyst directional-prediction label semantics (confirmed by the analyst,
+# 2026-07-28): "N to P" / "N to N" are MIXED/SOFT calls — leaning positive /
+# leaning negative with low conviction — treated as half-strength directional
+# predictions. Full-strength: Positive / Negative. Neutral = no direction.
+# The prediction target is the stock's next trading day after the report
+# (column header: "Analyst Expectation (Stock Next Day after Report)").
+labels:
+  Positive: {direction: 1,  strength: 1.0}
+  Negative: {direction: -1, strength: 1.0}
+  Neutral:  {direction: 0,  strength: 0.0}
+  "N to P": {direction: 1,  strength: 0.5}
+  "N to N": {direction: -1, strength: 0.5}
+strict: true          # unknown label -> hard fail
+# expectations block geometry in the frozen workbook (see analyst_calendar.yaml
+# for the source file): row 1 headers 2Q24..2Q26 in columns C..K, ticker rows
+# 2-60 in column B (sector headers are mixed-case and skipped).
+quarter_columns: {2Q24: 3, 3Q24: 4, 4Q24: 5, 1Q25: 6, 2Q25: 7, 3Q25: 8, 4Q25: 9, 1Q26: 10, 2Q26: 11}

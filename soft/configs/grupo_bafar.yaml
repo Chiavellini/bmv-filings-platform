@@ -1,0 +1,82 @@
+# Grupo Bafar (BAFAR) — PDF-sourced coverage config. Not in the BMV free XBRL archive
+# (verified: fetch_xbrl_batch --include-absent → 0 periods), so fundamentals come from the
+# quarterly-report PDFs on the IR site via the vendored download → parse → tiered cascade.
+company:
+  name: Grupo Bafar
+  ticker: "BAFARB MM"
+  currency: MXN
+  exchange: BMV
+  unit: millions           # coverage layer works in P$ millions
+
+tier_precedence:
+  # prose/regex overrides FIRST — the generic table/xbrl tiers mis-map Bafar's interleaved
+  # summary table, so the hand-authored metric_overrides below are authoritative.
+  default: [prose, search, table, calc]
+
+ir_website:
+  # The IR site (an S3-backed static page) serves each quarter's results report at a
+  # deterministic URL, so the crawl is backed up by direct_url_templates. Period token is
+  # {quarter}T{yy} (e.g. 1T26). Only ~2024-2026 are live on S3 (older periods 403) — the template
+  # verifies each URL and keeps only those that serve a PDF, so the pre-2024 misses are silent.
+  url: https://ribafar-dd6854e34196.herokuapp.com/
+  direct_url_templates:
+    - "https://grupobafar.s3.us-east-1.amazonaws.com/CentroReportes/ReportesTrimestrales/{quarter}T{yy}/GB_PR_{quarter}T{yy}.pdf"
+  pdf_link_pattern: '(?i)GB_PR_\dT\d{2}\.pdf'
+  delay_ms: 400
+
+# --------------------------------------------------------------------------------------------------
+# Bafar's summary + balance tables are a 5-column interleaved layout with the PRIOR year first:
+#   <label> <prior> <prior%> <current> <current%> <growth%>
+# (header: "3T24  %  3T25  %  Crecimiento"). Figures are in THOUSANDS ("Cifras expresadas en miles
+# de pesos"), while the coverage layer works in millions → multiplier 0.001. Each pattern captures
+# the CURRENT (2nd) number only (1 group → _build_row current=), skipping the prior/%/growth cols;
+# the LTM/FY rollup sums the per-quarter currents. The generic patterns mis-map this (they assume a
+# current-first "value value growth" layout), so these overrides are authoritative.
+#
+# The prior column can be NEGATIVE and printed in parentheses (e.g. Utilidad Neta 2T25 prior
+# "(102,712)  -1.5%") — the pattern MUST tolerate `\(?...\)?` and a leading `-` on the % or it skips
+# the real quarter row and grabs the ACUMULADO (YTD) figure from a later table (verified: 2T25 NI
+# quarter = 1,579,856, not the 2,349,482 acumulado). So prior = `\(?-?[\d,]+\)?` and the % is `-?`.
+# The summary (quarter) table precedes the acumulado table, so first-match = the quarter value.
+# --------------------------------------------------------------------------------------------------
+metric_overrides:
+  revenue:
+    patterns:
+      - regex: 'Ventas\s+Netas\s+\(?-?[\d,]+\)?\s+-?[\d.]+\s*%?\s+([\d,]+)'
+        source: prose
+        multiplier: 0.001
+  operating_income:
+    patterns:
+      - regex: 'Utilidad\s+de\s+Operaci[oó]n\s+\(?-?[\d,]+\)?\s+-?[\d.]+\s*%?\s+([\d,]+)'
+        source: prose
+        multiplier: 0.001
+  ebitda:
+    patterns:
+      - regex: 'EBITDA\*?\s+\(?-?[\d,]+\)?\s+-?[\d.]+\s*%?\s+([\d,]+)'
+        source: prose
+        multiplier: 0.001
+  net_income:
+    patterns:
+      - regex: 'Utilidad\s+Neta\s+\(?-?[\d,]+\)?\s+-?[\d.]+\s*%?\s+([\d,]+)'
+        source: prose
+        multiplier: 0.001
+  total_assets:
+    patterns:
+      - regex: 'Activo\s+Total\s+\(?-?[\d,]+\)?\s+-?[\d.]+\s*%?\s+([\d,]+)'
+        source: prose
+        multiplier: 0.001
+  equity:
+    patterns:
+      - regex: 'Capital\s+Contable\s+Total\s+\(?-?[\d,]+\)?\s+-?[\d.]+\s*%?\s+([\d,]+)'
+        source: prose
+        multiplier: 0.001
+  total_equity:
+    patterns:
+      - regex: 'Capital\s+Contable\s+Total\s+\(?-?[\d,]+\)?\s+-?[\d.]+\s*%?\s+([\d,]+)'
+        source: prose
+        multiplier: 0.001
+  total_liabilities:
+    patterns:
+      - regex: 'Pasivo\s+Total\s+\(?-?[\d,]+\)?\s+-?[\d.]+\s*%?\s+([\d,]+)'
+        source: prose
+        multiplier: 0.001

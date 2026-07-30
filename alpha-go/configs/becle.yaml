@@ -1,0 +1,150 @@
+company:
+  name: Becle (Jose Cuervo)
+  ticker: CUERVO
+  exchange: BMV
+  language: en          # EN releases 2021-3T+ & 2016-2017-1T; ES 2017-2T–2022-1T (SIFIC bundles embed the release)
+  currency: MXN
+  unit: millions        # GT model is in P$mn; release tables print P$ millions
+
+# Consolidated revenue: the release summary table prints "Net Sales <cur> 100%
+# <prior> 100%" (EN) / "Ventas Netas ..." (ES). XBRL covers 2021+; the English
+# SIFIC [310000] block (bmv tier) covers 2018-2019. These patterns recover the
+# release-table eras; the region-total fallback covers reports without the
+# summary-table layout.
+metric_overrides:
+  revenue:
+    patterns:
+      - regex: 'Net\s+Sales\s+\$?\s*([\d,]+)\s+100(?:\.0)?%\s+\$?\s*([\d,]+)'
+        source: table
+      - regex: 'Ventas\s+Netas\s+\$?\s*([\d,]+)\s+100(?:\.0)?%\s+\$?\s*([\d,]+)'
+        source: table
+      - regex: 'Net\s+Sales\s+by\s+Region\s+\dQ\s?\d{2}[\s\S]{0,900}?Total\s+\$?\s*([\d,]+)\s+\$?\s*([\d,]+)'
+        source: table
+      - regex: '(?:Ventas\s+netas|Ingresos)\s+por\s+regi[oó]n\s+\dT\s?\d{2}[\s\S]{0,900}?TOTAL\s+\$?\s*([\d,]+)\s+\$?\s*([\d,]+)'
+        source: table
+      # 2015-2016 bondholder-letter prose (own-quarter figure)
+      - regex: 'net\s+sales(?:\s+less\s+excise\s+taxes)?\s*(?:\("?Net\s+Sales"?\))?\s+totaled\s+MX[NP]\s*\$?\s*([\d,.]+)\s+million'
+        source: prose
+
+# Segment metrics. The region/category NET SALES tables share row labels with the
+# VOLUME tables (000s 9L cases), so every pattern anchors on the net-sales table
+# HEADER (quarter-anchored "NQ YY"/"NT YY", which also excludes the Full-Year
+# twin tables in Q4 reports). Header variants across eras:
+#   EN  "Net Sales by Region/Category NQ YY"          (2021-3T+)
+#   ES  "Ventas netas por región/categoría NT YY"     (2017-3T–2022-1T)
+#   ES  "Ingresos por región/categoría NT YY"         (2017-2T, 2017-4T)
+# Row-label variants: "EUA y Canadá"/"EUA & CANADÁ"/"EUA Y CANADÁ"; "ROW"/"Resto
+# del Mundo"/"Rest of the World"; 1Q26 wraps "U.S. &"/"Canada" and "Rest of
+# the"/"World" around the value line, so the label tail is optional. Windows are
+# sized for the page-banner break that often splits header from rows.
+custom_metrics:
+  - key: revenue_us_canada
+    label: "Net Sales U.S. & Canada"
+    label_es: "Ventas netas EUA y Canadá"
+    section: segment
+    unit: currency
+    patterns:
+      - regex: 'Net\s+Sales\s+by\s+Region\s+\dQ\s?\d{2}[\s\S]{0,500}?U\.S\.\s*&\s*(?:Canada\s+)?\$?\s*([\d,]+)\s+\$?\s*([\d,]+)'
+        source: table
+      # label tail optional: 2019 SIFIC bundles wrap "EUA y" / "Canadá" around the value line
+      - regex: '(?:Ventas\s+netas|Ingresos)\s+por\s+regi[oó]n\s+\dT\s?\d{2}[\s\S]{0,500}?EUA\s*[y&]\s*(?:Canad[aá]\s+)?([\d,]+)\s+([\d,]+)'
+        source: table
+  - key: revenue_mexico
+    label: "Net Sales Mexico"
+    label_es: "Ventas netas México"
+    section: segment
+    unit: currency
+    patterns:
+      - regex: 'Net\s+Sales\s+by\s+Region\s+\dQ\s?\d{2}[\s\S]{0,650}?M[eé]xico\s+\$?\s*([\d,]+)\s+\$?\s*([\d,]+)'
+        source: table
+      - regex: '(?:Ventas\s+netas|Ingresos)\s+por\s+regi[oó]n\s+\dT\s?\d{2}[\s\S]{0,650}?M[eé]xico\s+([\d,]+)\s+([\d,]+)'
+        source: table
+  - key: revenue_row
+    label: "Net Sales Rest of the World"
+    label_es: "Ventas netas Resto del Mundo"
+    section: segment
+    unit: currency
+    patterns:
+      - regex: 'Net\s+Sales\s+by\s+Region\s+\dQ\s?\d{2}[\s\S]{0,850}?Rest\s+of\s+the\s*(?:World\s+)?\$?\s*([\d,]+)\s+\$?\s*([\d,]+)'
+        source: table
+      - regex: '(?:Ventas\s+netas|Ingresos)\s+por\s+regi[oó]n\s+\dT\s?\d{2}[\s\S]{0,850}?(?:Resto\s+del\s*(?:Mundo\s+)?|ROW\s+)([\d,]+)\s+([\d,]+)'
+        source: table
+  - key: revenue_jose_cuervo
+    label: "Net Sales Jose Cuervo"
+    label_es: "Ventas netas Jose Cuervo"
+    section: segment
+    unit: currency
+    patterns:
+      - regex: 'Net\s+Sales\s+by\s+Category\s+\dQ\s?\d{2}[\s\S]{0,500}?Jose\s+Cuervo\s+\$?\s*([\d,]+)\s+\$?\s*([\d,]+)'
+        source: table
+      - regex: '(?:Ventas\s+netas|Ingresos)\s+por\s+categor[ií]a\s+\dT\s?\d{2}[\s\S]{0,500}?Jos[eé]\s+Cuervo\s+([\d,]+)\s+([\d,]+)'
+        source: table
+  - key: revenue_other_tequilas
+    label: "Net Sales Other Tequilas"
+    label_es: "Ventas netas Otros Tequilas"
+    section: segment
+    unit: currency
+    patterns:
+      - regex: 'Net\s+Sales\s+by\s+Category\s+\dQ\s?\d{2}[\s\S]{0,750}?Other\s+Tequilas\s+\$?\s*([\d,]+)\s+\$?\s*([\d,]+)'
+        source: table
+      - regex: '(?:Ventas\s+netas|Ingresos)\s+por\s+categor[ií]a\s+\dT\s?\d{2}[\s\S]{0,750}?Otros\s+Tequilas\s+([\d,]+)\s+([\d,]+)'
+        source: table
+  - key: revenue_other_spirits
+    label: "Net Sales Other Spirits"
+    label_es: "Ventas netas Otros Spirits"
+    section: segment
+    unit: currency
+    patterns:
+      - regex: 'Net\s+Sales\s+by\s+Category\s+\dQ\s?\d{2}[\s\S]{0,950}?Other\s+Spirits\s+\$?\s*([\d,]+)\s+\$?\s*([\d,]+)'
+        source: table
+      - regex: '(?:Ventas\s+netas|Ingresos)\s+por\s+categor[ií]a\s+\dT\s?\d{2}[\s\S]{0,950}?Otros\s+(?:Spirits|Espirituosos)\s+([\d,]+)\s+([\d,]+)'
+        source: table
+  - key: revenue_rtd
+    label: "Net Sales RTD"
+    label_es: "Ventas netas RTD"
+    section: segment
+    unit: currency
+    patterns:
+      - regex: 'Net\s+Sales\s+by\s+Category\s+\dQ\s?\d{2}[\s\S]{0,1200}?RTD\s+\$?\s*([\d,]+)\s+\$?\s*([\d,]+)'
+        source: table
+      - regex: '(?:Ventas\s+netas|Ingresos)\s+por\s+categor[ií]a\s+\dT\s?\d{2}[\s\S]{0,1200}?RTD\s+([\d,]+)\s+([\d,]+)'
+        source: table
+
+# ---------------------------------------------------------------------------
+# Documented data-unavailability (proof-cited; excluded from the accuracy
+# denominator, NOT chased). 2016 quarters ship as pre-IPO bondholder letters and
+# the 1Q17/4Q16 releases show region/category GROWTH-% infographics only — the
+# absolute splits GT carries are restated comparatives first published in later
+# reports. Two later cells print as-reported values that GT restates.
+# ---------------------------------------------------------------------------
+unavailable:
+  revenue:
+    periods: ["1Q16A", "3Q16A"]
+    reason: "bondholder letters report unrestated pre-IPO net sales (1Q16: MXP 3,446.3; 3Q16: MXP 4,078); GT uses restated comparatives"
+    proof: "data/reports/becle/2016-1T.md:46 — 'net sales ... totaled MXP 3,446.3 million'; 2016-3T.md:36 — 'net sales ... were MXP 4,078 million'"
+  revenue_us_canada: &no2016
+    periods: ["1Q16A", "2Q16A", "3Q16A", "4Q16A", "1Q17A"]
+    reason: "no absolute segment split in source: 2016 bondholder letters have no segment tables; 4Q16/1Q17 releases show growth-%/share-% infographics only"
+    proof: "data/reports/becle/2017-1T.md:71-77 — 'Net Sales by Region 1Q17' lists 1Q GROWTH / SHARE OF TOTAL percentages, no absolutes"
+  revenue_mexico: *no2016
+  revenue_jose_cuervo: *no2016
+  revenue_other_tequilas: *no2016
+  revenue_other_spirits: *no2016
+  revenue_row:
+    periods: ["1Q16A", "2Q16A", "3Q16A", "4Q16A", "1Q17A", "4Q17A"]
+    reason: "2016/1Q17: no absolute segment split in source (see revenue_us_canada); 4Q17: source prints as-reported ROW 1,134 before the intercompany adjustment GT nets out (restated 975)"
+    proof: "data/reports/becle/2017-4T.md:360-370 — 'ROW 1,134 ... Ajuste Intercompañía (159)'; 2018-4T.md:319-333 prior column shows restated 975"
+  revenue_rtd:
+    periods: ["1Q16A", "2Q16A", "3Q16A", "4Q16A", "1Q17A", "3Q17A", "4Q17A"]
+    reason: "2016/1Q17: no absolute segment split in source; 3Q17/4Q17: source prints as-reported RTD 407/530, GT carries restated 428/509 (2017 intercompany reallocation)"
+    proof: "data/reports/becle/2017-3T.md:418-429 — 'RTD 407 378'; 2017-4T.md:408-421 — 'RTD 530 475 ... Ajuste Intercompañía (159)'"
+
+era_gates: {}
+
+ir_website:
+  url: https://www.ircuervo.com/investors/results-and-presentatios/
+  pdf_link_pattern: '(?i)\.pdf'
+  use_playwright: true
+  max_reports: 120
+  delay_ms: 500
+  xbrl_ticker: CUERVO

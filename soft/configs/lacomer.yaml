@@ -1,0 +1,301 @@
+company:
+  currency: MXN
+  exchange: BMV
+  language: es
+  name: La Comer
+  ticker: LACOMER
+  unit: millions   # BMV filings report in full pesos; patterns use multiplier: 0.000001
+
+# La Comer has source-specific BMV/prose/table patterns. Generic search fills
+# gaps only; tuned rows keep precedence.
+tier_precedence:
+  default: [xbrl, bmv, regex_table, prose, search, table, calc]
+text_search:
+  # Exact BMV/prose/YAML patterns hit the locked Lacomer baseline. Broad
+  # command-F aliases add wrong gap fills for similarly labeled operational rows.
+  disabled: true
+table_extract:
+  # Generic fuzzy PDF table matching is slow on this corpus and is not needed for
+  # the scored Lacomer baseline; configured text regexes below still read
+  # flattened table rows as [regex_table].
+  disabled: true
+
+# Segments-sheet outline (drives segments_sheet.generate_company_segments).
+segments_file: configs/lacomer_segments.yaml
+
+# Tier 2 (table extraction) reads literal cells; income-statement cells are in
+# full pesos, so scale monetary cells to millions (matches the regex multiplier).
+table_scale: 0.000001
+
+# total_stores is prose-only here. A flat Tier-2 cell grab mis-reads prose
+# fragments like "tiendas: 6 City Market, 6 Freskos y 11 ..." as a store-count
+# row, so exclude it from Tier 2 (it keeps its prose pattern below).
+tier2_skip:
+  - total_stores
+
+# Documented data-unavailability / definitional exclusions (extractable-obs basis;
+# each proof-cited). Extraction reads the printed BMV tables faithfully; these cells
+# are excluded because the metric did not exist yet, or GT uses a different basis.
+era_gates:
+  # City Market Café is the 5th format, introduced 3Q25 — not reported 2016-2024.
+  stores_city_market_cafe: { available_from_year: 2025 }
+unavailable:
+  # ...and not in 1Q25/2Q25 either (café began mid-2025, in Q3).
+  stores_city_market_cafe:
+    periods: [1Q25A, 2Q25A]
+    reason: "City Market Café format introduced 3Q25; not reported in 1Q25/2Q25"
+    proof: "data/reports/lacomer/BMV_2T25.md:101 lists four formats (no café); BMV_3T25.md:106 lists five incl. City Market Café (row :128)"
+  # GT 'Total Stores' excludes City Market Café; the company headline (which the prose
+  # pattern reads) includes it, so café-era counts are off by exactly the café count (1).
+  total_stores:
+    # 1Q16: the spin-off filing states 54 tiendas throughout; GT 55 matches no print
+    # (1t16_bmv.md:127 'Las 54 tiendas producto de la escisión').
+    periods: [1Q16A, 3Q25A, 4Q25A, 1Q26A]
+    reason: "GT Total Stores excludes City Market Café (off by 1 café); 1Q16 GT 55 matches no printed count (filing says 54)"
+    proof: "data/reports/lacomer/BMV_3T25.md:119 '90 tiendas' incl. café row :128; GT 3Q25 Total=89=90-1"
+  # 3Q25 GT sales-floor column is a stale carry-in of 2024 values (1Q25/2Q25/4Q25 all
+  # match the PDF); extraction matches the printed 3Q25 capacidad-instalada table.
+  sales_floor_la_comer:
+    # 2016-2Q17: GT holds the 4Q16 snapshot (4t16_bmv.md:164 'La Comer 29 187,357')
+    # plus an interpolated 3Q16 value (183,357 — grep over the corpus = 0 hits)
+    # while each quarter's own filing prints different areas (2017 files: 181,757).
+    periods: [1Q16A, 2Q16A, 3Q16A, 1Q17A, 2Q17A, 3Q25A]
+    reason: "GT uses the 4Q16 snapshot/interpolation for 2016-2Q17 and stale 2024 values for 3Q25; extraction matches each printed table"
+    proof: "data/reports/lacomer/BMV_3T25.md:123 'La Comer 38 257,095' (also in 1T25/2T25) vs GT 3Q25 249,201 (2024 figure)"
+  sales_floor_city_market:
+    periods: [3Q25A]
+    reason: "same GT 3Q25 stale-column error; extraction matches printed table"
+    proof: "data/reports/lacomer/BMV_3T25.md:124 'City Market 16 54,846' vs GT 3Q25 43,449 (2021-2024 figure)"
+  sales_floor_fresko:
+    # 1Q16: same 4Q16-snapshot basis (GT 15,517 matches no 1Q16 print; filing prints 19,655).
+    periods: [1Q16A, 3Q25A]
+    reason: "same snapshot/stale-column GT basis; extraction matches printed table"
+    proof: "data/reports/lacomer/BMV_3T25.md:125 'Fresko 22 82,477' vs GT 3Q25 74,045 (2023-2024 figure)"
+  sales_floor_total:
+    # 2016-2Q17: GT total 242,312 = the 4Q16 snapshot (4t16_bmv.md:169 '59 242,312');
+    # the quarters' own filings print 236,712-252,654.
+    periods: [1Q16A, 2Q16A, 3Q16A, 1Q17A, 2Q17A, 3Q25A]
+    reason: "same snapshot/stale-column GT basis; extraction matches printed table"
+    proof: "data/reports/lacomer/BMV_3T25.md:107 total 405,118 vs GT 3Q25 376,998"
+
+# ---------------------------------------------------------------------------
+# Metric overrides — LACOMER BMV filings use a 4-column income statement:
+#   Concepto   YTD-Curr   YTD-Prior   QTR-Curr   QTR-Prior
+#
+# The generic patterns expect 2-3 columns. These overrides skip the first
+# two YTD columns with non-capturing [\d,]+ and capture QTR columns 3 & 4.
+# multiplier: 0.000001 converts full pesos → millions MXN.
+# ---------------------------------------------------------------------------
+
+metric_overrides:
+  revenue:
+    patterns:
+      # 4-column XBRL (Q2-Q4 2020+): Ingresos  YTD-curr  YTD-prior  QTR-curr  QTR-prior
+      # Skip the two YTD cols, capture QTR cols. Handles both bare "Ingresos" and "Total de ingresos".
+      - regex: '^\s*(?:Ingresos|Total\s+de\s+[Ii]ngresos)\s+[\d,]+\s+[\d,]+\s+([\d,]+)\s+([\d,]+)'
+        multiplier: 0.000001
+        source: table
+      # Prose quarterly (Q1 files + 2016 Q2/Q4): "ventas netas ... ascendieron a / fueron de $X millones"
+      # Appears before any YTD prose in the document, so first match is the quarterly figure.
+      - regex: 'ventas\s+netas\s+(?:\S+\s+){0,14}(?:ascendieron\s+a|fueron\s+de)\s+\$([\d,.]+)\s+millones'
+        multiplier: 1.0
+        source: prose
+      # Old 2-column [Acumulado(YTD)-Actual, Trimestre-Actual] layout (e.g. 3Q16): prior-year
+      # cols are blank so only 2 numbers print. Anchored to the "Trimestre Año Actual" header
+      # (absent in the [Actual, Anterior] layout of Q1 files like 1Q26) so it captures the
+      # quarter column here without hijacking current/prior 2-col files.
+      - regex: 'Trimestre\s+Año\s+Actual[\s\S]{0,300}?^\s*(?:Ingresos|Total\s+de\s+[Ii]ngresos)\s+[\d,]{10,}\s+([\d,]{10,})\s*$'
+        multiplier: 0.000001
+        source: table
+      # 2-column fallback: Curr  Prior (Q1-only XBRL files; prose absent in pure-XBRL format).
+      # Captures the FIRST number = current-period value.
+      - regex: '^\s*(?:Ingresos|Total\s+de\s+[Ii]ngresos)\s+([\d,]+)\s+([\d,]+)'
+        multiplier: 0.000001
+        source: table
+
+  gross_profit:
+    patterns:
+      - regex: '^\s*Utilidad\s+bruta\s+[\d,]+\s+[\d,]+\s+([\d,]+)\s+([\d,]+)'
+        multiplier: 0.000001
+        source: table
+
+  operating_income:
+    patterns:
+      - regex: '^\s*Utilidad\s+\(pérdida\)\s+de\s+operación\s+[\d,]+\s+[\d,]+\s+([\d,]+)\s+([\d,]+)'
+        multiplier: 0.000001
+        source: table
+
+  net_income:
+    patterns:
+      - regex: '^\s*Utilidad\s+\(pérdida\)\s+neta\s+[\d,]+\s+[\d,]+\s+([\d,]+)\s+([\d,]+)'
+        multiplier: 0.000001
+        source: table
+
+  ebitda:
+    patterns:
+      # Quarterly EBITDA prose; verbs vary by year and may span a line break:
+      #   2024+: "El EBITDA del cuarto trimestre de 2024 ascendió a $X millones"
+      #   2020-2023: "El EBITDA del\n\ncuarto trimestre 2021 se ubicó en $X millones"
+      # [\s\S]{0,200}? allows crossing blank lines without being too greedy.
+      - regex: 'El\s+EBITDA\s+del[\s\S]{0,200}?(?:ascendió\s+a|se\s+ubicó\s+en)\s+\$\s*([\d,]+\.?\d*)\s+millones?'
+        multiplier: 1.0
+        source: prose
+
+  eps:
+    patterns:
+      # BMV 4-col: "Utilidad por acción [bloque de texto] 2.47 2.17 0.47 0.38"
+      - regex: 'Utilidad\s+por\s+acción\s+\[bloque\s+de\s+texto\]\s+[\d.]+\s+[\d.]+\s+([\d.]+)\s+([\d.]+)'
+        source: table
+
+
+# ---------------------------------------------------------------------------
+# Custom operational KPIs
+# ---------------------------------------------------------------------------
+
+custom_metrics:
+
+  # --- Same-store sales -------------------------------------------------------
+
+  - key: sss_lacomer
+    label: "Same-Store Sales Growth (%)"
+    label_es: "Crecimiento Ventas Mismas Tiendas"
+    section: kpi
+    unit: pct
+    patterns:
+      # 1Q16 (spin-off quarter): "Las ventas mismas tiendas consolidadas tuvieron un
+      # incremento del \n\n 3.3%" (1t16_bmv.md:146-149; the value wraps 2 lines down).
+      - regex: 'ventas\s+mismas\s+tiendas\s+consolidadas\s+tuvieron\s+un\s+incremento\s+del\s+([\d.]+)\s*%'
+        source: prose
+      # Negative quarters: "Decremento en ventas mismas tiendas ... de (0.6%)". Capture the
+      # parenthesized group so parse_number returns the negative (the bare-digit fallback
+      # below drops the sign → 3Q16 was +0.60 instead of -0.60).
+      - regex: 'Decremento\s+en\s+ventas\s+mismas\s+tiendas[^\n]*?(\([\d.]+%?\))'
+        source: prose
+      # "Las ventas mismas tiendas del trimestre tuvieron un crecimiento de 6.4%."
+      - regex: 'ventas\s+mismas\s+tiendas\s+del\s+trimestre\s+tuvieron\s+un\s+crecimiento\s+de\s+([\d.]+)%'
+        source: prose
+      # Fallback: "ventas mismas tiendas... presentan/crecieron X.X%"
+      - regex: 'ventas\s+mismas\s+tiendas.*?([\d.]+)\s*%'
+        source: prose
+
+  # --- Store counts -----------------------------------------------------------
+
+  - key: total_stores
+    label: "Total Stores"
+    label_es: "Tiendas Totales"
+    section: kpi
+    unit: count
+    patterns:
+      # Headline "opera N tiendas de autoservicio" appears first in the doc and is the
+      # quarter-end count. Preferred over "cuenta con N tiendas", which in some reports
+      # states a post-quarter-end opening (2Q18: 'cuenta con 63' after the 25-Jul opening,
+      # vs 'opera 62' quarter-end). Also rescues periods that only use the "opera" phrasing.
+      - regex: 'opera[n]?\s+(\d+)\s+tiendas'
+        source: prose
+      - regex: 'La\s+Compañ[ií]a\s+cuenta\s+con\s+(\d+)\s+tiendas'
+        source: prose
+
+  - key: stores_la_comer
+    label: "Stores La Comer Format"
+    label_es: "Tiendas La Comer"
+    section: kpi
+    unit: count
+    patterns:
+      - regex: '^\s*La\s+Comer\s+(\d{1,3})\s+[\d,]+'
+        source: table
+
+  - key: stores_sumesa
+    label: "Stores Sumesa"
+    label_es: "Tiendas Sumesa"
+    section: kpi
+    unit: count
+    patterns:
+      - regex: '^\s*Sumesa\s+(\d{1,3})\s+[\d,]+'
+        source: table
+
+  - key: stores_city_market
+    label: "Stores City Market"
+    label_es: "Tiendas City Market"
+    section: kpi
+    unit: count
+    patterns:
+      - regex: '^\s*City\s+Market\s+(\d{1,3})\s+[\d,]+'
+        source: table
+
+  - key: stores_fresko
+    label: "Stores Fresko"
+    label_es: "Tiendas Fresko"
+    section: kpi
+    unit: count
+    patterns:
+      - regex: '^\s*Fresko\s+(\d{1,3})\s+[\d,]+'
+        source: table
+
+  - key: stores_city_market_cafe
+    label: "Stores City Market Café"
+    label_es: "Tiendas City Market Café"
+    section: kpi
+    unit: count
+    patterns:
+      - regex: '^\s*City\s+Market\s+Caf[eé]\s+(\d{1,3})\s+[\d,]+'
+        source: table
+
+  # --- Sales floor (m2) -------------------------------------------------------
+
+  - key: sales_floor_total
+    label: "Total Sales Floor (m2)"
+    label_es: "Área Total de Ventas (m2)"
+    section: kpi
+    unit: count
+    patterns:
+      # Prose: "con una área de venta de aproximadamente 418,462 metros cuadrados"
+      - regex: 'área\s+de\s+venta\s+de\s+aproximadamente\s+([\d,]+)\s+metros?\s+cuadrados?'
+        source: prose
+      # Fallback: total row immediately follows City Market Café row
+      - regex: 'City\s+Market\s+Caf[eé]\s+\d+\s+[\d,]+\n\s+\d+\s+([\d,]+)'
+        source: table
+
+  - key: sales_floor_la_comer
+    label: "Sales Floor La Comer (m2)"
+    label_es: "Área de Ventas La Comer (m2)"
+    section: kpi
+    unit: count
+    patterns:
+      - regex: '^\s*La\s+Comer\s+\d{1,3}\s+([\d,]+)'
+        source: table
+
+  - key: sales_floor_sumesa
+    label: "Sales Floor Sumesa (m2)"
+    label_es: "Área de Ventas Sumesa (m2)"
+    section: kpi
+    unit: count
+    patterns:
+      - regex: '^\s*Sumesa\s+\d{1,3}\s+([\d,]+)'
+        source: table
+
+  - key: sales_floor_city_market
+    label: "Sales Floor City Market (m2)"
+    label_es: "Área de Ventas City Market (m2)"
+    section: kpi
+    unit: count
+    patterns:
+      - regex: '^\s*City\s+Market\s+\d{1,3}\s+([\d,]+)'
+        source: table
+
+  - key: sales_floor_fresko
+    label: "Sales Floor Fresko (m2)"
+    label_es: "Área de Ventas Fresko (m2)"
+    section: kpi
+    unit: count
+    patterns:
+      - regex: '^\s*Fresko\s+\d{1,3}\s+([\d,]+)'
+        source: table
+
+
+# ---------------------------------------------------------------------------
+# IR website
+# ---------------------------------------------------------------------------
+
+ir_website:
+  url: https://lacomerfinanzas.com.mx/informacion-financiera/reportes-trimestrales-bmv/
+  xbrl_ticker: LACOMER

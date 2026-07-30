@@ -1,0 +1,91 @@
+# metric_applicability.yaml — sector-grained N/A map for the master coverage matrix.
+#
+# Precedence: consulted by src/coverage/applicability.py, which is the single source of truth for
+# whether a (company, column) is applicable | na_template | na_source. Every na_template entry here
+# carries a rationale — grounded in accounting/regulatory convention, NOT in whether the engine
+# happens to fill the cell today. See applicability.py's module docstring for why that distinction
+# matters (an observed-fill-derived N/A table quietly hides real gaps as "structural").
+#
+# Shape: sectors listed here override the coarser 3-way TEMPLATE table (NA_TEMPLATE in
+# applicability.py) for that sector; sectors not listed fall back to their template's default.
+# `exceptions` are per-slug overrides within a sector — a label mapped to a rationale string adds a
+# structural N/A for that one company; a label mapped to the literal `applicable` removes one.
+#
+# A label is (a) added here, or (b) already covered by NA_TEMPLATE and merely documented here for its
+# rationale. Either way applicability.py unions this file's na_template set with the template
+# default, so nothing needs restating twice.
+
+sectors:
+  fibras:
+    # Trusts (fideicomisos) whose sole business is holding investment property, mandatorily
+    # marked to fair value each period under IAS 40. That fair-value line sits inside "Profit or
+    # loss" in the BMV XBRL filings (confirmed: ifrs-full_ProfitLoss for Fibra Uno FY2025 includes an
+    # 11,522mn fair-value gain against a 24,456mn total) — so every metric computed FROM net income
+    # inherits the distortion. NOTE: EBITDA-YoY, EV/EBITDA, ROIC, EBITDA margin, revenue-CAGR/σ and
+    # Current ratio COMPUTE fine for a fibra (they don't touch net income), but they are collapsed for
+    # REITs by ANALYST CONVENTION, not distortion — the sector is compared on P/FFO / P/NAV / cap-rate
+    # / distribution-yield / occupancy / NOI / LTV, not operating-company multiples. That convention
+    # collapse lives template-wide in applicability._REIT_NA; the P/E / net-margin / NI-CAGR entries
+    # below stay here because their exclusion is the stronger IAS-40 fair-value grounding.
+    na_template:
+      "P/E (LTM)": >-
+        IAS 40 investment-property fair-value revaluation flows through net income (Fibra Uno FY2025:
+        11.5bn of a 24.5bn profit was the FV line) — P/E is not a meaningful earnings multiple for a
+        FIBRA. Sector convention reads P/FFO instead.
+      "Net margin": >-
+        Same net-income contamination as P/E (Fibra Uno FY2025 net margin prints 88.8% on FV gains,
+        not operating performance).
+      "Net income CAGR 1y": >-
+        Net-income YoY is dominated by FV-gain volatility, not earnings growth — measured range across
+        all 16 fibras is -97%..+170% in a single year, with no company showing a plausible organic
+        swing that size.
+      "Net income CAGR 5y": >-
+        Same mechanism as the 1y CAGR, compounded over a longer window.
+      # FCF yield and CET1 ratio are already na_template via the reit-template default
+      # (_REIT_NA in applicability.py) — restated here only for the rationale text.
+      "FCF yield": >-
+        FIBRAs distribute cash via mandatory distributions (95% of taxable income), not discretionary
+        FCF; the sector's cash-return metric is distribution yield, already a native column.
+      "CET1 ratio": "Not a credit institution — no Basel capital requirement applies."
+    native: ["P/FFO", "Distribution yield"]
+
+  real_estate:
+    # Corporate real-estate holders/developers (Vesta, GICSA, Planigrupo, Inmuebles Carso, Dine,
+    # Grupo Aristos, Grupo GAV) — not fideicomisos, but IFRS still requires IAS 40 fair-value
+    # marking of investment property for the same P&L line. Applied on the SAME accounting-standard
+    # grounding as fibras, not on whether a given year's print looks distorted (GICSA/Carso do;
+    # Vesta/Aristos happen not to this year — the mechanism is present in all of them regardless).
+    na_template:
+      "P/E (LTM)": "IAS 40 fair-value revaluation of investment property flows through net income, same mechanism as FIBRAs."
+      "Net margin": "Same IAS 40 contamination as P/E."
+      "Net income CAGR 1y": "Net-income YoY dominated by FV-gain volatility (measured: GICSA +97.7%, Inmuebles Carso +136.1% in one year)."
+      "Net income CAGR 5y": "Same mechanism as the 1y CAGR."
+      "FCF yield": "Sector reads distribution/dividend yield over discretionary FCF, consistent with fibras."
+      "CET1 ratio": "Not a credit institution."
+
+  banks:
+    # Deposit-taking institutions with a CNBV-published ICAP/CET1. The template default already
+    # keeps CET1 applicable for the whole "banks" sector (`_structural_na` re-enables it) — but three
+    # members are SOFOMes (non-bank financial companies), which never file an ICAP with CNBV at all:
+    # structurally impossible, not a source gap that might someday fill.
+    exceptions:
+      credito_real:
+        "CET1 ratio": "SOFOM (non-deposit-taking financial company), not a bank — CNBV publishes no ICAP for it."
+      unifin:
+        "CET1 ratio": "SOFOM, not a bank — no ICAP requirement."
+      financiera_independencia:
+        "CET1 ratio": "SOFOM, not a bank — no ICAP requirement."
+
+  brokers_exchange:
+    # Template default (financials) treats the whole sector's CET1 as na_template. Actinver is a
+    # bank holding company and IS covered by CNBV's ICAP_BM publication (SLUG_TO_CNBV in
+    # src/download/cnbv.py already maps it) — the sector default was wrong for this one member.
+    exceptions:
+      actinver:
+        "CET1 ratio": applicable
+
+  insurers_afores:
+    # Insurance/afore regulation (CNSF solvency capital requirement) is a different regime from
+    # Basel CET1; CNBV's ICAP_BM does not cover this sector. No per-slug exceptions today.
+    na_template:
+      "CET1 ratio": "Insurance/afore capital regulation uses a solvency capital requirement (CNSF), not Basel CET1 — CNBV's ICAP_BM does not cover this sector."

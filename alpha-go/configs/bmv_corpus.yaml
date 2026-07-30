@@ -1,0 +1,78 @@
+# Reproducible BMV coverage target for the general-purpose Alpha Go corpus.
+#
+# Each issuer must retain at least four usable quarterly filings. New documents come from the
+# Bolsa Mexicana de Valores' official XBRL archive; the expansion script preserves the extracted
+# filing HTML as the dashboard reader source and indexes a plain-text representation of it.
+minimum_quarterlies: 4
+# Product coverage contract. ``minimum_quarterlies`` remains the narrow XBRL-source gate; this
+# broader target counts all accepted primary documents (quarterlies, annuals, events, releases).
+target_companies: 50
+target_documents_per_company: 50
+# News is separately measured.  It never satisfies the primary-document target: a company needs
+# its filings/official disclosures *and* an independent news set for a well-rounded corpus.
+target_news_documents_per_company: 50
+# Five annual reports per issuer is the target.  Official BMV XBRL currently satisfies it for
+# most issuers; source-level coverage reports must expose shorter histories and route them to the
+# issuer-IR/SEC fallback rather than silently lowering this number.
+minimum_annuals: 5
+# The BMV XBRL "annual" packages contain tagged facts but no narrative report text. They remain
+# regulatory-source records; the annual-report gate stays disabled until issuer-IR/SEC PDF
+# adapters materialize the five-year target. Coverage is still reported on every run.
+minimum_annual_companies_bmv: 0
+document_sources:
+  - {key: bmv_xbrl, label: "BMV XBRL", kinds: [quarterly, regulatory_filing], priority: 10}
+  - {key: bmv_issuer, label: "BMV issuer pages", kinds: [annual, relevant_event], priority: 15}
+  - {key: issuer_ir, label: "Issuer investor relations", kinds: [annual, announcement], priority: 20}
+  - {key: sec_edgar, label: "SEC EDGAR", kinds: [annual, regulatory_filing], priority: 30}
+  - {key: upload, label: "Manual upload", kinds: [user_upload], priority: 40}
+companies:
+  - {ticker: AC, slug: ac, company: "Arca Continental", industry: beverage}
+  - {ticker: ALPEK, slug: alpek, company: "Alpek", industry: materials}
+  - {ticker: ALSEA, slug: alsea, company: "Alsea", industry: restaurants}
+  - {ticker: AMX, slug: amx, company: "América Móvil", industry: telecom}
+  - {ticker: ARA, slug: ara, company: "Consorcio ARA", industry: homebuilding}
+  - {ticker: ASUR, slug: asur, company: "Grupo Aeroportuario del Sureste", industry: airports}
+  - {ticker: AUTLAN, slug: autlan, company: "Compañía Minera Autlán", industry: mining}
+  - {ticker: AXTEL, slug: axtel, company: "Axtel", industry: telecom}
+  - {ticker: BEVIDES, slug: bevides, company: "Farmacias Benavides", industry: retail}
+  - {ticker: BIMBO, slug: bimbo, company: "Grupo Bimbo", industry: food}
+  - {ticker: BOLSA, slug: bolsa, company: "Bolsa Mexicana de Valores", industry: financials}
+  - {ticker: CABLE, slug: cable, company: "Grupo Televisa Cable", industry: telecom}
+  - {ticker: CADU, slug: cadu, company: "Corpovael", industry: homebuilding}
+  - {ticker: CEMEX, slug: cemex, company: "Cemex", industry: materials}
+  - {ticker: CHDRAUI, slug: chedraui, company: "Grupo Chedraui", industry: retail}
+  - {ticker: CIE, slug: cie, company: "Corporación Interamericana de Entretenimiento", industry: entertainment}
+  - {ticker: CMOCTEZ, slug: cmoctez, company: "Corporación Moctezuma", industry: materials}
+  - {ticker: CMR, slug: cmr, company: "CMR", industry: restaurants}
+  - {ticker: CUERVO, slug: becle, company: "Becle", industry: beverage}
+  - {ticker: CULTIBA, slug: cultiba, company: "Cultiba", industry: beverage}
+  - {ticker: DANHOS, slug: danhos, company: "Fibra Danhos", industry: real_estate}
+  - {ticker: DINE, slug: dine, company: "Dine", industry: real_estate}
+  - {ticker: FEMSA, slug: femsa, company: "FEMSA", industry: conglomerate}
+  - {ticker: FIBRAHD, slug: fibrahd, company: "Fibra HD", industry: real_estate}
+  - {ticker: FIBRAMQ, slug: fibramq, company: "Fibra Macquarie México", industry: real_estate}
+  - {ticker: FIBRAPL, slug: fibrapl, company: "Fibra Plus", industry: real_estate}
+  - {ticker: FIBRATC, slug: fibratc, company: "Fibra Nova", industry: real_estate}
+  - {ticker: FIDEAL, slug: fideal, company: "Fibra Ideal", industry: infrastructure}
+  - {ticker: FIHO, slug: fiho, company: "FibraHotel", industry: real_estate}
+  - {ticker: FINN, slug: finn, company: "Fibra Inn", industry: real_estate}
+  - {ticker: FMTY, slug: fmty, company: "Fibra Mty", industry: real_estate}
+  - {ticker: FRAGUA, slug: fragua, company: "Corporativo Fragua", industry: retail}
+  - {ticker: FSHOP, slug: fshop, company: "FibraShop", industry: real_estate}
+  - {ticker: FSITES, slug: fsites, company: "Fibra Sites", industry: infrastructure}
+  - {ticker: FUNO, slug: fibra_uno, company: "Fibra Uno", industry: real_estate}
+  - {ticker: GAP, slug: gap, company: "Grupo Aeroportuario del Pacífico", industry: airports}
+  - {ticker: GCARSO, slug: gcarso, company: "Grupo Carso", industry: conglomerate}
+  - {ticker: GCC, slug: gcc, company: "GCC", industry: materials}
+  - {ticker: GMEXICO, slug: grupo_mexico, company: "Grupo México", industry: mining}
+  - {ticker: GMXT, slug: gmxt, company: "Grupo México Transportes", industry: transportation}
+  - {ticker: GRUMA, slug: gruma, company: "Gruma", industry: food}
+  - {ticker: HERDEZ, slug: herdez, company: "Grupo Herdez", industry: food}
+  - {ticker: KIMBER, slug: kimber, company: "Kimberly-Clark de México", industry: household_products}
+  - {ticker: KOF, slug: kof, company: "Coca-Cola FEMSA", industry: beverage}
+  - {ticker: LAB, slug: lab, company: "Genomma Lab Internacional", industry: consumer_health}
+  - {ticker: LACOMER, slug: lacomer, company: "La Comer", industry: retail}
+  - {ticker: LIVEPOL, slug: liverpool, company: "El Puerto de Liverpool", industry: retail}
+  - {ticker: SORIANA, slug: soriana, company: "Organización Soriana", industry: retail}
+  - {ticker: SPORT, slug: sport, company: "Grupo Sports World", industry: fitness}
+  - {ticker: WALMEX, slug: walmex, company: "Walmart de México y Centroamérica", industry: retail}

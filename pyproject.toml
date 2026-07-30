@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools==82.0.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bmv-filings-platform"
+version = "0.1.0"
+description = "Shared BMV document acquisition, estate, and quarterly extraction platform"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "PyYAML==6.0.3",
+    "requests==2.34.2",
+    "beautifulsoup4==4.15.0",
+    "pdfplumber==0.11.10",
+    # Imported at module scope by src/extract/* and src/excel/segments_sheet.py.
+    # Previously undeclared: the extractor worked here only because both happened
+    # to be installed, and failed on a clean install.
+    "pandas==3.0.5",
+    "openpyxl==3.1.5",
+]
+
+[project.optional-dependencies]
+browser = [
+    "curl-cffi==0.15.0",
+    "playwright==1.60.0",
+]
+# Tier-4 LLM fallback and the advisory cross-check. Imported lazily inside
+# src/extract/llm_providers.py and llm_extract.py, so the cascade's deterministic
+# tiers run without these installed.
+llm = [
+    "anthropic==0.120.2",
+    "openai==2.49.0",
+]
+test = [
+    "pytest==9.1.1",
+]
+
+[project.scripts]
+refresh-quarterly-estate = "src.acquisition.cli:main"
+process-estate-outbox = "src.consumers.cli:main"
+airflow-quarterly-estate = "src.deployment.airflow_task:main"
+
+[tool.setuptools]
+py-modules = ["estate_bridge"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src", "src.*"]
+
+[tool.pytest.ini_options]
+# Project root on sys.path so `import src.<role>.<module>` and `tests.conftest` resolve.
+pythonpath = ["."]
+testpaths = ["tests"]
+markers = [
+    "network: tests that hit the real network",
+]

@@ -1,0 +1,19 @@
+# Alfa — coverage config. XBRL sourced from the BMV issuer page (annual anexon), staged under
+# data/reports/alfa/xbrl/. Post-restructuring ALFA S.A.B. ≈ Sigma (Alpek/Nemak spun off); the BMV
+# filing is its consolidated statement.
+# NOTE: Alfa files its XBRL in THOUSANDS of pesos (verified: FY2025 revenue raw 177,853,452 =
+# $177,853mn), unlike the standard full-peso BMV filers (Sanborns, fibras). soft's `unit` is the
+# raw-scale knob for XBRL scaling (`pesos_per_unit_for`: millions→÷1e6 for full-peso, miles→÷1e3
+# for thousands), so `miles` converts Alfa's thousands-raw to the coverage layer's millions.
+company:
+  name: Alfa
+  ticker: "ALFA MM"
+  currency: MXN
+  exchange: BMV
+  unit: miles              # Alfa files XBRL in thousands (not full pesos) — see note above
+
+tier_precedence:
+  default: [xbrl, bmv, prose, search, table, calc]
+
+ir_website:
+  xbrl_ticker: "ALFA"

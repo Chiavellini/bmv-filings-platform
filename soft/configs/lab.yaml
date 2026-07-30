@@ -1,0 +1,115 @@
+company:
+  name: Genomma Lab Internacional
+  ticker: LABB
+  exchange: BMV
+  language: es
+  currency: MXN
+  unit: millions          # GT model is in P$mn
+
+custom_extractor: lab
+
+# GT tracks the IAS-29 re-expressed series for these cells, printed only as the
+# NEXT year's prior column (verified against the model per period, e.g. 4Q19 OTC
+# 1,599.3/PC 1,620.9 = 2020-4T.md:451 prior columns). NOT listed on purpose:
+# ebitda 2Q19A/3Q20A (next-year priors are the AS-REPORTED 667.5/769.4 —
+# 2020-2T.md:30, 2021-3T.md:29 — so no filing carries GT's values; see
+# unavailable) and all of 1Q23 (was a corpus misfile, fixed by refetching the
+# true 1T-2023 report).
+restated_prior:
+  ebitda:                [2Q21A, 4Q19A, 4Q22A]
+  revenue_otc:           [4Q16A, 1Q17A, 2Q17A, 3Q17A, 4Q18A, 4Q19A, 2Q19A, 2Q21A]
+  revenue_personal_care: [4Q16A, 1Q17A, 2Q17A, 3Q17A, 4Q18A, 4Q19A, 2Q19A, 2Q21A]
+
+# OTC/PC live exclusively in the product tables (custom extractor + the anchored
+# patterns below). Generic alias search matched TOC/facility prose instead
+# ("Más de 80,000 m2 … Cuidado Personal", 2019-2T.md:309; "Alianza con Edgewell
+# Personal Care 71", 2021-2T TOC) and polluted quarters the extractor missed.
+text_search:
+  skip_metrics: [revenue_otc, revenue_personal_care]
+
+# 2016 segment tables for 2Q/3Q are printed only as accumulated OTC/PC totals.
+# Difference them against the prior quarter; later LAB product tables are already
+# quarterly and must not use global ytd_quarterly.
+ytd_quarterly_periods:
+  revenue_otc: [2Q16A, 3Q16A]
+  revenue_personal_care: [2Q16A, 3Q16A]
+
+# Genomma reports a front "Resumen Financiero" in millions of pesos and a later
+# regulatory statement in thousands/full pesos. The front reported rows are the
+# model source of truth for revenue and adjusted EBITDA, so they must win over
+# generic flattened-statement regexes.
+metric_overrides:
+  revenue:
+    patterns:
+      - regex: '^\s*Ventas\s+Netas\s+([\d,]+\.?\d*)\s+100%?\s+[\d,]+\.?\d*\s+100%?'
+        source: prose
+      - regex: 'Ventas\s+Netas[^.\n]{0,120}?(?:alcanzaron?|alcanz[oó])\s+Ps\.?\s*([\d,]+\.?\d*)\s+millones'
+        source: prose
+  ebitda:
+    patterns:
+      - regex: '^\s*EBITDA\s+Ajustado\(?\s*\)?\s+([\d,]+\.?\d*)\s+[\d.]+%'
+        source: prose
+      - regex: 'EBITDA\s+Ajustado[^.\n]{0,120}?(?:alcanz[oó]|increment[oó]|fue)\s+Ps\.?\s*([\d,]+\.?\d*)\s+millones'
+        source: prose
+
+custom_metrics:
+  - key: revenue_otc
+    label: "Over-the-Counter (OTC)"
+    label_es: "OTC"
+    section: income
+    unit: currency
+    patterns:
+      # Recent product table: "OTC current prior Δ% LFLΔ% ..."
+      - regex: '^\s*OTC\s+([\d,]+\.?\d*)\s+[\d,]+\.?\d*\s+\(?-?[\d.]+%\)?'
+        source: prose
+      # NOTE: the space-permissive '[\d\s,]+' "Total"/"TOTAL" table fallbacks were removed —
+      # every correct OTC value comes from the custom extractor (src/extract/lab.py); those
+      # fallbacks contributed ZERO passes and merged a whole consolidated-total row into one
+      # astronomical number (2Q19 -> 1.9e23, polluting the model). Without them 2Q19 is an
+      # honest MISS. Deeper OTC coverage needs a header-aware extractor rewrite, not a regex.
+
+  - key: revenue_personal_care
+    label: "Personal Care"
+    label_es: "Cuidado Personal"
+    section: income
+    unit: currency
+    patterns:
+      - regex: '^\s*Cuidado\s+Personal\s+([\d,]+\.?\d*)\s+[\d,]+\.?\d*\s+\(?-?[\d.]+%\)?'
+        source: prose
+      # NOTE: space-permissive "Total"/"TOTAL" table fallbacks removed (see revenue_otc) —
+      # zero passes, and they merged multi-number rows into garbage. Custom extractor is
+      # authoritative; missing periods stay honest MISSes.
+
+ir_website:
+  # WordPress site (PDFs under wp-content/uploads/); Playwright hangs on it, so
+  # use the static pagination crawl instead.
+  url: https://inversionistas.genommalab.com/informacion-financiera/
+  pdf_link_pattern: '(?i)\.pdf'
+  use_playwright: false
+  max_reports: 120
+  delay_ms: 500
+  xbrl_ticker: LAB
+
+# 2024+ releases replaced the absolute OTC/PC segment table with category GROWTH
+# percentages only ("Derma OTC (5.9)% 6.8%", 2024-1T.md:84); the GT model values
+# (re-expressed pesos with decimals) appear in NO corpus file — grep of e.g.
+# 2,046.7 / 2,150.6 / 2,075.1 across data/reports/lab/*.md and the facts.json
+# returns nothing. 4Q23 was the first quarter without the table.
+unavailable:
+  revenue:
+    periods: [2Q26A]
+    parse_gap: true
+    reason: "2026-2T.md is the April-2026 earnings-call deck (1Q26 content, 'APRIL 2026' title page) — the true 2Q26 report is not yet published (quarter closed 2026-06-30)"
+    proof: "data/reports/lab/2026-2T.md:7-12 — 'EARNINGS CALL PRESENTATION … APRIL 2026'"
+  ebitda:
+    periods: [2Q19A, 3Q20A]
+    reason: "GT holds model-derived re-expressed EBITDA (620.19 / 749.40) printed in no filing: the filings print as-reported 667.5 / 769.4 and the NEXT year's prior columns repeat the same as-reported figures (no IAS-29 re-expression of these comparatives)"
+    proof: "2020-2T.md:30 'EBITDA( ) 754.9 20.8% 667.5' + 2021-3T.md:29 'EBITDA( ) 819.0 20.6% 769.4' (priors = as-reported); grep '620.2'/'620,1'/'749.4'/'749,4' over data/reports/lab/*.md + *_facts.json = 0 hits"
+  revenue_otc:
+    periods: [1Q23A, 4Q23A, 1Q24A, 2Q24A, 3Q24A, 4Q24A, 1Q25A]
+    reason: "4Q23A+: absolute OTC segment revenue no longer printed (growth % only since 4Q23); 1Q23A: GT reclassified 128.7 from OTC to PC vs the filing (2,274.5 vs printed 2,403.2) and the reclassified split appears in no filing (2024-1T prints growth-only categories)"
+    proof: "data/reports/lab/2024-1T.md:84 — 'Derma OTC (5.9)% 6.8%' (growth only); true 1T-2023 report Total row prints 2,403.2/1,775.0 (2023-1T.md 'Medicina Venta Libre (OTC) Cuidado Personal Total' table); grep '2,046'/'2,274' over data/reports/lab/*.md + *_facts.json = 0 hits"
+  revenue_personal_care:
+    periods: [1Q23A, 4Q23A, 1Q24A, 2Q24A, 3Q24A, 4Q24A, 1Q25A]
+    reason: "4Q23A+: absolute Personal Care segment revenue no longer printed (growth % only since 4Q23); 1Q23A: GT reclassified 128.7 from OTC to PC vs the filing (1,903.7 vs printed 1,775.0) and the reclassified split appears in no filing"
+    proof: "data/reports/lab/2024-1T.md:84 — growth-only category table; true 1T-2023 report prints 1,775.0; grep '2,150'/'1,903' over data/reports/lab/*.md + *_facts.json = 0 hits"

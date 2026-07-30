@@ -1,0 +1,319 @@
+company:
+  currency: MXN
+  exchange: BMV
+  language: es
+  name: El Puerto de Liverpool
+  ticker: LIVEPOL
+  unit: millions   # GT is P$mn; the regulatory statements print full pesos (scaled below)
+
+custom_extractor: liverpool
+
+# Header-aligned extraction of the CNBV "[800200] Análisis de ingresos y gastos"
+# income note. Reads the column header (Trimestre/Acumulado × Actual/Anterior) and
+# selects the single-quarter Actual column whose quarter matches the target, so the
+# note's column ORDER (which flips between 2024 and 2025) no longer matters. Values
+# are full pesos, scaled to millions by company.unit. Degrades to the positional
+# regexes below whenever the header can't be confidently aligned.
+income_note:
+  enabled: true
+  code: "800200"
+  rows:
+    # The operating Commercial segment is goods + services revenue types (verified
+    # 14/14 within 2% vs GT; Venta de bienes alone falls short on Q4 by the seasonal
+    # services amount). Financial = Intereses and Real Estate = Arrendamiento are
+    # exact single rows.
+    revenue_commercial:  ["Venta de bienes", "Servicios"]   # → Commercial Income
+    revenue_financial:   "Intereses"                        # → Financial Business income
+    revenue_real_estate: "Arrendamiento"                    # → Real Estate income
+    revenue:             "Total de ingresos"                # → consolidated revenue
+
+# Liverpool's income-note patterns know the 4-column Acum/Trim layout. Generic
+# search is allowed to fill gaps but cannot outrank those source-specific rows.
+tier_precedence:
+  default: [xbrl, bmv, note, regex_table, prose, search, table, calc]
+  # The header-aligned [800200] note ('note') is the audited regulatory segment
+  # figure and outranks the press-release search row and the positional regexes.
+  revenue: [xbrl, bmv, note, search, regex_table, prose, table, calc]
+  revenue_commercial: [xbrl, bmv, note, search, regex_table, prose, table, calc]
+  revenue_financial: [xbrl, bmv, note, search, regex_table, prose, table, calc]
+  revenue_real_estate: [xbrl, bmv, note, search, regex_table, prose, table, calc]
+  sss_liverpool: [search, prose, table, calc]
+  sss_suburbia: [search, prose, table, calc]
+  ecommerce_penetration: [search, prose, table, calc]
+  cards_total: [search, prose, table, calc]
+  stores_liverpool: [search, prose, table, calc]
+  npl: [search, prose, table, calc]
+text_search:
+  # Liverpool has regulatory Acum/Trim layouts plus prose KPIs with many numbers;
+  # broad generic search produced false gap fills. Use the explicit patterns below
+  # until Liverpool-specific command-F aliases are added.
+  disabled: true
+table_extract:
+  # Liverpool coverage comes from the custom extractor, BMV statements, and exact
+  # YAML patterns. Generic fuzzy PDF table matching is slow on long regulatory
+  # filings and is not part of the tuned scored path.
+  disabled: true
+
+# ---------------------------------------------------------------------------
+# LIVERPOOL (El Puerto de Liverpool) — Mexican department stores + financial
+# services + real estate. Reports are BMV regulatory filings in FULL PESOS.
+#
+# KEY: the income note "[800200] Análisis de ingresos y gastos" (and the income
+# statement) print a 4-column layout:
+#     Concepto        Acum-curr      Acum-prior     Trim-curr      Trim-prior
+#   Venta de bienes   74,515,364,000 66,467,715,000 42,028,145,000 38,177,324,000
+#   Intereses          7,586,290,000  5,974,972,000  4,002,563,000  3,158,929,000
+#   Arrendamiento      2,315,203,000  1,757,984,000  1,282,589,000    877,701,000
+#   Total de ingresos 85,156,640,000 74,806,939,000 47,587,130,000 42,560,249,000
+# The QUARTERLY value is the 3rd number (Trim-curr); skip the two Acumulado
+# (YTD) columns and capture it, ×1e-6 to convert full pesos → millions (P$mn).
+# This recovers the quarter for ALL periods (not just Q1). The revenue TYPES map
+# to GT segments: Venta de bienes→Commercial, Intereses→Financial, Arrendamiento
+# →Real Estate. (Q1 reports collapse to 2 columns — handled by the fallbacks.)
+#
+# Data-availability caps (NOT in the parsed .md, so they MISS by design):
+#   cards_total (only "X.X millones" prose), sales_floor m² (absent), and the
+#   Suburbia revenue split (modern reports give only growth %, not absolutes).
+# SSS (VMT), NPL (cartera vencida) and digital penetration come from prose.
+# ---------------------------------------------------------------------------
+
+metric_overrides:
+  revenue:
+    patterns:
+      # 4-column note: skip Acum-curr/Acum-prior, capture Trim-curr (quarter).
+      - regex: '^\s*(?:Total de ingresos|Ingresos)\s+[\d,]{7,}\s+[\d,]{7,}\s+([\d,]{7,})\s+[\d,]{7,}'
+        source: table
+        multiplier: 0.000001
+      # 2-column fallback (Q1 reports, curr first).
+      - regex: '^\s*(?:Total de ingresos|Ingresos)\s+([\d,]{7,})\s+[\d,]{7,}'
+        source: prose
+        multiplier: 0.000001
+
+sections: []
+
+# Prose-only KPIs: keep Tier-2 (table cell-grab) from emitting false values for
+# these (e.g. npl picking up "90 días" → 90% or a guidance-range cell). The prose
+# patterns below are authoritative for them.
+tier2_skip:
+  - npl
+  - ecommerce_penetration
+  - sss_liverpool
+  - sss_suburbia
+  - cards_total
+
+# Documented data-unavailability (extractable-obs basis; each with proof). Verified
+# against the parsed reports: stores are listed per-format in prose with no
+# consolidated total, sales floor has no absolute m² total, and Suburbia revenue is
+# never split out as an absolute (only a growth %).
+unavailable:
+  cards_total:
+    # Verified per period: these filings print no card count at all — the 2016-18
+    # releases give only the card-sales participation % ("La participación de las
+    # tarjetas Liverpool ... de las ventas totales"); 2Q19/2Q21/2Q22/3Q23 carry no
+    # "Número de tarjetas" table (grep 0 across each .md; 2016-4T/2025-2T PDFs also
+    # scanned); 2Q25/1Q26 are deck-only filings whose tiles print rounded millions
+    # of ACTIVE cards (2Q25: "5.1 million"+"1.9 million"=7.0M vs GT 8,022k) that do
+    # not tie to the GT total-card count.
+    reason: "no total-card count printed (participation % only / no card table / deck rounds active-card millions)"
+    proof: "data/reports/liverpool/2016-4T.md — only 'participación de las tarjetas ... 44.1% de las ventas'; data/reports/liverpool/2025-2T.md:70-77 — '5.1 million Liverpool Credit Cards / 1.9 million Suburbia Credit Cards' (7.0M ≠ GT 8,022k)"
+    # 3Q21: GT 6,426k matches no printed figure — the filing prints Tarjetas
+    # Liverpool 4,856,731 + Tarjetas Suburbia 1,003,742 = 5,860,473 (5,860k), and a
+    # full-PDF scan finds no other card count (2021-3T.pdf pp.14-15).
+    # 1Q25: the filing's printed total IS 7,882 (L 5,995 + S 1,887; 2025-1T.md:274-283)
+    # while GT records 8,044 — GT matches no printed figure. 4Q22: the printed rows sum
+    # to 6,679 (L 5,284,181 + S 1,394,969; 2022-4T.md:696-700) vs GT 6,662.
+    # 4Q23: only the rounded "Se exceden 7.2 millones totales" (2023-4T.md:357-358);
+    # GT 7,253k not printed.
+    periods: [1Q16A, 2Q16A, 3Q16A, 4Q16A, 1Q17A, 2Q17A, 4Q17A, 1Q18A, 3Q18A, 4Q18A,
+              2Q19A, 2Q21A, 3Q21A, 2Q22A, 4Q22A, 3Q23A, 4Q23A, 1Q25A, 2Q25A, 1Q26A]
+  sss_liverpool:
+    # 2Q22/2Q25/1Q26: quarterly SSS not printed (deck-only filings; charts +
+    # guidance ranges only). 3Q19/2Q21: the filing contradicts GT — 3Q19 prints
+    # 'crecen 0.4%' twice (2019-3T.md:101,233) vs GT 4.0; 2Q21 prints 'se
+    # incrementaron 165.6%' twice (2021-2T.md:176,429) vs GT 156.6 (transposition).
+    reason: "quarterly SSS not printed (deck-only filings) or printed value contradicts GT (0.4 vs 4.0; 165.6 vs 156.6)"
+    proof: "2022-2T.pdf — single 'SSS' chart label (p.25 annual history); 2026-1T.pdf p.19 — only 'Same-Store-Sales: 4.5% - 5.5%' guidance; 2019-3T.md:101 — 'crecen 0.4%'; 2021-2T.md:176 — '165.6% en el trimestre'"
+    # 3Q23/3Q24: no own-brand quarterly SSS printed (3Q23 grep finds no VMT/SSS
+    # value; 3Q24 prints only industry 'ANTAD Departamentales VMT +4.2% +5.8%',
+    # 2024-3T.md:268-269, and GT 7.6 appears nowhere).
+    periods: [3Q19A, 2Q21A, 2Q22A, 3Q23A, 3Q24A, 2Q25A, 1Q26A]
+  sss_suburbia:
+    # 3Q17 prints 'se incrementaron 3.2%' (2017-3T.md:140-141) vs GT 0.5; 2Q20
+    # prints 'disminución de 91.2%' three times (2020-2T.md:133,167,200) vs GT
+    # -92.2 — both contradict the printed source.
+    reason: "quarterly SSS not printed (deck-only filings) or printed value contradicts GT (3.2 vs 0.5; -91.2 vs -92.2)"
+    proof: "2022-2T.pdf — single 'SSS' chart label (p.25 annual history); 2025-2T.pdf p.7/15 — chart title + guidance; 2017-3T.md:140-141 — 'se incrementaron 3.2%'; 2020-2T.md:133 — 'disminución de 91.2%'"
+    # 3Q23/3Q24: same as sss_liverpool — no quarterly SSS printed (GT 3.8 / 7.6
+    # appear nowhere in the filings).
+    periods: [3Q17A, 2Q20A, 2Q22A, 3Q23A, 3Q24A, 2Q25A, 1Q26A]
+  ecommerce_penetration:
+    # GT "E-Commerce Penetration" is the analyst's own quarterly digital-share
+    # series. Verified per period that the filing prints either no share at all,
+    # only an accumulated/YTD share, or a DIFFERENT "participación digital" figure
+    # that contradicts GT (1Q24 prints 26.5% vs GT 20.4; 1Q25 prints 28.7% vs GT
+    # 21.4; 2Q25 deck prints 33.3% Digital Share vs GT 26.3; 2Q22 deck prints
+    # 24.7% vs GT 24.0). 3Q19's 7.8% appears only in the NEXT filing (2020-3T:313
+    # prior-year comparative).
+    reason: "quarterly e-commerce share not printed (YTD-only, absent, or the printed participación digital contradicts GT)"
+    proof: "2019-3T.md:— 'ventas digitales ... 8.6% de las ventas comerciales en el acumulado' (YTD only); 2024-1T.md:113,312 — 'Participación Digital Liverpool 26.5%' vs GT 20.4; 2025-1T.md:101 — 'alcanzando el 28.7%' vs GT 21.4; 2025-2T.md:203-204 — '33.3% Digital Share' vs GT 26.3"
+    # 4Q23: 'Participación Digital Liverpool:' label renders as a chart image; the
+    # only 22.0% in the text is operating-income growth (2023-4T.md:492).
+    periods: [4Q18A, 1Q19A, 2Q19A, 3Q19A, 4Q19A, 2Q20A, 3Q21A, 2Q22A, 3Q22A, 3Q23A,
+              4Q23A, 1Q24A, 2Q24A, 3Q24A, 4Q24A, 1Q25A, 2Q25A, 3Q25A, 4Q25A]
+  npl:
+    reason: "group NPL not printed: 2Q22 English deck prints NPLs Liverpool 2.3% / Suburbia 4.5% with the 2.4% group figure only as an unlabeled chart fragment; 3Q23 filing prints only 'Días de cartera vencida' (a days metric, not the rate)"
+    proof: "data/reports/liverpool/2022-2T.md:902-906 — '2.3% 4.5% ... NPLs Liverpool NPLs Suburbia'; data/reports/liverpool/2023-3T.md:370 — '7. Días de cartera vencida' (no rate %)"
+    periods: [2Q22A, 3Q23A]
+  stores_liverpool:
+    # GT "Total Liverpool" = Liverpool almacenes + boutiques + express (GT's own
+    # component rows). 2016-1Q17: the printed boutique counts (83-88; e.g. 4Q16
+    # prints '83 con el nombre de Liverpool ... 88 boutiques' = 171) contradict
+    # GT's boutique series (108-127 → GT 210 for 4Q16); 1Q17 also prints 83
+    # almacenes vs GT 87. 1Q21 prints 122 + 124 boutiques = 246 vs GT 242 (GT
+    # boutiques 120). 3Q23 prints 124 + 113 = 237; GT 251 includes 14 Liverpool
+    # express that the filing never mentions (grep 'express' = 0 hits).
+    reason: "printed store counts contradict the GT component series (boutique-count basis differs / express count unprinted)"
+    proof: "2016-4T.md:115-116 — '83 con el nombre de Liverpool ... 88 boutiques' vs GT 83+127=210; 2021-1T.md:156 — '122 tiendas ... 124 boutiques' vs GT 122+120=242; 2023-3T.md:86-87 — '124 tiendas ... 113 boutiques' (no express) vs GT 124+113+14=251"
+    periods: [1Q16A, 2Q16A, 3Q16A, 4Q16A, 1Q17A, 1Q21A, 3Q23A]
+  revenue_financial:
+    reason: "GT 3,175 matches no printed figure: the [800200] note prints Intereses 3T19 = 3,293,667,000 and the release states only a 14.0% growth rate for the credit division"
+    proof: "data/reports/liverpool/2019-3T.md:2314 — 'Intereses 9,890,147,000 8,346,516,000 3,293,667,000 2,889,522,000'; :314 — 'los ingresos de la división de crédito crecieron 14.0%' (no absolute)"
+    periods: [3Q19A]
+  revenue_suburbia:
+    reason: "Suburbia revenue never split as an absolute; folded into 'Venta de bienes' (Commercial), only a Suburbia growth % is given"
+    proof: "data/reports/liverpool/2025-1T.md:75-76 — 'las de Suburbia registraron un crecimiento de 7.3%' (no absolute)"
+  total_stores:
+    reason: "no consolidated all-format store total; per-format counts only (analyst sum)"
+    proof: "data/reports/liverpool/2024-1T.md:161-162 — '124 tiendas departamentales ... 118 boutiques ... 187 tiendas ... Suburbia' (no grand total)"
+  sales_floor_total:
+    reason: "no absolute consolidated sales-floor (m²) total in the parsed report"
+    proof: "data/reports/liverpool/2024-1T.md — Perfil de la Empresa lists stores by format with no m² total row"
+
+custom_metrics:
+  # --- Segment revenue by income type (4-col Trim-curr, ×1e-6) ---------------
+  - key: revenue_commercial
+    label: "Commercial Income (Venta de bienes)"
+    label_es: "Venta de bienes"
+    section: income
+    unit: currency
+    # Deck-only and English-release periods carry no [800200] note in the parsed
+    # markdown but ship a facts.json; the Commercial segment is goods + services
+    # (same sum the income_note block uses; verified 1Q26A: 37,534.6+471.0 =
+    # 38,005.6 vs GT 38,347, within 2%).
+    xbrl_concepts: ["ifrs-full_RevenueFromSaleOfGoods + ifrs-full_RevenueFromRenderingOfServices"]
+    patterns:
+      - regex: '^\s*Venta de bienes\s+[\d,]{7,}\s+[\d,]{7,}\s+([\d,]{7,})'
+        source: table
+        multiplier: 0.000001
+      - regex: '^\s*Venta de bienes\s+([\d,]{7,})\s+[\d,]{7,}'
+        source: prose
+        multiplier: 0.000001
+
+  - key: revenue_financial
+    label: "Financial Business income (Intereses)"
+    label_es: "Intereses"
+    section: income
+    unit: currency
+    # Deck-only periods carry no [800200] note but ship a facts.json; the segment
+    # interest revenue is tagged as this IFRS concept (verified 1Q26A: 5,696.6 = GT 5,697).
+    xbrl_concepts: [ifrs-full_RevenueFromInterest]
+    patterns:
+      - regex: '^\s*Intereses\s+[\d,]{7,}\s+[\d,]{7,}\s+([\d,]{7,})'
+        source: table
+        multiplier: 0.000001
+      - regex: '^\s*Intereses\s+([\d,]{7,})\s+[\d,]{7,}'
+        source: prose
+        multiplier: 0.000001
+
+  - key: revenue_real_estate
+    label: "Real Estate income (Arrendamiento)"
+    label_es: "Arrendamiento"
+    section: income
+    unit: currency
+    # Deck-only periods: rental income tagged as this IFRS concept (verified 1Q26A:
+    # 1,374.4 = GT 1,374).
+    xbrl_concepts: [ifrs-full_RentalIncome]
+    patterns:
+      - regex: '^\s*Arrendamiento\s+[\d,]{7,}\s+[\d,]{7,}\s+([\d,]{7,})'
+        source: table
+        multiplier: 0.000001
+      - regex: '^\s*Arrendamiento\s+([\d,]{7,})\s+[\d,]{7,}'
+        source: prose
+        multiplier: 0.000001
+
+  # --- KPIs from prose -------------------------------------------------------
+  - key: sss_liverpool
+    label: "Liverpool SSS (VMT) YoY %"
+    label_es: "VMT Liverpool"
+    section: kpi
+    unit: pct
+    patterns:
+      - regex: 'Liverpool\s+VMT\s+\+?([-\d.]+)%'
+        source: prose
+      - regex: '[Ll]iverpool[^.]{0,60}?ventas?\s+a?\s*(?:tiendas|mismas tiendas) iguales[^%]{0,40}?([-\d.]+)%'
+        source: prose
+      - regex: 'mismas tiendas[^%]{0,30}?([-\d.]+)%'
+        source: prose
+
+  - key: sss_suburbia
+    label: "Suburbia SSS (VMT) YoY %"
+    label_es: "VMT Suburbia"
+    section: kpi
+    unit: pct
+    patterns:
+      - regex: 'Suburbia\s+VMT\s+\+?([-\d.]+)%'
+        source: prose
+      - regex: 'En Suburbia[^%]{0,80}?incremento de\s+([-\d.]+)%'
+        source: prose
+
+  - key: ecommerce_penetration
+    label: "E-Commerce / Digital Penetration %"
+    label_es: "Participación digital"
+    section: kpi
+    unit: pct
+    patterns:
+      - regex: 'participaci[oó]n digital fue de\s+([\d.]+)%'
+        source: prose
+      - regex: '([\d.]+)%\s+de participaci[oó]n digital'
+        source: prose
+
+  - key: cards_total
+    label: "Total Cards"
+    label_es: "Tarjetas totales"
+    section: kpi
+    unit: count
+    patterns: []
+
+  - key: stores_liverpool
+    label: "Total Liverpool Stores"
+    label_es: "Total Liverpool"
+    section: kpi
+    unit: count
+    patterns: []
+
+  - key: npl
+    label: "NPL (Cartera Vencida) %"
+    label_es: "Cartera Vencida"
+    section: kpi
+    unit: pct
+    patterns:
+      - regex: 'Cartera\s+Vencida\s+Total\s+\(\+90\s+d[ií]as\)\s+([\d.]+)%'
+        source: prose
+      - regex: 'cartera vencida a m[aá]s de 90 d[ií]as se ubic[oó] en\s+([\d.]+)%'
+        source: prose
+      # Loose fallback, TIGHTENED to a single-digit.decimal rate (NPL is ~4-6%): this
+      # excludes the guidance range "20.0%-25.0%" (two-digit) and "90 días" (→90%, no
+      # decimal) that the previous '([\d.]+)%' form wrongly captured.
+      - regex: 'Cartera\s+Vencida[^%\n]{0,40}?(\d\.\d+)%'
+        source: prose
+      # NOTE: stores_liverpool NOT added — GT "Total Liverpool" (e.g. 1Q24=263) is the
+      # whole-group store count, NOT the "124 tiendas departamentales" figure; needs the
+      # correct source line (deferred, see NIGHT_LOG).
+
+ir_website:
+  url: https://www.elpuertodeliverpool.mx/trimestral.html
+  pdf_link_pattern: '(?i)(trimestre|trimestral|xbrl|resultados).*\.pdf'
+  xbrl_ticker: LIVEPOL
+  use_playwright: true       # static page rolls old reports off; render year tabs
+  max_reports: 120           # ~40 quarters of history must not be truncated
+  delay_ms: 500

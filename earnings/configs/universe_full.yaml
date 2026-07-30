@@ -1,0 +1,491 @@
+excluded:
+- n_quarters: 15
+  reason: no snapshot price series resolvable
+  slug: elementia_materiales
+  ticker: ELEMAT
+- n_quarters: 2
+  reason: no snapshot price series resolvable
+  slug: esentia
+  ticker: ESENTIA
+- n_quarters: 19
+  reason: no snapshot price series resolvable
+  slug: fibra_exi
+  ticker: FEXI
+- n_quarters: 24
+  reason: no snapshot price series resolvable
+  slug: fibra_ideal
+  ticker: FIDEAL
+- n_quarters: 3
+  reason: no snapshot price series resolvable
+  slug: fibra_next
+  ticker: NEXT
+- n_quarters: 23
+  reason: no snapshot price series resolvable
+  slug: fibra_sites
+  ticker: FSITES
+- n_quarters: 16
+  reason: no snapshot price series resolvable
+  slug: fortaleza_materiales
+  ticker: FORTALE
+- n_quarters: 16
+  reason: no snapshot price series resolvable
+  slug: gmexico_transportes
+  ticker: GMXT
+- n_quarters: 16
+  reason: no snapshot price series resolvable
+  slug: grupo_lala
+  ticker: LALA
+- n_quarters: 16
+  reason: no snapshot price series resolvable
+  slug: inmuebles_carso
+  ticker: INCARSO
+- n_quarters: 10
+  reason: no snapshot price series resolvable
+  slug: sigma
+  ticker: SIGMA
+- n_quarters: 18
+  reason: no snapshot price series resolvable
+  slug: telesites
+  ticker: SITES1
+- n_quarters: 16
+  reason: no snapshot price series resolvable
+  slug: telmex
+  ticker: TELMEX
+resolution_sources:
+  ac: phase_a
+  accel: candidate(ACCELSA)
+  aeromexico: candidate(AERO)
+  aleatica_educa: candidate(EDUCA)
+  alpek: candidate(ALPEK)
+  alsea: candidate(ALSEA)
+  alterna: candidate(ALTERNA)
+  america_movil: candidate(AMX)
+  asur: candidate(ASUR)
+  autlan: candidate(AUTLAN)
+  axtel: candidate(AXTEL)
+  becle: phase_a
+  bimbo: phase_a
+  bolsa_mexicana: candidate(BOLSA)
+  cadu: candidate(CADU)
+  cementos_moctezuma: candidate(CMOCTEZ)
+  cemex: candidate(CEMEX)
+  chedraui: phase_a
+  cidmega: candidate(CIDMEGA)
+  cie: candidate(CIE)
+  club_america: candidate(AGUILAS)
+  cmr: candidate(CMR)
+  consorcio_ara: candidate(ARA)
+  convertidora: candidate(CONVER)
+  corporativo_fragua: candidate(FRAGUA)
+  ct_axtel: candidate(CTAXTEL)
+  cultiba: candidate(CULTIBA)
+  cydsa: candidate(CYDSASA)
+  diablos_rojos: candidate(DIABLOS)
+  dine: candidate(DINE)
+  farmacias_benavides: candidate(BEVIDES)
+  femsa: phase_a
+  fibra_cfe: candidate(FCFE)
+  fibra_danhos: candidate(DANHOS)
+  fibra_hd: candidate(FIBRAHD)
+  fibra_hotel: symbol_probe
+  fibra_inn: symbol_probe
+  fibra_macquarie: symbol_probe
+  fibra_mty: symbol_probe
+  fibra_nova: symbol_probe
+  fibra_plus: symbol_probe
+  fibra_prologis: symbol_probe
+  fibra_shop: symbol_probe
+  fibra_storage: symbol_probe
+  fibra_uno: candidate(FUNO)
+  fibra_uptown: symbol_probe
+  fibra_via: symbol_probe
+  gap: symbol_probe
+  gcc: symbol_probe
+  gicsa: symbol_probe
+  gmd: symbol_probe
+  gruma: phase_a
+  grupo_aristos: candidate(ARISTOS)
+  grupo_cable: candidate(CABLE)
+  grupo_carso: symbol_probe
+  grupo_collado: candidate(COLLADO)
+  grupo_famsa: symbol_probe
+  grupo_gav: symbol_probe
+  grupo_gigante: symbol_probe
+  grupo_gis: candidate(GISSA)
+  grupo_hotelero: symbol_probe
+  grupo_kuo: symbol_probe
+  grupo_lamosa: symbol_probe
+  grupo_mexico: phase_a
+  grupo_posadas: symbol_probe
+  grupo_radio_centro: symbol_probe
+  herdez: phase_a
+  homex: symbol_probe
+  hoteles_city: symbol_probe
+  ideal: symbol_probe
+  industrias_ch: symbol_probe
+  kimber: phase_a
+  kof: phase_a
+  lab: phase_a
+  lacomer: phase_a
+  lasite: symbol_probe
+  liverpool: phase_a
+  medica_sur: symbol_probe
+  megacable: candidate(MEGA)
+  minera_frisco: symbol_probe
+  minsa: symbol_probe
+  nemak: symbol_probe
+  nutrisa: candidate(NUTRISA)
+  oma: symbol_probe
+  orbia: phase_a
+  palacio_de_hierro: symbol_probe
+  pasa: symbol_probe
+  penoles: symbol_probe
+  pinfra: symbol_probe
+  planigrupo: symbol_probe
+  pochteca: symbol_probe
+  procorp: symbol_probe
+  proteak: candidate(TEAK)
+  rlh_properties: symbol_probe
+  rotoplas: symbol_probe
+  simec: symbol_probe
+  soriana: phase_a
+  sports_world: phase_a
+  televisa: symbol_probe
+  tmm: symbol_probe
+  traxion: symbol_probe
+  unifin: symbol_probe
+  vasconia: candidate(VASCONI)
+  vesta: symbol_probe
+  vinte: symbol_probe
+  vista: symbol_probe
+  vitro: symbol_probe
+  volaris: symbol_probe
+  walmex: phase_a
+universe:
+  ac:
+    symbol: AC.MX
+    ticker: AC
+  accel:
+    symbol: ACCELSAB.MX
+    ticker: ACCELSA
+  aeromexico:
+    symbol: AERO.MX
+    ticker: AERO
+  aleatica_educa:
+    symbol: EDUCA18.MX
+    ticker: EDUCA
+  alpek:
+    symbol: ALPEKA.MX
+    ticker: ALPEK
+  alsea:
+    symbol: ALSEA.MX
+    ticker: ALSEA
+  alterna:
+    symbol: ALTERNA.MX
+    ticker: ALTERNA
+  america_movil:
+    symbol: AMXB.MX
+    ticker: AMX
+  asur:
+    symbol: ASURB.MX
+    ticker: ASUR
+  autlan:
+    symbol: AUTLANB.MX
+    ticker: AUTLAN
+  axtel:
+    symbol: AXTELCPO.MX
+    ticker: AXTEL
+  becle:
+    symbol: CUERVO.MX
+    ticker: CUERVO
+  bimbo:
+    symbol: BIMBOA.MX
+    ticker: BIMBO
+  bolsa_mexicana:
+    symbol: BOLSAA.MX
+    ticker: BOLSA
+  cadu:
+    symbol: CADUA.MX
+    ticker: CADU
+  cementos_moctezuma:
+    symbol: CMOCTEZ.MX
+    ticker: CMOCTEZ
+  cemex:
+    symbol: CEMEXCPO.MX
+    ticker: CEMEX
+  chedraui:
+    symbol: CHDRAUIB.MX
+    ticker: CHDRAUI
+  cidmega:
+    symbol: CIDMEGA.MX
+    ticker: CIDMEGA
+  cie:
+    symbol: CIEB.MX
+    ticker: CIE
+  club_america:
+    symbol: AGUILASCPO.MX
+    ticker: AGUILAS
+  cmr:
+    symbol: CMRB.MX
+    ticker: CMR
+  consorcio_ara:
+    symbol: ARA.MX
+    ticker: ARA
+  convertidora:
+    symbol: CONVERA.MX
+    ticker: CONVER
+  corporativo_fragua:
+    symbol: FRAGUAB.MX
+    ticker: FRAGUA
+  ct_axtel:
+    symbol: CTAXTELA.MX
+    ticker: CTAXTEL
+  cultiba:
+    symbol: CULTIBAB.MX
+    ticker: CULTIBA
+  cydsa:
+    symbol: CYDSASAA.MX
+    ticker: CYDSASA
+  diablos_rojos:
+    symbol: DIABLOSO.MX
+    ticker: DIABLOS
+  dine:
+    symbol: DINEB.MX
+    ticker: DINE
+  farmacias_benavides:
+    symbol: BEVIDESB.MX
+    ticker: BEVIDES
+  femsa:
+    symbol: FEMSAUBD.MX
+    ticker: FEMSA
+  fibra_cfe:
+    symbol: FCFE18.MX
+    ticker: FCFE
+  fibra_danhos:
+    symbol: DANHOS13.MX
+    ticker: DANHOS
+  fibra_hd:
+    symbol: FIBRAHD15.MX
+    ticker: FIBRAHD
+  fibra_hotel:
+    symbol: FIHO12.MX
+    ticker: FIHO
+  fibra_inn:
+    symbol: FINN13.MX
+    ticker: FINN
+  fibra_macquarie:
+    symbol: FIBRAMQ12.MX
+    ticker: FIBRAMQ
+  fibra_mty:
+    symbol: FMTY14.MX
+    ticker: FMTY
+  fibra_nova:
+    symbol: FNOVA17.MX
+    ticker: FNOVA
+  fibra_plus:
+    symbol: FPLUS16.MX
+    ticker: FPLUS
+  fibra_prologis:
+    symbol: FIBRAPL14.MX
+    ticker: FIBRAPL
+  fibra_shop:
+    symbol: FSHOP13.MX
+    ticker: FSHOP
+  fibra_storage:
+    symbol: STORAGE18.MX
+    ticker: STORAGE
+  fibra_uno:
+    symbol: FUNO11.MX
+    ticker: FUNO
+  fibra_uptown:
+    symbol: FIBRAUP18.MX
+    ticker: FIBRAUP
+  fibra_via:
+    symbol: FVIA16.MX
+    ticker: FVIA
+  gap:
+    symbol: GAPB.MX
+    ticker: GAP
+  gcc:
+    symbol: GCC.MX
+    ticker: GCC
+  gicsa:
+    symbol: GICSAB.MX
+    ticker: GICSA
+  gmd:
+    symbol: GMD.MX
+    ticker: GMD
+  gruma:
+    symbol: GRUMAB.MX
+    ticker: GRUMA
+  grupo_aristos:
+    symbol: ARISTOSA.MX
+    ticker: ARISTOS
+  grupo_cable:
+    symbol: CABLECPO.MX
+    ticker: CABLE
+  grupo_carso:
+    symbol: GCARSOA1.MX
+    ticker: GCARSO
+  grupo_collado:
+    symbol: COLLADO.MX
+    ticker: COLLADO
+  grupo_famsa:
+    symbol: GFAMSAA.MX
+    ticker: GFAMSA
+  grupo_gav:
+    symbol: GAVA.MX
+    ticker: GAV
+  grupo_gigante:
+    symbol: GIGANTE.MX
+    ticker: GIGANTE
+  grupo_gis:
+    symbol: GISSAA.MX
+    ticker: GISSA
+  grupo_hotelero:
+    symbol: HOTEL.MX
+    ticker: HOTEL
+  grupo_kuo:
+    symbol: KUOB.MX
+    ticker: KUO
+  grupo_lamosa:
+    symbol: LAMOSA.MX
+    ticker: LAMOSA
+  grupo_mexico:
+    symbol: GMEXICOB.MX
+    ticker: GMEXICO
+  grupo_posadas:
+    symbol: POSADASA.MX
+    ticker: POSADAS
+  grupo_radio_centro:
+    symbol: RCENTROA.MX
+    ticker: RCENTRO
+  herdez:
+    symbol: HERDEZ.MX
+    ticker: HERDEZ
+  homex:
+    symbol: HOMEX.MX
+    ticker: HOMEX
+  hoteles_city:
+    symbol: HCITY.MX
+    ticker: HCITY
+  ideal:
+    symbol: IDEALB-1.MX
+    ticker: IDEAL
+  industrias_ch:
+    symbol: ICHB.MX
+    ticker: ICH
+  kimber:
+    symbol: KIMBERA.MX
+    ticker: KIMBER
+  kof:
+    symbol: KOFUBL.MX
+    ticker: KOF
+  lab:
+    symbol: LABB.MX
+    ticker: LAB
+  lacomer:
+    symbol: LACOMERUBC.MX
+    ticker: LACOMER
+  lasite:
+    symbol: LASITE.MX
+    ticker: LASITE
+  liverpool:
+    symbol: LIVEPOLC-1.MX
+    ticker: LIVEPOL
+  medica_sur:
+    symbol: MEDICAB.MX
+    ticker: MEDICA
+  megacable:
+    symbol: MEGACPO.MX
+    ticker: MEGA
+  minera_frisco:
+    symbol: MFRISCOA-1.MX
+    ticker: MFRISCO
+  minsa:
+    symbol: MINSAB.MX
+    ticker: MINSA
+  nemak:
+    symbol: NEMAKA.MX
+    ticker: NEMAK
+  nutrisa:
+    symbol: NUTRISAA.MX
+    ticker: NUTRISA
+  oma:
+    symbol: OMAB.MX
+    ticker: OMA
+  orbia:
+    symbol: ORBIA.MX
+    ticker: ORBIA
+  palacio_de_hierro:
+    symbol: GPH1.MX
+    ticker: GPH
+  pasa:
+    symbol: PASAB.MX
+    ticker: PASA
+  penoles:
+    symbol: PE&OLES.MX
+    ticker: PEOLES
+  pinfra:
+    symbol: PINFRA.MX
+    ticker: PINFRA
+  planigrupo:
+    symbol: PLANI.MX
+    ticker: PLANI
+  pochteca:
+    symbol: POCHTECB.MX
+    ticker: POCHTEC
+  procorp:
+    symbol: PROCORPB.MX
+    ticker: PROCORP
+  proteak:
+    symbol: TEAKCPO.MX
+    ticker: TEAK
+  rlh_properties:
+    symbol: RLHA.MX
+    ticker: RLH
+  rotoplas:
+    symbol: AGUA.MX
+    ticker: AGUA
+  simec:
+    symbol: SIMECB.MX
+    ticker: SIMEC
+  soriana:
+    symbol: SORIANAB.MX
+    ticker: SORIANA
+  sports_world:
+    symbol: SPORTS.MX
+    ticker: SPORT
+  televisa:
+    symbol: TLEVISAB.MX
+    ticker: TLEVISA
+  tmm:
+    symbol: TMMA.MX
+    ticker: TMM
+  traxion:
+    symbol: TRAXIONA.MX
+    ticker: TRAXION
+  unifin:
+    symbol: UNIFINA.MX
+    ticker: UNIFIN
+  vasconia:
+    symbol: VASCONI.MX
+    ticker: VASCONI
+  vesta:
+    symbol: VESTA.MX
+    ticker: VESTA
+  vinte:
+    symbol: VINTE.MX
+    ticker: VINTE
+  vista:
+    symbol: VISTAA.MX
+    ticker: VISTA
+  vitro:
+    symbol: VITROA.MX
+    ticker: VITRO
+  volaris:
+    symbol: VOLARA.MX
+    ticker: VOLAR
+  walmex:
+    symbol: WALMEX.MX
+    ticker: WALMEX

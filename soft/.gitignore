@@ -1,0 +1,25 @@
+# Generated deliverables (rebuildable from inputs + filings + the BBG pack)
+outputs/
+
+# GitHub Pages publisher working tree — its OWN git repo (points at the public Pages repo).
+# The parent project repo must ignore it so it isn't seen as an embedded gitlink.
+deploy/site/
+
+# Filings cache (copied/downloaded; large, rebuildable)
+data/reports/
+
+# CNBV bank-capital cache (downloaded PDF + parsed JSON; rebuildable via scripts/fetch_cnbv_icap.py)
+data/cnbv/
+
+# Parse/LLM caches inherited from vendored infra
+.cache/
+.llm_cache/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+.DS_Store

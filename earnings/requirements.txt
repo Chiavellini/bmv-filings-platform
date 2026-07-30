@@ -1,0 +1,34 @@
+# earnings — declared dependencies.
+#
+# Until this file existed, `earnings` had no requirements, no pyproject, and no
+# pytest config. It ran on a hardcoded personal virtualenv named in the README
+# (~/.venvs/alpha-go) and silently inherited the ROOT project's pytest settings.
+#
+# Certified interpreter: Python 3.11.13.
+#
+# scipy and pyarrow are the reason this subproject cannot run under the root
+# .venv (3.13): neither is installed there, so all four analyst/dirmag test
+# modules abort at collection with ModuleNotFoundError.
+
+pandas==3.0.3
+numpy==2.4.6
+scipy==1.17.1          # earnlib/stats.py — event-study statistics
+pyarrow==24.0.0        # parquet artifacts under outputs/
+pyyaml==6.0.3          # configs/study.yaml, universe_full.yaml
+requests==2.34.2
+scikit-learn==1.9.0
+beautifulsoup4==4.15.0 # build_events.py -> vendored BMV archive parser
+openpyxl==3.1.5        # analyst/calendar workbook readers
+pdfplumber==0.11.10    # supported historical PDF extraction path
+
+# Network fetch path only (scripts/us_fetch.py, scripts/build_prices.py --fetch-index).
+# Previously supplied by the committed earnings/.vendor/ site-packages snapshot,
+# which pinned this subproject to the CPython 3.11 ABI via a compiled
+# _cffi_backend.cpython-311-darwin.so. Declared here so the vendored copy is no
+# longer load-bearing.
+curl-cffi==0.15.0
+
+# Terminal reports (scripts/make_report.py and the audit renderers).
+rich==15.0.0
+
+pytest==9.1.1

@@ -1,0 +1,9 @@
+# Install Apache Airflow with its official version/Python constraints first:
+#
+#   python -m pip install "apache-airflow==3.3.0" \
+#     --constraint \
+#     "https://raw.githubusercontent.com/apache/airflow/constraints-3.3.0/constraints-3.13.txt"
+#
+# Then install this file and the root package. psycopg is needed only when
+# moving from the single-computer SQLite trial to PostgreSQL metadata.
+psycopg2-binary==2.9.10

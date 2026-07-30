@@ -1,0 +1,114 @@
+# xbrl_concepts.yaml — shared registry: metric_key → IFRS concept candidates (Tier 1)
+#                       and Spanish row-label aliases (Tier 2 table matching).
+#
+# xbrl_concepts: ordered list; the first concept PRESENT in a filing's facts wins.
+#                These are standard IFRS taxonomy element names as tagged in BMV
+#                XBRL filings (the "ifrs-full_" prefix the archive uses).
+# aliases:       leftmost-cell labels used to locate the metric's row in a table.
+#                Matching is case-insensitive + accent-insensitive + fuzzy.
+#
+# Metrics WITHOUT a clean IFRS tag (ebitda, ebitda_sin_ifrs, net_debt,
+# free_cash_flow, all margins/ratios, and proprietary KPIs) are intentionally
+# absent — they fall through to Tier 2/3/4 and the existing derivations.
+
+metrics:
+  # ---- Income statement ----
+  revenue:
+    xbrl_concepts: [ifrs-full_Revenue, ifrs-full_RevenueFromContractsWithCustomers]
+    aliases: ["Total de ingresos", "Ingresos totales", "Total de Ingresos Netos", "Ingresos netos", "Total revenue", "Net sales"]
+  cogs:
+    xbrl_concepts: [ifrs-full_CostOfSales]
+    aliases: ["Costo de ventas", "Costo de ingresos", "Cost of sales"]
+  gross_profit:
+    xbrl_concepts: [ifrs-full_GrossProfit]
+    aliases: ["Utilidad bruta", "Gross profit"]
+  operating_income:
+    xbrl_concepts: [ifrs-full_ProfitLossFromOperatingActivities]
+    aliases: ["Utilidad de operacion", "Utilidad operativa", "Resultado de operacion", "Operating income"]
+  depreciation:
+    # BMV issuers tag operating D&A under the mx-cor taxonomy, NOT the plain ifrs-full concept
+    # (the latter is present in 0/583 cached filings). Order = first-present-wins:
+    #   1. mx-cor operating D&A          — the correct EBITDA add-back (544/583 filings)
+    #   2. ifrs-full cash-flow add-back  — total D&A from the CF statement (510/583)
+    #   3. plain ifrs-full concept       — kept as a last-resort fallback (0/583 today)
+    xbrl_concepts: [ifrs_mx-cor_20141205_DepreciacionYAmortizacionOperativa, ifrs-full_AdjustmentsForDepreciationAndAmortisationExpense, ifrs-full_DepreciationAndAmortisationExpense]
+    aliases: ["Depreciacion y amortizacion", "Depreciacion", "Depreciation and amortisation"]
+  interest_expense:
+    xbrl_concepts: [ifrs-full_FinanceCosts, ifrs-full_InterestExpense]
+    aliases: ["Gastos financieros", "Costos financieros", "Intereses pagados", "Finance costs"]
+  interest_income:
+    xbrl_concepts: [ifrs-full_FinanceIncome, ifrs-full_RevenueFromInterest]
+    aliases: ["Ingresos financieros", "Productos financieros", "Finance income"]
+  ebt:
+    xbrl_concepts: [ifrs-full_ProfitLossBeforeTax]
+    aliases: ["Utilidad antes de impuestos", "Resultado antes de impuestos", "Profit before tax"]
+  tax_expense:
+    xbrl_concepts: [ifrs-full_IncomeTaxExpenseContinuingOperations]
+    aliases: ["Impuestos a la utilidad", "Impuesto sobre la renta", "Income tax expense"]
+  net_income:
+    xbrl_concepts: [ifrs-full_ProfitLoss]
+    aliases: ["Utilidad neta", "Resultado neto", "Net income", "Net profit"]
+  eps:
+    xbrl_concepts: [ifrs-full_BasicEarningsLossPerShare]
+    aliases: ["Utilidad por accion", "Earnings per share"]
+
+  # ---- Balance sheet ----
+  cash:
+    xbrl_concepts: [ifrs-full_CashAndCashEquivalents]
+    aliases: ["Efectivo y equivalentes de efectivo", "Efectivo y equivalentes", "Efectivo", "Cash and cash equivalents"]
+  accounts_receivable:
+    xbrl_concepts: [ifrs-full_CurrentTradeReceivables, ifrs-full_TradeAndOtherCurrentReceivables]
+    aliases: ["Cuentas por cobrar", "Clientes", "Trade receivables"]
+  inventory:
+    xbrl_concepts: [ifrs-full_Inventories]
+    aliases: ["Inventarios", "Inventories"]
+  current_assets:
+    xbrl_concepts: [ifrs-full_CurrentAssets]
+    aliases: ["Total de activo circulante", "Activo circulante", "Total current assets"]
+  ppe_net:
+    xbrl_concepts: [ifrs-full_PropertyPlantAndEquipment]
+    aliases: ["Inmuebles, mobiliario y equipo", "Propiedad, planta y equipo", "Property, plant and equipment"]
+  intangibles:
+    xbrl_concepts: [ifrs-full_IntangibleAssetsOtherThanGoodwill]
+    aliases: ["Activos intangibles", "Intangibles", "Intangible assets"]
+  goodwill:
+    xbrl_concepts: [ifrs-full_Goodwill]
+    aliases: ["Credito mercantil", "Goodwill"]
+  right_of_use:
+    xbrl_concepts: [ifrs-full_RightofuseAssets]
+    aliases: ["Activos por derecho de uso", "Right-of-use assets"]
+  total_assets:
+    xbrl_concepts: [ifrs-full_Assets]
+    aliases: ["Total de activos", "Total activo", "Suma del activo", "Total assets"]
+  accounts_payable:
+    xbrl_concepts: [ifrs-full_TradeAndOtherCurrentPayables]
+    aliases: ["Proveedores", "Cuentas por pagar", "Trade payables"]
+  current_liabilities:
+    xbrl_concepts: [ifrs-full_CurrentLiabilities]
+    aliases: ["Total de pasivo circulante", "Pasivo circulante", "Total current liabilities"]
+  total_liabilities:
+    xbrl_concepts: [ifrs-full_Liabilities]
+    aliases: ["Total de pasivos", "Total pasivo", "Suma del pasivo", "Total liabilities"]
+  equity:
+    xbrl_concepts: [ifrs-full_Equity]
+    aliases: ["Total de capital contable", "Capital contable", "Total equity"]
+  retained_earnings:
+    xbrl_concepts: [ifrs-full_RetainedEarnings]
+    aliases: ["Resultados acumulados", "Utilidades retenidas", "Retained earnings"]
+
+  # ---- Cash flow ----
+  cfo:
+    xbrl_concepts: [ifrs-full_CashFlowsFromUsedInOperatingActivities]
+    aliases: ["Flujos de efectivo de actividades de operacion", "Flujo de operacion", "Net cash from operating activities"]
+  cfi:
+    xbrl_concepts: [ifrs-full_CashFlowsFromUsedInInvestingActivities]
+    aliases: ["Flujos de efectivo de actividades de inversion", "Net cash used in investing activities"]
+  cff:
+    xbrl_concepts: [ifrs-full_CashFlowsFromUsedInFinancingActivities]
+    aliases: ["Flujos de efectivo de actividades de financiamiento", "Net cash from financing activities"]
+  capex:
+    xbrl_concepts: [ifrs-full_PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities]
+    aliases: ["Adquisicion de inmuebles, mobiliario y equipo", "Inversiones en activo fijo", "Purchase of property, plant and equipment"]
+  net_change_cash:
+    xbrl_concepts: [ifrs-full_IncreaseDecreaseInCashAndCashEquivalents]
+    aliases: ["Incremento neto de efectivo", "Aumento (disminucion) de efectivo", "Net increase in cash"]

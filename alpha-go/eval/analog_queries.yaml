@@ -1,0 +1,356 @@
+# analog_queries — a PRECISION-oriented stress set for the analog synonym-expansion feature.
+#
+# WHY THIS EXISTS
+# ---------------
+# eval/queries.yaml (scored by scripts/eval_retrieval.py) is a RECALL guard: it only asks
+# whether a top-k hit is the right COMPANY. With a 3-company corpus already saturated at
+# recall@5 = 100%, it STRUCTURALLY cannot see the two risks analog expansion actually adds:
+#   1. NOISE — irrelevant passages pulled in by a fired analog concept.
+#   2. POLYSEMY FALSE-FIRES — a wrong-sense query ("pet food", "frying pan") over-expanding
+#      into the domain sense (resin/plastic, bakery bread).
+# This file is built to MOVE those numbers, not to pass trivially.
+#
+# KIND TAGS
+#   trap_wrong — the OTHER-sense query for a documented polysemy trap. The gate in
+#                configs/analogs.yaml (suppress_if_any / require_any) must keep it from
+#                expanding. Target: it surfaces ZERO wrong-sense analog hits.
+#   trap_right — the domain-sense partner of the same trap. The gate must STILL fire it
+#                (corroborating co-terms present). Target: it expands correctly.
+#   base_miss  — a paraphrase/analog query whose target passage the BASE (expand_synonyms=False)
+#                keyword system MISSES, so analog expansion is the only keyword path to it.
+#                Every base_miss below was verified to miss without expansion (see the collector's
+#                `base_literal_miss` field in the candidates file); new base_miss rows also carry a
+#                declared `base_literal_miss: true` tag confirmed with expand_synonyms=False.
+#
+# SPLIT TAGS  (added track-b-expand2)
+#   Every query carries `split: tuning|heldout`. HELDOUT is reserved so the rerank / gate can be
+#   tuned on `tuning` and REPORTED on `heldout` it never saw — the standard train/test hygiene.
+#   The split is STRATIFIED by `kind` (~60/40) so both halves cover trap_wrong/trap_right/base_miss;
+#   a polysemy pair (the trap_wrong + its trap_right partner) is kept in the SAME split so the pair
+#   is always evaluated together. Composition:
+#     tuning : trap_wrong 9, trap_right 9, base_miss 12  = 30
+#     heldout: trap_wrong 6, trap_right 6, base_miss  8  = 20
+#
+# `concept` names the analogs.yaml concept the query targets. `expect_company` is a REFERENCE
+# hint for the human/independent judge (which filer holds the domain passage) — it is NOT an
+# auto-scored label; relevance is filled into eval/analog_relevance.yaml by a separate judge.
+# New rows (this batch) carry `added_in: track-b-expand2` so the collector can target them with
+# `--only-new` and write eval/analog_candidates2_unlabeled.yaml.
+#
+# NOTE: This set was authored as infrastructure only. No analogs.yaml weight/gate was tuned and
+# no relevance was self-judged while building it.
+version: 1
+
+queries:
+  # ============================================================================================
+  # ORIGINAL 30 (text unchanged; split tag added)
+  # ============================================================================================
+
+  # ---- Polysemy trap pairs (each documented gated concept: wrong-sense vs domain-sense) ----
+
+  # pet_resin_plastic — bare "PET" (pet animal) vs PET resin/plastic
+  - query: pet food and pet care supplies for dogs and cats
+    kind: trap_wrong
+    concept: pet_resin_plastic
+    split: tuning
+  - query: PET resin and plastic packaging costs
+    kind: trap_right
+    concept: pet_resin_plastic
+    expect_company: femsa
+    split: tuning
+
+  # raw_materials — bare "sugar" (product/health/tax) vs sugar input cost
+  - query: sugar-free and zero sugar reduced sugar sweetened beverages tax
+    kind: trap_wrong
+    concept: raw_materials
+    split: tuning
+  - query: sugar and sweetener input cost inflation pressure
+    kind: trap_right
+    concept: raw_materials
+    expect_company: bimbo
+    split: tuning
+
+  # returnable_refillable — "one-way" street/ticket vs one-way PET presentation
+  - query: one way street one way ticket and one way flight booking
+    kind: trap_wrong
+    concept: returnable_refillable
+    split: tuning
+  - query: returnable and one-way PET bottle presentations
+    kind: trap_right
+    concept: returnable_refillable
+    expect_company: femsa
+    split: tuning
+
+  # glass_metal_containers — "glass" (magnifying/ceiling) vs glass bottle
+  - query: magnifying glass and the glass ceiling for women
+    kind: trap_wrong
+    concept: glass_metal_containers
+    split: tuning
+  - query: returnable glass bottle recycling
+    kind: trap_right
+    concept: glass_metal_containers
+    expect_company: femsa
+    split: tuning
+
+  # water_category — "water" treatment/utility vs bottled water
+  - query: water treatment plant and wastewater management footprint
+    kind: trap_wrong
+    concept: water_category
+    split: heldout
+  - query: bottled water category brands and jug water
+    kind: trap_right
+    concept: water_category
+    expect_company: femsa
+    split: heldout
+
+  # transactions — "transaction" (related-party/costs) vs number of transactions
+  - query: related-party transactions and transaction costs disclosure
+    kind: trap_wrong
+    concept: transactions
+    split: heldout
+  - query: number of transactions per store and customer traffic
+    kind: trap_right
+    concept: transactions
+    expect_company: femsa
+    split: heldout
+
+  # bread_and_bakery_staples — "pan" frying pan vs pan de caja / sliced bread
+  - query: frying pan and sauce pan cookware
+    kind: trap_wrong
+    concept: bread_and_bakery_staples
+    split: tuning
+  - query: sliced bread pan de caja and loaf volumes
+    kind: trap_right
+    concept: bread_and_bakery_staples
+    expect_company: bimbo
+    split: tuning
+
+  # bakery_plant_operations — "planta" baja / treatment plant vs bakery plant
+  - query: planta baja retail floor and power plant treatment plant
+    kind: trap_wrong
+    concept: bakery_plant_operations
+    split: tuning
+  - query: bakery manufacturing plant closures
+    kind: trap_right
+    concept: bakery_plant_operations
+    expect_company: bimbo
+    split: tuning
+
+  # same_store_sales — "SSS" acronym (non-retail) vs same-store sales (require_any-gated, no veto)
+  - query: SSS server side security standard certification audit
+    kind: trap_wrong
+    concept: same_store_sales
+    split: tuning
+  - query: SSS same-store sales growth across stores
+    kind: trap_right
+    concept: same_store_sales
+    expect_company: walmex
+    split: tuning
+
+  # salty_snacks — bare "snacks/snacking" generic vs salty snacks category (require_any-gated)
+  - query: snacking habits and snack breaks during the workday
+    kind: trap_wrong
+    concept: salty_snacks
+    split: heldout
+  - query: salty snacks botanas category portfolio
+    kind: trap_right
+    concept: salty_snacks
+    expect_company: bimbo
+    split: heldout
+
+  # ---- base_miss: analog-only recall (verified to miss with expand_synonyms=False) ----
+
+  - query: paraxylene and monoethylene glycol feedstock
+    kind: base_miss
+    concept: pet_resin_plastic
+    expect_company: femsa
+    split: tuning
+  - query: galletas biscuits
+    kind: base_miss
+    concept: cookies
+    expect_company: bimbo
+    split: heldout
+  - query: pan dulce reposteria
+    kind: base_miss
+    concept: sweet_baked_goods
+    expect_company: bimbo
+    split: tuning
+  - query: canal tradicional puntos de venta
+    kind: base_miss
+    concept: distribution_channel
+    expect_company: femsa
+    split: tuning
+  - query: confiteria golosinas
+    kind: base_miss
+    concept: confectionery
+    expect_company: bimbo
+    split: tuning
+  - query: refresco carbonatado
+    kind: base_miss
+    concept: beverage_category
+    expect_company: femsa
+    split: heldout
+  - query: panques bolleria
+    kind: base_miss
+    concept: sweet_baked_goods
+    expect_company: bimbo
+    split: tuning
+  - query: tienda de conveniencia formato de proximidad
+    kind: base_miss
+    concept: convenience_proximity_format
+    expect_company: femsa
+    split: tuning
+  - query: almacen centros de distribucion
+    kind: base_miss
+    concept: distribution_center
+    expect_company: walmex
+    split: heldout
+  - query: red de distribucion logistica
+    kind: base_miss
+    concept: logistics_distribution
+    expect_company: bimbo
+    split: tuning
+
+  # ============================================================================================
+  # NEW 20 (track-b-expand2) — more trap pairs on uncovered risky aliases + more base_miss
+  # ============================================================================================
+
+  # ---- NEW polysemy trap pairs (risky aliases / suppress-senses not covered by the original 30) ----
+
+  # pet_resin_plastic — the OTHER guarded alias "MEG" (monoethylene glycol) vs MEG=megabyte
+  - query: MEG file size in megabytes and gigabytes of storage
+    kind: trap_wrong
+    concept: pet_resin_plastic
+    added_in: track-b-expand2
+    split: heldout
+  - query: MEG monoethylene glycol resin feedstock
+    kind: trap_right
+    concept: pet_resin_plastic
+    expect_company: femsa
+    added_in: track-b-expand2
+    split: heldout
+
+  # raw_materials — the OTHER guarded alias "azúcar" (ES): suppress-sense (sin azucar) vs input cost
+  - query: bebidas sin azucar y azucar reducida impuesto
+    kind: trap_wrong
+    concept: raw_materials
+    added_in: track-b-expand2
+    split: tuning
+  - query: costo de azucar y edulcorantes presion inflacionaria
+    kind: trap_right
+    concept: raw_materials
+    expect_company: bimbo
+    added_in: track-b-expand2
+    split: tuning
+
+  # water_category — the OTHER guarded alias "agua" (ES): utility/ESG sense vs bottled-water category
+  - query: tratamiento de agua residual y estres hidrico
+    kind: trap_wrong
+    concept: water_category
+    added_in: track-b-expand2
+    split: tuning
+  - query: agua embotellada y garrafon categoria de bebidas
+    kind: trap_right
+    concept: water_category
+    expect_company: femsa
+    added_in: track-b-expand2
+    split: tuning
+
+  # glass_metal_containers — a suppress-sense NOT used before (wine/drinking glass) vs glass bottle
+  - query: wine glass and drinking glass tableware retail
+    kind: trap_wrong
+    concept: glass_metal_containers
+    added_in: track-b-expand2
+    split: heldout
+  - query: aluminum can and glass bottle container mix
+    kind: trap_right
+    concept: glass_metal_containers
+    expect_company: femsa
+    added_in: track-b-expand2
+    split: heldout
+
+  # bakery_plant_operations — a suppress-sense NOT used before (planta nuclear/electrica) vs bakery plant
+  - query: planta nuclear y planta electrica de generacion de energia
+    kind: trap_wrong
+    concept: bakery_plant_operations
+    added_in: track-b-expand2
+    split: heldout
+  - query: cierre de panificadora y planta de manufactura
+    kind: trap_right
+    concept: bakery_plant_operations
+    expect_company: bimbo
+    added_in: track-b-expand2
+    split: heldout
+
+  # ---- NEW base_miss: domain paraphrases the base (expand_synonyms=False) MISSES (verified) ----
+
+  - query: ruta de reparto ultima milla
+    kind: base_miss
+    concept: delivery_route
+    expect_company: bimbo
+    base_literal_miss: true
+    added_in: track-b-expand2
+    split: tuning
+  - query: embotelladora territorio de franquicia
+    kind: base_miss
+    concept: bottling_operations
+    expect_company: femsa
+    base_literal_miss: true
+    added_in: track-b-expand2
+    split: heldout
+  - query: contenido reciclado y reciclable
+    kind: base_miss
+    concept: recycled_content
+    expect_company: femsa
+    base_literal_miss: true
+    added_in: track-b-expand2
+    split: tuning
+  - query: presentaciones retornables empaque reciclable
+    kind: base_miss
+    concept: packaging_presentation
+    expect_company: femsa
+    base_literal_miss: true
+    added_in: track-b-expand2
+    split: tuning
+  - query: surtidor de combustible y gasolinera
+    kind: base_miss
+    concept: fuel_service_stations
+    expect_company: femsa
+    base_literal_miss: true
+    added_in: track-b-expand2
+    split: heldout
+  - query: canal moderno y canal tradicional ventas
+    kind: base_miss
+    concept: sales_channel
+    expect_company: bimbo
+    base_literal_miss: true
+    added_in: track-b-expand2
+    split: tuning
+  - query: trigo y harina costos de insumos
+    kind: base_miss
+    concept: commodity_raw_material_inputs
+    expect_company: bimbo
+    base_literal_miss: true
+    added_in: track-b-expand2
+    split: tuning
+  - query: flota de reparto y camiones electricos
+    kind: base_miss
+    concept: fleet
+    expect_company: bimbo
+    base_literal_miss: true
+    added_in: track-b-expand2
+    split: heldout
+  - query: formato de proximidad tienda de conveniencia
+    kind: base_miss
+    concept: convenience_proximity_format
+    expect_company: femsa
+    base_literal_miss: true
+    added_in: track-b-expand2
+    split: heldout
+  - query: bebida gaseosa y refresco carbonatado
+    kind: base_miss
+    concept: beverage_category
+    expect_company: femsa
+    base_literal_miss: true
+    added_in: track-b-expand2
+    split: heldout

@@ -1,0 +1,13 @@
+# CT Axtel — minimal coverage config (XBRL-sourced fundamentals; no custom extractor).
+company:
+  name: CT Axtel
+  ticker: "CTAXTEL MM"
+  currency: MXN
+  exchange: BMV
+  unit: millions
+
+tier_precedence:
+  default: [xbrl, bmv, prose, search, table, calc]
+
+ir_website:
+  xbrl_ticker: "CTAXTEL"

@@ -1,0 +1,76 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+.airflow-venv/
+.llm_cache/
+.env
+.claude/
+HANDOFF_ALPHA_GO_CONTINUATION.md
+downloads/
+*.pdf
+.DS_Store
+
+# Databases are part of the external estate, never the source release.
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-shm
+*.sqlite3-wal
+*.duckdb
+*.duckdb.wal
+
+# Local logs, run markers, and editor/generated backups.
+*.log
+*.err
+*.pid
+*.bak
+*.bak-*
+data/night_start.txt
+
+# Local Airflow state; native definitions and .env.example are versioned.
+deploy/airflow/logs/
+deploy/airflow/state/
+deploy/airflow/native/.env
+
+# Heavy static inputs (kept on disk, not version-controlled)
+data/reports/
+data/document_estate/
+data/ground_truth/
+data/verified/
+archive/
+data/style/
+
+# Parsed-PDF block cache (transparent, regenerable)
+.cache/
+soft/data/cache/
+soft/data/bmv_equity_roster.csv
+
+# Bloomberg exports stay with the private data estate. Keep the explicitly
+# documented synthetic fixture so a clean clone retains one runnable example.
+soft/data/bloomberg/*.csv
+!soft/data/bloomberg/walmex.csv
+
+# Private/generated Earnings research artifacts. Source, configs, and tests are
+# versioned; model inventories, analyst workbooks, rendered results, and raw
+# vendor snapshots stay with the external data bundle.
+earnings/audit/model_vintage_inventory.csv
+earnings/data/analyst/
+earnings/outputs/
+earnings/vendor/alpha-go/data/bmv/archive_index.html
+
+# Generated deliverables: outputs/<Company>/{csv,excel,validation}/ is produced
+# by scripts/build_segments.py. Declared here so the phase manifest can name it
+# as an output location without a fresh clone failing for its absence.
+outputs/
+
+# Build and packaging by-products
+build/
+*.egg-info/

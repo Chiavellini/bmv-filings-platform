@@ -1,0 +1,16 @@
+[project]
+name = "soft"
+version = "0.1.0"
+description = "Soft Coverage Engine — a self-contained equity-research coverage-summary generator (valuation + financial analysis) that emits themed Excel workbooks."
+requires-python = ">=3.10"
+
+# Self-contained: soft/ vendors the reusable parent infra under its own src/ and
+# resolves it via the same `import src.<role>.<module>` namespace. Running from the
+# soft/ root, these imports resolve to soft's OWN copy — never the parent repo.
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+markers = [
+    "network: tests that hit the real network",
+    "model: tests that load a heavy model (LLM / embeddings)",
+]

@@ -1,0 +1,73 @@
+company:
+  name: Tiendas 3B (BBB Foods)
+  ticker: TBBB
+  exchange: NYSE/BMV
+  language: en
+  currency: MXN
+  unit: millions          # GT model is in P$mn
+
+# TBBB releases contain both quarterly and year-to-date tables. Use the front
+# "Total Revenue Ps. X" quarterly summary first; the audited statement fallback
+# is in thousands of pesos and therefore uses x0.001. This prevents Q4 reports
+# from picking the full-year Total Revenue row.
+text_search:
+  # Search-tier front summary rows print "Ps. 12,684" in P$mn, while the current
+  # TBBB extraction contract stores currency in thousands (the scorecard applies
+  # currency_scale: 0.001). Large statement rows are already in thousands, so only
+  # scale small front-summary values.
+  disable_auto_scale: true
+  metrics:
+    revenue: {currency_scale: 1000, scale_only_below: 1000000}
+    revenue_merchandise: {currency_scale: 1000, scale_only_below: 1000000}
+
+metric_overrides:
+  revenue:
+    patterns:
+      - regex: 'Total\s+Revenue\s+Ps\.?\s*([\d,]+)\s+100\.0%\s+Ps'
+        source: prose
+        multiplier: 1000
+      - regex: 'For the Three Months Ended[\s\S]{0,900}?^\s*Total\s+Revenue\s+([\d,]{7,})\s+[\d,]{7,}'
+        source: table
+
+custom_metrics:
+  - key: revenue_merchandise
+    label: "Revenue From Sales of Merchandise"
+    label_es: "Revenue From Sales of Merchandise"
+    section: income
+    unit: currency
+    patterns:
+      - regex: 'For the Three Months Ended[\s\S]{0,900}?Revenue\s+From\s+Sales\s+of\s+Merchandise\s+Ps\.?\s*([\d,]{7,})\s+Ps'
+        source: table
+      - regex: 'Revenue\s+from\s+sales\s+of\s+merchandise[^\n]*\n\s*([\d,]{7,})\s+[\d,]{7,}'
+        source: table
+      - regex: 'Revenue\s+From\s+Sales\s+of\s+Merchandise\s+Ps\.?\s*([\d,]{7,})\s+Ps'
+        source: table
+
+  - key: total_stores
+    label: "Total Stores"
+    label_es: "Total Stores"
+    section: kpi
+    unit: count
+    patterns:
+      - regex: 'reaching\s+(?:a\s+total\s+of\s+)?([\d,]+)\s+stores\s+as\s+of'
+        source: prose
+      - regex: 'total\s+store\s+count\s+to\s+([\d,]+)'
+        source: prose
+
+# Recent IPO (2024); no BMV XBRL. Tiendas 3B uses the Q4 Inc IR platform, which
+# serves the report list from a JSON feed (FinancialReport.svc) with q4cdn PDF
+# URLs — point year_api_urls at it (the year_api layer walks the JSON for .pdf).
+ir_website:
+  url: https://www.investorstiendas3b.com/financials/quarterly-results/default.aspx
+  year_api_urls:
+    - 'https://www.investorstiendas3b.com/feed/FinancialReport.svc/GetFinancialReportList?LanguageId=1&reportTypes=First%20Quarter%7CSecond%20Quarter%7CThird%20Quarter%7CFourth%20Quarter&pageSize=-1&pageNumber=0'
+  pdf_link_pattern: '(?i)\.pdf'
+  max_reports: 60
+  delay_ms: 500
+
+
+unavailable:
+  total_stores:
+    periods: [2Q24A]
+    reason: "GT 2,500 matches no printed count (the filing prints 2,503; the only corpus '2,500' hits are share-plan text) — model rounding"
+    proof: "grep '2,500' over data/reports/tbbb/*.md — only 2026-1T.md:667-668 vested-share notes"

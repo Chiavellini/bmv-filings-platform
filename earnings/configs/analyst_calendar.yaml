@@ -1,0 +1,47 @@
+# Human-curated BMV report calendar + analyst expectations workbook.
+# Semantics live HERE as data; scripts/build_report_calendar.py and
+# scripts/build_analyst_predictions.py consume this file. Frozen snapshot:
+source: data/analyst/analyst_expectation_2026-07-28.xlsx
+source_sha256: 81069f05313f583eded2a9cc9ddf884cfa95b6c75fe406304f396cb75f18d893
+sheet: Hoja1
+
+# Cierre  = report released after the 15:00 close -> reaction day is the NEXT
+#           trading day.
+# Apertura = released before the 08:30 open -> reaction day is the SAME day.
+session_map:
+  Cierre: after_close
+  Apertura: pre_open
+
+# Calendar blocks: header "Calendario <QQYY>" in row 1; (ticker, date, session)
+# triplets in the 3 columns beneath, rows 2-60.
+calendar_columns: {3Q24: 14, 4Q24: 18, 1Q25: 22, 2Q25: 26, 3Q25: 30, 4Q25: 34, 1Q26: 38, 2Q26: 42}
+
+# Known data-entry bugs, verified against XBRL filing dates: the 2Q25 and 3Q25
+# blocks carry year 2026 where the true report dates are 2025.
+year_corrections:
+  - {block: 2Q25, wrong_year: 2026, correct_year: 2025}
+  - {block: 3Q25, wrong_year: 2026, correct_year: 2025}
+
+# Excel ticker -> soft slug for tickers absent from universe_full.yaml's
+# ticker column (FIBRAs + financials the study universe excludes). Slugs match
+# soft's facts tree so calendar rows join events on (slug, period).
+# No corpus presence at all: FORION, SOMA (fibras), BAFAR, JAVER, FHIPO, TS.
+ticker_overrides:
+  FIDEAL: fideal
+  NEXT: fibra_next
+  ALFA: alfa
+  BBAJIO: banco_del_bajio
+  BOLSAA: bolsa_mexicana
+  GFNORTE: gfnorte
+  GMXT: gmexico_transportes
+  LABB: lab
+  "PE&OLES": penoles
+  Q: qualitas
+  RA: regional
+  SITES1: telesites
+unmappable_tickers: [FORION, SOMA, BAFAR, JAVER, FHIPO, TS]
+
+# Corrected-date plausibility bounds (hard errors when violated):
+#   period_end < cal_date <= period_end + 120d, and where an XBRL filing
+#   exists, |cal_date - filed_dt.date()| <= 45 days.
+correction_bounds: {max_days_after_period_end: 120, max_days_vs_xbrl: 45}

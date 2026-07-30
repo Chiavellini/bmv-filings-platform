@@ -1,0 +1,215 @@
+title: "GRUMAB: GRUMA"
+units: "US$mn"
+
+sections:
+  - Sales
+  - Gross Profit
+  - EBIT
+  - EBITDA
+
+mapping:
+  "Total sales": revenue
+  "Total sales/Volume (thousand tons)": volume
+  "Net Sales Gruma USA": net_sales_usa
+  "Net Sales Gruma USA/Volume (thousand tons)": volume_usa
+  "Net Sales GIMSA": net_sales_gimsa
+  "Net Sales GIMSA/Volume (thousand tons)": volume_gimsa
+  "Net Sales Gruma Europe": net_sales_europe
+  "Net Sales Gruma Europe/Volume (thousand tons)": volume_europe
+  "Net Sales A&O": net_sales_ao
+  "Net Sales A&O/Volume (thousand tons)": volume_ao
+  "Net Sales CAM": net_sales_cam
+  "Net Sales CAM/Volume (thousand tons)": volume_cam
+  "Net Sales": net_sales_other
+  "Net Sales/Volume (thousand tons)": volume_other
+  "Gross Profit/Total Gross Profit": gross_profit
+  "Gross Profit/Gruma USA": gross_profit_usa
+  "Gross Profit/GIMSA": gross_profit_gimsa
+  "Gross Profit/Gruma Europe": gross_profit_europe
+  "Gross Profit/Gruma Asia & Oceania": gross_profit_ao
+  "Gross Profit/Gruma Central America": gross_profit_cam
+  "Gross Profit/Other Subsidiaries & Eliminations": gross_profit_other
+  "EBIT/Total EBIT": operating_income
+  "EBIT/Gruma USA": operating_income_usa
+  "EBIT/GIMSA": operating_income_gimsa
+  "EBIT/Gruma Europe": operating_income_europe
+  "EBIT/Gruma Asia & Oceania": operating_income_ao
+  "EBIT/Gruma Central America": operating_income_cam
+  "EBIT/Other Subsidiaries & Eliminations": operating_income_other
+  "EBITDA/Total EBITDA": ebitda
+  "EBITDA/Gruma USA": ebitda_usa
+  "EBITDA/GIMSA": ebitda_gimsa
+  "EBITDA/Gruma Europe": ebitda_europe
+  "EBITDA/Gruma Asia & Oceania": ebitda_ao
+  "EBITDA/Gruma Central America": ebitda_cam
+  "EBITDA/Other Subsidiaries & Eliminations": ebitda_other
+
+outline: |
+  Sales
+
+  Total sales
+  YoY
+  Volume (thousand tons)
+  YoY
+  Average Price (Per thousand ton)
+  YoY
+  Check
+
+  Net Sales Gruma USA
+  YoY
+  As % of Consolidated
+  Volume (thousand tons)
+  YoY
+  Average Price (Per thousand ton)
+  YoY
+
+  Net Sales GIMSA
+  YoY
+  As % of Consolidated
+  Volume (thousand tons)
+  YoY
+  Average Price (Per thousand ton)
+  YoY
+  FX Effect
+
+  Net Sales Gruma Europe
+  YoY
+  As % of Consolidated
+  Volume (thousand tons)
+  YoY
+  Average Price (Per thousand ton)
+  YoY
+  FX Effect
+
+  Net Sales A&O
+  YoY
+  As % of Consolidated
+  Volume (thousand tons)
+  YoY
+  Average Price (Per thousand ton)
+  YoY
+  FX Effect
+
+  Net Sales CAM
+  YoY
+  As % of Consolidated
+  Volume (thousand tons)
+  YoY
+  Average Price (Per thousand ton)
+  YoY
+  FX Effect
+
+  Net Sales
+  As % of Consolidated
+  Volume (thousand tons)
+  YoY
+  Average Price (Per thousand ton)
+  YoY
+
+  Gross Profit
+
+  Total Gross Profit
+  YoY
+  Margin
+  bps change
+
+  Gruma USA
+  Margin
+  bps change
+  As % of Consolidated
+
+  GIMSA
+  Margin
+  bps change
+  As % of Consolidated
+
+  Gruma Europe
+  Margin
+  bps change
+  As % of Consolidated
+
+  Gruma Asia & Oceania
+  Margin
+  bps change
+  As % of Consolidated
+
+  Gruma Central America
+  Margin
+  bps change
+  As % of Consolidated
+
+  Other Subsidiaries & Eliminations
+  As % of Consolidated
+  Check
+
+  EBIT
+
+  Total EBIT
+  YoY
+  Margin
+  bps change
+
+  Gruma USA
+  Margin
+  bps change
+  As % of Consolidated
+
+  GIMSA
+  Margin
+  bps change
+  As % of Consolidated
+
+  Gruma Europe
+  Margin
+  bps change
+  As % of Consolidated
+
+  Gruma Asia & Oceania
+  Margin
+  bps change
+  As % of Consolidated
+
+  Gruma Central America
+  Margin
+  bps change
+  As % of Consolidated
+
+  Other Subsidiaries & Eliminations
+  As % of Consolidated
+  Check
+
+  EBITDA
+
+  Total EBITDA
+  YoY
+  Margin
+  bps change
+
+  Gruma USA
+  USA EBITDA margin
+  bps change
+  As % of Consolidated
+
+  GIMSA
+  GIMSA EBITDA margin
+  bps change
+  As % of Consolidated
+
+  Gruma Europe
+  Europe EBITDA margin
+  bps change
+  As % of Consolidated
+
+  Gruma Asia & Oceania
+  A&O EBITDA margin
+  bps change
+  As % of Consolidated
+
+  Gruma Central America
+  CAM EBITDA margin
+  bps change
+  As % of Consolidated
+
+  Other Subsidiaries & Eliminations
+  As % of Consolidated
+  Check

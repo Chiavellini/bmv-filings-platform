@@ -1,0 +1,328 @@
+# alpha-go top-level config — the local AlphaSense control file.
+#
+# `sources` reuses the vendored download config shape (mirrors the parent `ir_website`
+# block) so the existing crawler/XBRL fetchers work unchanged. Per-company extraction
+# tuning still lives in the vendored configs/<slug>.yaml files (used by the Financials panel).
+
+# Certified corpus: the original six focus issuers plus ten locally mirrored issuers.  The
+# local mirrors are copied into data/corpus at ingest, making the expanded artifact portable,
+# reproducible, and independent of IR-site availability.
+sources:
+  - slug: walmex
+    company: "Walmex"
+    local_pdf_dir: ../data/reports/walmex
+    # Preserve the canonical Markdown corpus while carrying every matching original PDF locally.
+    local_md_only: true
+    ir_website:
+      url: https://www.walmex.mx/en/financial-information/quarterly.html
+      pdf_link_pattern: '(?:reporte|report|trimest|quarter|result|earning).*\.pdf'
+      xbrl_ticker: WALMEX
+    # Annual/integrated reports live on a separate IR section; fetched with the annual selectors
+    # (doc_kind="annual") into <YYYY>-FY periods. The governance-questionnaire and sustainability
+    # PDFs on the same page are dropped automatically by the annual excluder.
+    annual_reports:
+      url: https://www.walmex.mx/en/financial-information/annual.html
+      pdf_link_pattern: '(?:annual|integrated|informe).*\.pdf'
+    doc_types: [release, report]
+    language: en
+    require_language: en
+    industry: retail
+    minimum_documents: 20
+
+  - slug: bimbo
+    company: "Grupo Bimbo"
+    local_pdf_dir: ../data/reports/bimbo
+    # Historical PDFs in the shared local mirror extend coverage back to 2002.  Reuse them
+    # offline rather than re-downloading the same reports from the issuer site.
+    doc_types: [report]
+    language: en          # Bimbo publishes its quarterly releases in English
+    industry: food
+    minimum_documents: 20
+
+  - slug: femsa
+    company: "FEMSA"
+    # English source = SEC EDGAR 6-K EX-99.1 earnings releases (reliable, no browser), fetched by
+    # `scripts/onboard_edgar.py --slug femsa --cik 1061736`. No ir_website → ingest reuses the
+    # markdown that script writes (FEMSA's own gcs-web IR site is JS-only and unreliable).
+    edgar_cik: "1061736"
+    doc_types: [release, report]
+    language: en
+    require_language: en
+    industry: conglomerate
+    minimum_documents: 20
+
+  - slug: grupo_mexico
+    company: "Grupo México"
+    local_pdf_dir: ../data/reports/grupo_mexico
+    # The shared local cache also contains 2018–2020 quarters; retain them for historical search.
+    doc_types: [report]
+    language: es
+    industry: mining
+    minimum_documents: 20
+
+  - slug: fibra_uno
+    company: "Fibra Uno"
+    local_mdna_dir: ../soft/data/reports/fibra_uno/xbrl
+    floor_year: 2021
+    doc_types: [report]
+    language: es
+    industry: real_estate
+    minimum_documents: 20
+
+  - slug: banorte
+    company: "Grupo Financiero Banorte"
+    ir_website:
+      url: https://investors.banorte.com/es/financial-information/quarterly-reports
+      pdf_link_pattern: '(?:[1-4]T2[1-6][^/]*).pdf'
+      floor_year: 2021
+      max_reports: 30
+    doc_types: [report]
+    language: es
+    industry: financials
+    minimum_documents: 20
+
+  # Expanded local corpus.  Each source points to the project's maintained report mirror rather
+  # than crawling its IR website; this is deliberate so a rebuild can be repeated offline.
+  - slug: chedraui
+    company: "Grupo Chedraui"
+    local_pdf_dir: ../data/reports/chedraui
+    # Include the older PDF-only quarters already held in the shared local mirror.
+    doc_types: [report]
+    language: es
+    industry: retail
+    minimum_documents: 20
+
+  - slug: herdez
+    company: "Grupo Herdez"
+    local_pdf_dir: ../data/reports/herdez
+    doc_types: [report]
+    language: es
+    industry: food
+    minimum_documents: 20
+
+  - slug: kimber
+    company: "Kimberly-Clark de México"
+    local_pdf_dir: ../data/reports/kimber
+    # 2021-3T is available only as an XBRL MD&A HTML filing; retain it as the original reader asset.
+    local_original_html_dir: ../soft/data/reports/kimber/xbrl
+    doc_types: [report]
+    language: es
+    industry: household_products
+    minimum_documents: 20
+
+  - slug: kof
+    company: "Coca-Cola FEMSA"
+    local_pdf_dir: ../data/reports/kof
+    doc_types: [report]
+    language: en
+    industry: beverages
+    minimum_documents: 20
+
+  - slug: lab
+    company: "Genomma Lab Internacional"
+    local_pdf_dir: ../data/reports/lab
+    doc_types: [report]
+    language: es
+    industry: healthcare
+    minimum_documents: 20
+
+  - slug: lacomer
+    company: "La Comer"
+    local_pdf_dir: ../data/reports/lacomer
+    doc_types: [report]
+    language: es
+    industry: retail
+    minimum_documents: 20
+
+  - slug: liverpool
+    company: "El Puerto de Liverpool"
+    local_pdf_dir: ../data/reports/liverpool
+    # The local mirror's Markdown set is the maintained report corpus; the remaining PDFs are
+    # older archival variants that do not need to be reparsed during an index rebuild.
+    local_md_only: true
+    doc_types: [report]
+    language: es
+    industry: retail
+    minimum_documents: 20
+
+  - slug: soriana
+    company: "Organización Soriana"
+    local_pdf_dir: ../data/reports/soriana
+    doc_types: [report]
+    language: en
+    industry: retail
+    minimum_documents: 20
+
+  - slug: sport
+    company: "Grupo Sports World"
+    local_pdf_dir: ../data/reports/sport
+    doc_types: [report]
+    language: es
+    industry: leisure
+    minimum_documents: 20
+
+  # Shared local report estate.  These files are already present under the parent workspace's
+  # canonical ``data/reports`` cache; Alpha Go parses/indexes them offline and never downloads
+  # another copy from issuer IR pages.
+  - slug: ac
+    company: "Arca Continental"
+    local_pdf_dir: ../data/reports/ac
+    doc_types: [report]
+    language: es
+    industry: beverage
+    minimum_documents: 20
+
+  - slug: becle
+    company: "Becle"
+    local_pdf_dir: ../data/reports/becle
+    doc_types: [report]
+    language: es
+    industry: beverage
+    minimum_documents: 20
+
+  - slug: gruma
+    company: "Gruma"
+    local_pdf_dir: ../data/reports/gruma
+    doc_types: [report]
+    language: es
+    industry: food
+    minimum_documents: 20
+
+  - slug: orbia
+    company: "Orbia"
+    local_pdf_dir: ../data/reports/orbia
+    doc_types: [report]
+    language: en
+    industry: materials
+    minimum_documents: 20
+
+  - slug: tbbb
+    company: "Tiendas 3B (BBB Foods)"
+    local_pdf_dir: ../data/reports/tbbb
+    doc_types: [report]
+    language: en
+    industry: retail
+    minimum_documents: 10
+
+# --- Index settings (Phase 2/3) -------------------------------------------------------
+index:
+  db_path: data/index/alpha_go.db
+  strict_runtime: true          # fail loudly if the certified local model is unavailable/mismatched
+  embedding_backend: auto          # auto | hashing | sentence-transformers
+                                #   auto: use sentence-transformers if installed,
+                                #         else fall back to the offline HashingEmbedder
+  # Multilingual MiniLM (384-dim): reports are English but users query in Spanish
+  # ("porcentaje de ventas y costos de europa"). This model matches a Spanish query against
+  # English report text (ES full-query → EAA prose: 0.26 → 0.37 vs the English-only model).
+  embedding_model: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2  # ST backend
+  embedding_batch_size: 512  # small checkpoints balance heterogeneous financial-document chunks
+  # Benchmarked on the target 8-core Mac: larger transformer batches thrash memory and are
+  # dramatically slower. Four CPU threads + 16 texts/model batch sustains ~35 corpus chunks/s.
+  embedding_inner_batch_size: 16
+  embedding_cpu_threads: 4
+  embedding_migration_workers: 8  # one isolated worker per logical core; higher counts add no throughput
+  embedding_migration_worker_threads: 1
+  chunk:
+    target_chars: 1200
+    overlap_chars: 150
+  expand_synonyms: true        # reuse configs/metric_search.yaml alias dictionary
+
+# --- Search defaults (Phase 3) --------------------------------------------------------
+# Semantic-forward: concept/meaning ranking is the primary surface (users search ideas, not
+# verbatim strings). Keyword still contributes to fusion and drives the exact-mention count.
+search:
+  default_limit: 20
+  keyword_weight: 0.3
+  semantic_weight: 0.7
+
+# --- Document-type taxonomy (AlphaSense-style scoping) --------------------------------
+# Canonical doc types with friendly labels + filename/text keywords used to infer a type at
+# ingest/upload. First entry whose keyword appears wins; otherwise `default_doc_type`. Legacy
+# index values release/report map to "Quarterly release" (see src/corpus/doc_types.py::_LEGACY).
+default_doc_type: quarterly_release
+doc_types:
+  - key: news_article
+    label: News
+    keywords: []
+  # Listed before quarterly_release so a true press release wins over the generic `release`
+  # keyword. Keywords use the space/hyphen/underscore forms real filenames take (the bare token
+  # `press` is avoided — it would false-match `express`).
+  - key: press_release
+    label: Press release
+    keywords: [comunicado, prensa, boletin, "press release", "press-release", "press_release", news release]
+  - key: quarterly_release
+    label: Quarterly release
+    keywords: [release, quarter, trimestr, earnings, resultados, 1q, 2q, 3q, 4q, 1t, 2t, 3t, 4t]
+  - key: annual_report
+    label: Annual report
+    keywords: [annual, "10-k", "20-f", informe anual, integrated report, reporte anual, anual]
+  - key: transcript
+    label: Earnings-call transcript
+    keywords: [transcript, transcripcion, earnings call, conference call, webcast]
+  - key: presentation
+    label: Investor presentation
+    keywords: [presentation, presentacion, investor day, slides, deck]
+  - key: analyst_research
+    label: Analyst / sector research
+    keywords: [equity research, analyst report, initiation, initiating coverage, price target, rating]
+  - key: relevant_event
+    label: Relevant / material event
+    keywords: [evento relevante, hecho relevante, material event]
+  - key: shareholder_meeting
+    label: Shareholder meeting
+    keywords: [asamblea, shareholder meeting, annual general meeting]
+  - key: debt_prospectus
+    label: Debt / prospectus
+    keywords: [prospectus, prospecto, deuda, debt offering]
+  - key: sustainability_report
+    label: Sustainability report
+    keywords: [sustainability, sustentabilidad, esg report, informe integrado]
+  - key: regulatory_filing
+    label: Regulatory filing
+    keywords: [filing, "6-k", "8-k", folleto, cnbv, bmv, sec]
+  - key: internal
+    label: Internal / Other
+    keywords: []
+
+# --- Sentiment (Phase 4) — lexicon by default; optional LLM refine (DeepSeek) ---------
+# engine: lexicon = offline word-list only (hermetic, no key needed).
+#         hybrid  = lexicon by default, LLM-refine the occurrences actually shown on screen
+#                   (auto-on-visible), disk-cached under .llm_cache/sentiment/.
+#         llm     = same as hybrid (lexicon is always the fallback when the LLM is unreachable).
+# The provider key is read from the env var named by api_key_env (put it in a gitignored .env).
+# Sentiment tone of a matched passage. Default = offline lexicon (deterministic, hermetic).
+# The opt-in LLM tier scored acc 0.91 / macro-F1 0.915 on the held-out test vs the lexicon's
+# 0.755 / 0.693 — flip engine to `llm` (or `hybrid`) to enable it. Needs the provider key
+# (DEEPSEEK_API_KEY in .env) and `openai>=1.0`; results are disk-cached under .llm_cache/sentiment/.
+sentiment:
+  engine: lexicon          # lexicon (offline default) | llm | hybrid
+  provider: deepseek
+  model: deepseek-chat
+  base_url: https://api.deepseek.com
+  api_key_env: DEEPSEEK_API_KEY
+  cache: true
+
+# --- Q&A synthesis (Phase 5) — OFF by default; the only generative feature -----------
+# provider: deepseek (OpenAI-compatible). Switch to anthropic (+ api_key_env) if desired.
+qa:
+  enabled: false
+  provider: deepseek
+  model: deepseek-chat
+  base_url: https://api.deepseek.com
+  api_key_env: DEEPSEEK_API_KEY
+  top_k: 8
+
+# --- Smart Summaries (Phase 7) — extractive "key takeaways" by default; optional LLM tier -----
+# engine: extractive = offline, deterministic sentence-selection (salience + MMR). No key needed.
+#         hybrid / llm = hand the extractively-selected sentences to the provider for a tight
+#                        bulleted takeaways narrative with [n] citations; disk-cached under
+#                        .llm_cache/summary/. Falls back to the extractive summary if unreachable.
+# max_sentences bounds both the extractive bullets and the passages fed to the LLM tier.
+summary:
+  engine: extractive       # extractive (offline default) | llm | hybrid
+  max_sentences: 6
+  provider: deepseek
+  model: deepseek-chat
+  base_url: https://api.deepseek.com
+  api_key_env: DEEPSEEK_API_KEY
+  cache: true

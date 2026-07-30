@@ -1,0 +1,94 @@
+# Labeled retrieval-eval queries for the English 3-company corpus (bimbo / walmex / femsa).
+# A query is answered correctly when a top-k hit's company (and optional period) matches
+# `expect`. Drafted from distinctive corpus content — sanity-check labels when the corpus
+# scope changes. Scored by scripts/eval_retrieval.py (recall@k / MRR).
+queries:
+  # FEMSA — OXXO / proximity / divisions
+  - query: OXXO same-store sales growth
+    expect: {company: femsa}
+  - query: proximity stores expansion Mexico
+    expect: {company: femsa}
+  - query: Coca-Cola FEMSA volume performance
+    expect: {company: femsa}
+  - query: Health Division revenue
+    expect: {company: femsa}
+  - query: Bara discount format
+    expect: {company: femsa}
+  - query: OXXO operating margin
+    expect: {company: femsa}
+
+  # Walmex — formats / ecommerce
+  - query: Bodega Aurrera performance
+    expect: {company: walmex}
+  - query: Sam's Club membership income
+    expect: {company: walmex}
+  - query: GMV e-commerce growth
+    expect: {company: walmex}
+  - query: omnichannel sales penetration
+    expect: {company: walmex}
+  - query: ticket and traffic growth
+    expect: {company: walmex}
+
+  # Bimbo — bakery / brands
+  - query: bakery sales performance
+    expect: {company: bimbo}
+  - query: Barcel snacks
+    expect: {company: bimbo}
+  - query: bread category volumes
+    expect: {company: bimbo}
+  - query: snacks portfolio growth
+    expect: {company: bimbo}
+
+  # Semantic-lift set (added 2026-07-05, before the MiniLM rebuild): paraphrases that avoid
+  # the corpus's exact wording — keyword-only should struggle here; a real embedding model
+  # should not. Keeps the hybrid-vs-BM25 comparison honest.
+  - query: corner store chain expansion
+    expect: {company: femsa}
+  - query: online marketplace merchandise volume
+    expect: {company: walmex}
+  - query: warehouse club shopper fees
+    expect: {company: walmex}
+  - query: loaf and pastry demand
+    expect: {company: bimbo}
+  - query: wheat and commodity cost pressure on profitability
+    expect: {company: bimbo}
+  - query: drugstore division performance
+    expect: {company: femsa}
+  - query: Ricolino divestiture
+    expect: {company: bimbo}
+
+  # Analog set (added 2026-07-06): domain terms that only match related passages via the
+  # analogs.yaml expansion (pet↔plastic↔resin↔packaging, OXXO↔proximity, returnable bottles,
+  # cookies↔galletas). Stresses keyword-only recall — the semantic half can also carry these.
+  - query: plastic bottle packaging material
+    expect: {company: femsa}
+  - query: returnable and one-way presentations
+    expect: {company: femsa}
+  - query: convenience proximity store format
+    expect: {company: femsa}
+  - query: cookies and salty snacks
+    expect: {company: bimbo}
+
+  # Gated-analog set (added 2026-07-07, Track B): each query pairs a risky bare token with the
+  # corroborating context that unlocks its expansion (PET resin, glass bottle, sugar cost,
+  # bakery plant) — the sharpened gate must still fire these while suppressing the other sense.
+  - query: PET resin and plastic packaging costs
+    expect: {company: femsa}
+  - query: returnable glass bottle recycling
+    expect: {company: femsa}
+  - query: bakery manufacturing plant closures
+    expect: {company: bimbo}
+  - query: sugar and sweetener input cost inflation
+    expect: {companies: [bimbo, femsa]}
+
+  # Cross-company financial language (any of the named companies is a fair answer)
+  - query: raw material cost pressure on margins
+    expect: {companies: [bimbo, walmex, femsa]}
+  - query: foreign exchange impact on results
+    expect: {companies: [bimbo, walmex, femsa]}
+  - query: EBITDA margin expansion drivers
+    expect: {companies: [bimbo, walmex, femsa]}
+  - query: capital expenditures guidance
+    expect: {companies: [bimbo, walmex, femsa]}
+  - query: interest expense and net debt
+    expect: {companies: [bimbo, walmex, femsa]}

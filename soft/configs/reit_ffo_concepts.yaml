@@ -1,0 +1,57 @@
+# reit_ffo_concepts.yaml — soft-native (never vendor_sync'd; see the header note below). Ordered
+# IAS 40 fair-value concept candidates for FFO reconstruction, in the same first-present-wins shape
+# as the parent repo's configs/xbrl_concepts.yaml (that file documents the identical class of bug:
+# BMV issuers tag operating D&A under the mx-cor taxonomy, not the plain ifrs-full concept).
+#
+# FFO = ProfitLoss − fair_value_adjustment + depreciation_and_amortisation
+#
+# fair_value_adjustment is the IAS 40 investment-property mark-to-market line that flows through
+# "Profit or loss" in BMV XBRL filings — the same contamination that makes P/E and Net margin
+# na_template for fibras/real_estate (configs/metric_applicability.yaml). FFO backs it out.
+#
+# Sign convention: the two mx-cor concepts are DIRECTION-ENCODED BY NAME (magnitude only, always
+# positive) — "UtilidadNeta..." (gain) must be SUBTRACTED from ProfitLoss, "PerdidaNeta..." (loss)
+# must be ADDED. The ifrs-full generic concept is a signed cash-flow add-back (subtract it, same
+# sign convention as the gain). A concept present but valued exactly 0.0 is treated as ABSENT (not
+# a real zero) — mirrors xbrl_facts.py's _PREFER_NONZERO guard for depreciation, where a mapped
+# concept can be a blank placeholder line while the real figure sits in a different concept.
+#
+# Measured on FY2025 4T annual filings, 26 REITs with cached filings (fibra_mx, fibra_orion have
+# none — 28 in the sector, 2 unmeasurable):
+#   property-specific tag (either mx-cor concept), non-zero            11/26
+#   generic ifrs-full add-back, non-zero                                6/26
+#   union (at least one usable tag)                                    12/26
+#   BOTH present and agreeing within 5%  → ship "corroborated"          5/26
+#     (fibra_mty, fibra_next, fibra_plus, fibra_uno, fibra_uptown)
+#   property tag only (no generic, or generic present-but-zero)         6/26
+#     (fibra_danhos, fibra_hd, fibra_hotel, fibra_macquarie,
+#      fibra_prologis, fibra_shop)
+#   generic tag only                                                    1/26
+#     (fibra_storage)
+#   neither tag (no FV line found)                                    14/26
+#
+# D&A reuses the root's existing depreciation concept order (configs/xbrl_concepts.yaml) — no new
+# concepts needed; FIBRA D&A is small relative to the FV swing either way.
+
+fair_value_gain:                 # magnitude of the IAS 40 gain — SUBTRACT from ProfitLoss
+  xbrl_concepts:
+    - ifrs_mx-cor_20141205_UtilidadNetaPorAjusteAValorRazonableDeLasPropiedadesDeInversion
+
+fair_value_loss:                 # magnitude of the IAS 40 loss — ADD to ProfitLoss
+  xbrl_concepts:
+    - ifrs_mx-cor_20141205_PerdidaNetaPorAjusteAValorRazonableDeLasPropiedadesDeInversion
+
+fair_value_adjustment_generic:   # signed cash-flow add-back, same sign convention as the gain —
+  xbrl_concepts:                 # SUBTRACT. Used to corroborate the property-specific pair above,
+    - ifrs-full_AdjustmentsForFairValueGainsLosses   # and as the sole source when neither of those
+                                                       # concepts is present (fibra_storage).
+
+depreciation_and_amortisation:
+  xbrl_concepts:
+    - ifrs_mx-cor_20141205_DepreciacionYAmortizacionOperativa
+    - mx_ccd_DepreciationAndAmortisationExpense
+    - ifrs-full_AdjustmentsForDepreciationAndAmortisationExpense
+
+profit_loss:
+  xbrl_concepts:
+    - ifrs-full_ProfitLoss

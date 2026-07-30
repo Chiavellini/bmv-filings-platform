@@ -1,0 +1,367 @@
+company:
+  currency: MXN
+  exchange: BMV
+  language: es
+  name: Grupo Chedraui
+  ticker: CHDRAUI
+  unit: millions   # press-release tables + figures are in millions MXN ("P$mn")
+
+# Chedraui's configured regexes are source-specific. Generic search fills gaps
+# but does not replace those tuned rows.
+tier_precedence:
+  default: [xbrl, bmv, regex_table, prose, search, table, calc]
+
+# The full-peso US segment note reports the CUMULATIVE (YTD) column for Q2-Q4 (2025 has
+# no quarterly US revenue table at all). For these periods difference to the quarter:
+# quarter = YTD(this Q) - YTD(prior Q). Q1 YTD is already the quarter (not listed).
+# Verified: 2Q25 80,423-40,847=39,576=GT; 3Q25 118,029-80,423=37,606; 2Q17 13,217-6,553=6,664.
+ytd_quarterly_periods:
+  revenue_us: [2Q17A, 2Q25A, 3Q25A, 4Q25A]
+text_search:
+  # Chedraui has exact press-release/regulatory regexes plus the generic BMV
+  # statement tier. Broad command-F aliases hit YTD/definition rows and regress
+  # the locked baseline, so search stays off for this tuned config.
+  disabled: true
+table_extract:
+  # The generic fuzzy PDF table tier adds no scored coverage beyond BMV + exact
+  # YAML patterns for Chedraui and is expensive on the long regulatory PDFs.
+  disabled: true
+tier2_skip:
+  # Same rationale for generic PDF table matching: configured regex/BMV rows are
+  # authoritative; broad fuzzy table rows add wrong gap fills for these metrics.
+  - revenue
+  - revenue_mexico
+  - revenue_us
+  - sss_mexico
+  - sss_us
+  - ebitda
+  - ebitda_mexico
+  - ebitda_us
+  - total_stores
+  - total_stores_mexico
+  - total_stores_us
+  - sales_floor_total
+  - sales_floor_mexico
+  - sales_floor_us
+
+# ---------------------------------------------------------------------------
+# CHEDRAUI operates in Mexico and the United States.
+# Segments: MX Self-Service, MX Real Estate, US Self-Service (Bodega Latina,
+# El Super, Fiesta Mart, Smart & Final).
+#
+# This is a skeleton config. Download sample reports first:
+#   python3 pipeline.py --config configs/chedraui.yaml \
+#     --url https://inversionistas.grupochedraui.com.mx/reportes-trimestrales/ \
+#     --max 3 --dir chedraui/
+#
+# Then inspect a downloaded file to determine:
+# 1. Table format (2-col value/growth? 4-col YTD+QTR? WALMEX-style with pct?)
+# 2. Exact Spanish labels for revenue, gross profit, EBITDA per segment
+# 3. Section headers for Mexico vs United States splits
+# 4. SSS format in prose or tables
+# 5. Store count table structure (by banner: Chedraui, Selecto, El Super, etc.)
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# CHEDRAUI has two report eras:
+#  - 2022+ press release: "Ventas Consolidadas" table lists [prior, current,
+#    growth%] in millions; the CURRENT quarter is the SECOND number. EBITDA is
+#    stated in prose ("EBITDA consolidado ascendió a $5,722 millones").
+#  - pre-2022 regulatory filing: the income note prints a 4-column layout
+#    "Ingresos  Acum-curr  Acum-prior  Trim-curr  Trim-prior" in FULL PESOS
+#    (e.g. 62,710,975,000 51,231,151,000 31,585,992,000 27,941,963,000). The
+#    QUARTER is the 3rd number (Trim-curr) — capture it ×1e-6 → millions.
+# EBITDA is non-GAAP and absent from the pre-2022 regulatory note (MISS there).
+# ---------------------------------------------------------------------------
+
+metric_overrides:
+  revenue:
+    patterns:
+      # Press-release "Ventas Consolidadas" table: CONSOLIDADO <prior> <current> <growth>
+      - regex: 'CONSOLIDADO\s+[\d,]+\s+([\d,]+)\s+[-(]?\d'
+        source: prose
+      - regex: 'ventas consolidadas totalizaron\s+\$?\s*([\d,]+)\s*millones'
+        source: prose
+      # 2016 press row is mixed-case with margin %s: "Ventas Consolidado 19,256 100.0%
+      # 21,722 100.0% 12.8%" — current = 2nd value (recovers 3Q16).
+      - regex: '(?i)Ventas\s+Consolidado\s+[\d,]+\s+[\d.]+%\s+([\d,]+)\s+[\d.]+%'
+        source: prose
+      # pre-2022 4-column income note: skip the two Acumulado cols, take Trim-curr.
+      - regex: '^\s*(?:Total de ingresos|Ingresos)\s+[\d,]{7,}\s+[\d,]{7,}\s+([\d,]{7,})\s+[\d,]{7,}'
+        source: table
+        multiplier: 0.000001
+      # Q1 regulatory note collapses to 2 columns (Acum-curr == quarter), full pesos.
+      - regex: '^\s*(?:Total de ingresos|Ingresos)\s+([\d,]{7,})\s+[\d,]{7,}'
+        source: table
+        multiplier: 0.000001
+  ebitda:
+    patterns:
+      # Press-release "ascendió a $X millones" prose (2022+ releases).
+      - regex: 'EBITDA consolidado ascendió a\s+\$?\s*([\d,]+)\s*millones'
+        source: prose
+      # 2016-17 prose: "el Ebitda consolidado creció un 10.3% … al pasar de $1,240
+      # millones en 2015 a $1,367 millones en 2016" (2016-1T.md:748-749, 2017-2T.md:563).
+      - regex: '(?i)Ebitda\s+consolidado[\s\S]{0,160}?pasar\s+de\s+\$\s*[\d,]+\s+millones\s+en\s+\d{4}\s+a\s+\$\s*([\d,]+)\s+millones'
+        source: prose
+      # 2023 releases label it "UAFIDA consolidada creció X% alcanzando $5,712 millones".
+      - regex: '(?i)UAFIDA consolidada[^.]{0,60}?\$\s*([\d,]+)\s*millones'
+        source: prose
+      # Headline EBITDA table row. Chedraui lists PRIOR first, then CURRENT, each
+      # followed by its margin %:  "EBITDA <prior> <p%> <current> <c%> <growth%>"
+      # (verified 2019-2025). Capture the CURRENT column (2nd value). Also matches the
+      # 2023 "UAFIDA"/"CONSOLIDADO" line-start variants (line-anchored so it can't hit
+      # the mixed-case "Ventas Consolidado" revenue row). Avoids "EBITDA por segmento".
+      - regex: '^\s*(?:EBITDA|UAFIDA|CONSOLIDADO)\s+[\d,]+\s+[\d.]+%\s+([\d,]+)\s+[\d.]+%'
+        source: table
+
+# IFRS-16 recast note: IFRS 16 was adopted in 2019. The recast only restated the
+# immediately-prior year (2018): 2018-1T reports EBITDA 1,594 (pre-IFRS-16) but GT
+# 1Q18 = 1,909 (post-IFRS-16, visible only as the prior-year column of 2019-1T).
+# 2016/2017 were never recast, so their as-reported EBITDA == GT (reachable). 2019+
+# is post-IFRS-16 == GT. Hence only the 2018 EBITDA quarters are unreachable from
+# their own report → excluded below (NOT a blanket pre-2019 era gate).
+
+# Documented data-unavailability (removed from the accuracy denominator; see the
+# extractable-obs basis). Each carries a proof citation. Verified by grepping
+# every chedraui report: there is NO consolidated store-count total and NO
+# absolute sales-floor (m²) figure anywhere — store counts appear only as
+# per-banner prose and sales floor only as a growth %.
+unavailable:
+  sss_us:
+    # 2Q18: the filing states US SSS was ~flat ("ventas similares a las obtenidas
+    # el año anterior a Tiendas iguales", 2018-2T.md:609) while GT 1.8 equals the
+    # MEXICO SSS bullet on the same page — misassigned model cell. 3Q23: no US SSS
+    # actual printed (only total-sales growth 3.7% and a 5.5% guidance).
+    reason: "GT value contradicts or is absent from the filing (2Q18 GT equals the Mexico SSS; 3Q23 prints no US SSS actual)"
+    proof: "2018-2T.md:63 vs :609; 2023-3T.md:115,697 — guidance + total-sales growth only"
+    periods: [2Q18A, 3Q23A]
+  total_stores:
+    reason: "no consolidated store-count total in any report; only per-banner prose"
+    proof: "data/reports/chedraui/2025-1T.md:84-95 — '213 Tiendas Chedraui', '82 Súper Chedraui', '217 Supercito', '69 El Super', '60 Fiesta', '255 Smart & Final' — no total line"
+  total_stores_mexico:
+    reason: "no 'Total Stores Mexico' line; per-banner Mexico counts only"
+    proof: "data/reports/chedraui/2025-1T.md:84-90 — Mexican banners listed individually, no MX subtotal"
+  total_stores_us:
+    reason: "no 'Total Stores U.S.' line; per-banner US counts only"
+    proof: "data/reports/chedraui/2025-1T.md:93-95 — '69 El Super', '60 Fiesta', '255 Smart & Final' — no US subtotal"
+  sales_floor_total:
+    reason: "sales floor reported only as a growth %, never an absolute m² total"
+    proof: "data/reports/chedraui/2025-1T.md:131-132 — 'piso de venta ... se incrementa en 3.2%' (no m²)"
+  sales_floor_mexico:
+    reason: "MX sales floor reported only as a growth %, never an absolute m²"
+    proof: "data/reports/chedraui/2025-1T.md:131 — 'expansión en el piso de venta en México ... 4.3%' (no m²)"
+  sales_floor_us:
+    reason: "US sales floor reported only as a growth %, never an absolute m²"
+    proof: "data/reports/chedraui/2025-1T.md:131 — '1.3% en Estados Unidos' (no m²)"
+  # 2018 EBITDA (consolidated + segments): GT uses the IFRS-16-recast 2018 figure,
+  # which appears only as the prior-year column of the 2019 reports; the 2018
+  # report's own EBITDA is pre-IFRS-16 and differs.
+  ebitda:
+    periods: [1Q18A, 2Q18A, 3Q18A, 4Q18A]
+    reason: "GT 2018 EBITDA is IFRS-16-recast; 2018's own report shows pre-IFRS-16"
+    proof: "data/reports/chedraui/2018-1T.md — 'EBITDA 1,414 6.3% 1,594' (pre-IFRS) vs GT 1Q18 1,909 = prior-yr col of 2019-1T 'EBITDA 1,915 8.2% 2,292'"
+  ebitda_mexico:
+    periods: [1Q18A, 2Q18A, 3Q18A, 4Q18A, 3Q24A]
+    reason: "2018: GT is IFRS-16-recast (2018 report is pre-IFRS-16). 3Q24: GT uses the recombined 'Chedraui México' (Autoservicio+Inmobiliaria) that only exists from 2025; the 3Q24 report's own Autoservicio México EBITDA is 2,929, not GT's 3,194"
+    proof: "data/reports/chedraui/2018-1T.md:687 'Autoservicio México 1,046 74.0% 1,150' vs GT 1Q18 1,309=prior-col of 2019-1T:730; data/reports/chedraui/2024-3T.md:1013 'Autoservicio México 2,668 9.0% 2,929' vs GT 3Q24 3,194=prior-col of 2025-3T.md:1041 'Chedraui México 3,194'"
+  ebitda_us:
+    periods: [1Q18A, 2Q18A, 3Q18A, 4Q18A]
+    reason: "GT 2018 segment EBITDA is IFRS-16-recast; 2018's own report is pre-IFRS-16"
+    proof: "data/reports/chedraui/2018-1T.md:688 'Autoservicio EUA 223 15.7% 281' (pre-IFRS) vs GT 1Q18 = prior-yr col of 2019-1T:731"
+
+sections: []
+
+custom_metrics:
+  # Segment revenue/EBITDA share an identical "Autoservicio <region> <prior> <p%>
+  # <current> <c%> <growth>" row in the 2016-2020 regulatory tables; the REVENUE
+  # table ("Ingreso Neto por segmento") precedes the EBITDA table ("EBITDA por
+  # segmento"), so revenue patterns match the first occurrence and EBITDA patterns
+  # are anchored to the "EBITDA por segmento" header to land on the right row.
+  # Current quarter = SECOND numeric (prior is first). Eras: 2016-2020 %-laden
+  # table; 2022-2024 [prior current growth%] no-% table + prose; 2025+ the segment
+  # is consolidated into "Chedraui México"/"Chedraui USA" prose (GT tracks that).
+  - key: revenue_mexico
+    label: "Revenue Mexico (Autoservicio México)"
+    label_es: "Ventas Autoservicio México"
+    section: income
+    unit: currency
+    patterns:
+      # 2022-2024 revenue table has NO margin-%s ("<prior> <current> <growth%>"); try
+      # it first so the %-laden 2016-2020 pattern below can't reach the EBITDA table
+      # (which DOES carry %s) in those years.
+      - regex: 'Autoservicio\s+M[eé]xico\s+[\d,]+\s+([\d,]+)\s+-?\(?\d+\.?\d*%'
+        source: table
+      # 2016-2020 table: "<prior> <p%> <current> <c%> <growth>"; revenue table precedes
+      # the EBITDA table, so the first %-format match is the revenue row.
+      - regex: 'Autoservicio\s+M[eé]xico\s+[\d,]+\s+[\d.]+%\s+([\d,]+)\s+[\d.]+%'
+        source: table
+      - regex: '(?i)ventas\s+(?:totales\s+)?(?:de\s+)?Chedraui\s+M[eé]xico[\s\S]{0,90}?totalizaron\s+\$?\s*([\d,]+)\s*millones'
+        source: prose
+      # 2016-17 Mexico-section prose: "Las ventas correspondientes al segundo
+      # trimestre de 2017 crecieron un 8.7% alcanzando los $16,222" (2017-2T.md:623).
+      - regex: 'ventas\s+correspondientes\s+al\s+\w+\s+trimestre\s+de\s+\d{4}\s+crecieron[\s\S]{0,40}?alcanzando\s+los\s+\$\s*([\d,]+)'
+        source: prose
+      # Regulatory full-peso segment note (Q1 reports e.g. 1Q16/2Q17, and 2025+ where
+      # the press-release segment table is gone): "Autoservicio Mexico <pesos> 0 0 <pesos>".
+      # 12+ digit guard = pesos (billions); ×1e-6 → millions. Fallback only.
+      - regex: 'Autoservicio\s+M[eé]xico[ \t]+(?:[\d,]+[ \t]+)*([\d,]{12,})'
+        source: table
+        multiplier: 0.000001
+
+  - key: revenue_us
+    label: "Revenue US (Autoservicio EE.UU.)"
+    label_es: "Ventas Autoservicio EE.UU."
+    section: income
+    unit: currency
+    patterns:
+      # 2022-2024 no-% revenue table first (see revenue_mexico note).
+      - regex: 'Autoservicio\s+E(?:UA|E\.?\s*UU\.?)\s+[\d,]+\s+([\d,]+)\s+-?\(?\d+\.?\d*%'
+        source: table
+      # %-laden 2016-2020 revenue table: restricted to the "EUA" label ONLY. The
+      # "EE.UU." spelling is used exclusively by the 2021-2025 EBITDA-por-segmento
+      # table, so allowing it here made 1Q25 grab the US EBITDA (3,073) — bug fixed.
+      - regex: 'Autoservicio\s+EUA\s+[\d,]+\s+[\d.]+%\s+([\d,]+)\s+[\d.]+%'
+        source: table
+      - regex: '(?i)ventas\s+(?:totales\s+)?(?:de\s+)?Chedraui\s+USA[\s\S]{0,90}?totalizaron\s+\$?\s*([\d,]+)\s*millones'
+        source: prose
+      # Full-peso segment note fallback (LAST): "Autoservicio [Chedraui] USA [Inc.] ...
+      # 40,847,435,000". For Q1 the YTD column IS the quarter (recovers 1Q16/1Q25/1Q26);
+      # for Q2-Q4 the value is YTD and exceeds the quarterly consolidated total, so the
+      # segment>total quarantine nulls it (honest MISS, no wrong value).
+      - regex: 'Autoservicio\s+(?:Chedraui\s+)?USA(?:\s+Inc\.?)?[ \t]+(?:[\d,]+[ \t]+)*([\d,]{12,})'
+        source: table
+        multiplier: 0.000001
+
+  - key: ebitda_mexico
+    label: "EBITDA Mexico (Self-Service)"
+    label_es: "EBITDA Autoservicio México"
+    section: kpi
+    unit: currency
+    patterns:
+      # 2016-2020 table — anchored to the EBITDA-por-segmento header (the revenue
+      # table above it ALSO carries %s, so anchoring keeps us off the revenue row).
+      - regex: 'EBITDA por segmento[\s\S]{0,400}?Autoservicio\s+M[eé]xico\s+[\d,]+\s+[\d.]+%\s+([\d,]+)\s+[\d.]+%'
+        source: table
+      # 2016-17 prose: "permitió crecer el EBITDA (de este segmento …|en 8.7%,)
+      # generando $978/$1,051 millones" (2016-1T.md:821, 2017-2T.md:632).
+      - regex: 'permiti[oó]\s+crecer\s+el\s+EBITDA[\s\S]{0,80}?generando\s+\$\s*([\d,]+)\s+millones'
+        source: prose
+      # 2022-2024 table — the revenue table has NO %s in these years, so the first
+      # %-laden "Autoservicio México" row IS the EBITDA row; un-anchored is safe here
+      # (only reached when the 2016-2020 anchor above fails).
+      - regex: 'Autoservicio\s+M[eé]xico\s+[\d,]+\s+[\d.]+%\s+([\d,]+)\s+[\d.]+%'
+        source: table
+      # 2024 prose: "Autoservicio México: El EBITDA ... al totalizar $2,744 millones".
+      - regex: '(?i)Autoservicio\s+M[eé]xico:[\s\S]{0,120}?EBITDA[\s\S]{0,90}?\$\s*([\d,]+)\s*millones'
+        source: prose
+      # 2025+ combined: "Chedraui México: El EBITDA ... de $3,183 millones".
+      - regex: '(?i)Chedraui\s+M[eé]xico:[\s\S]{0,120}?EBITDA[\s\S]{0,90}?\$\s*([\d,]+)\s*millones'
+        source: prose
+
+  - key: ebitda_us
+    label: "EBITDA US (Self-Service)"
+    label_es: "EBITDA Autoservicio EE.UU."
+    section: kpi
+    unit: currency
+    patterns:
+      - regex: 'EBITDA por segmento[\s\S]{0,500}?Autoservicio\s+E(?:UA|E\.?\s*UU\.?)\s+[\d,]+\s+[\d.]+%\s+([\d,]+)\s+[\d.]+%'
+        source: table
+      # 2016-17 US-section prose: "El EBITDA que este segmento generó fue de $259
+      # millones" (2016-1T.md:844) / "logró un monto de $280 millones" (2017-2T.md:649).
+      - regex: 'EBITDA\s+que\s+este\s+segmento\s+gener[oó]\s+fue\s+de\s+\$\s*([\d,]+)\s+millones'
+        source: prose
+      - regex: 'EBITDA\s+de\s+este\s+segmento[\s\S]{0,120}?logr[oó]\s+un\s+monto\s+de\s+\$\s*([\d,]+)\s+millones'
+        source: prose
+      # 1Q26 segment table prints PRIOR first: "Chedraui USA 3,073 7.5% 2,637 7.7% -14.2%".
+      - regex: 'Chedraui\s+USA\s+[\d,]+\s+[\d.]+%\s+([\d,]+)\s+[\d.]+%'
+        source: table
+      # 2022-2024 table (revenue table has no %s → first %-laden EUA row is EBITDA).
+      - regex: 'Autoservicio\s+E(?:UA|E\.?\s*UU\.?)\s+[\d,]+\s+[\d.]+%\s+([\d,]+)\s+[\d.]+%'
+        source: table
+      # 2024 prose: "Autoservicio EE.UU.: ... el EBITDA ... ascendió a $3,168 millones".
+      - regex: '(?i)Autoservicio\s+EE\.?\s*UU\.?:[\s\S]{0,160}?EBITDA[\s\S]{0,110}?\$\s*([\d,]+)\s*millones'
+        source: prose
+      - regex: '(?i)Chedraui\s+USA:[\s\S]{0,120}?EBITDA[\s\S]{0,90}?\$\s*([\d,]+)\s*millones'
+        source: prose
+
+  - key: sss_mexico
+    label: "SSS Mexico YoY (%)"
+    label_es: "VMT México"
+    section: kpi
+    unit: pct
+    patterns:
+      # 2016-2020 narrative: "incremento en ventas mismas tiendas de 4.2% en México".
+      - regex: '(?i)ventas mismas tiendas\s+de\s+([\d.]+)%\s+en m[eé]xico'
+        source: prose
+      # "ventas a tiendas iguales en México de 4.8%" (2020 variant).
+      - regex: '(?i)ventas a tiendas iguales en m[eé]xico\s+(?:de\s+)?([\d.]+)%'
+        source: prose
+      # 2021-22 bullets: "+7.8% ventas a tiendas iguales en México" / "+16.2% en
+      # ventas a tiendas iguales en México" (2021-2T.md:62, 2022-3T.md:63, 2022-4T.md:63).
+      - regex: '(?i)\+([\d.]+)%\s+(?:en\s+)?ventas a tiendas iguales en m[eé]xico'
+        source: prose
+      # 2023-2025 bullets: "Crecimiento de 1.2% en Ventas Mismas Tiendas (VMT) en México".
+      # Negative lookahead skips the US bullet "9.5% en ventas mismas tiendas en EE. UU"
+      # (which previously mis-filled sss_mexico for 1Q22).
+      - regex: '(?i)([\d.]+)%\s+en ventas mismas tiendas(?!\s+en\s+ee)'
+        source: prose
+      # 2022-2023 bullets: "+16.2% en VMT en México" / "+12.2% VMT en México".
+      - regex: '(?i)([\d.]+)%\s+(?:en\s+)?vmt en m[eé]xico'
+        source: prose
+      - regex: '(?i)ventas mismas tiendas \(vmt\) en m[eé]xico[^0-9]{0,40}?([\d.]+)%'
+        source: prose
+      # "Las ventas mismas tiendas crecieron en el 3T'23 en 9.5%".
+      - regex: '(?i)ventas mismas tiendas crecieron[^.%]{0,30}?([\d.]+)%'
+        source: prose
+
+  - key: sss_us
+    label: "SSS US YoY (%)"
+    label_es: "VMT EE.UU."
+    section: kpi
+    unit: pct
+    patterns:
+      # US SSS is ALWAYS quoted "en dólares" (MX SSS never is) — anchor on it to
+      # disambiguate, and use multiplier ±1 to carry the sign of the prose verb.
+      # 2024-2025 bullets: "Crecimiento en VMT en Chedraui USA de 2.8% en dólares".
+      - regex: '(?i)vmt en chedraui usa de\s+([\d.]+)%'
+        source: prose
+      # 2023 bullets: "+ 7.9% VMT en EE. UU en dólares".
+      - regex: '(?i)([\d.]+)%\s+vmt en ee\.?\s*uu'
+        source: prose
+      # Positive growth "incremento/crecimiento ... del 4.2% en dólares" (2016-2020).
+      - regex: '(?i)(?:incremento|crecimiento|aumento)[^.%]{0,40}?([\d.]+)%\s+en dólares'
+        source: prose
+      # Negative growth "decremento/disminución/reducción del [-]0.6% ... (en dólares)".
+      # The optional minus is consumed OUTSIDE the capture group, so both the explicit
+      # "-0.9%" and the implicit "0.6%" forms capture the magnitude and ×-1 negates once.
+      # window {0,60}: the 2016-17 sentence wraps ("decremento del 4.4% en ventas a
+      # \n tiendas iguales en dólares", 2017-1T.md:690-692).
+      - regex: '(?i)(?:decremento|disminución|reducción|caída)\s+del?\s+-?([\d.]+)%[^.]{0,60}?en dólares'
+        source: prose
+        multiplier: -1
+      # 2016-18 positive tail form: "y del 3.4% en ventas a tiendas iguales en
+      # dólares" (2017-4T.md:662) — listed AFTER the decremento pattern so the
+      # negative quarters keep their sign.
+      - regex: '(?i)del\s+([\d.]+)%\s+en\s+ventas\s+a\s+tiendas[^.]{0,20}?iguales\s+en\s+d[oó]lares'
+        source: prose
+      # 4Q20 bullet: "en EE. UU. de 5.3% comparable en moneda local" (2020-4T.md:63).
+      - regex: '(?i)EE\.?\s*UU\.?\s+de\s+([\d.]+)%\s+comparable'
+        source: prose
+      # 2022 bullets: "9.5% en ventas mismas tiendas en EE. UU" (positive, US-anchored).
+      - regex: '(?i)([\d.]+)%\s+en ventas (?:mismas tiendas|a tiendas iguales) en ee'
+        source: prose
+      # 2025-2026 verb form: "VMT ... disminuyen 0.3% en USD" / "disminuyeron un 1%
+      # (en dólares)" (negative → ×-1). US-anchored by the USD/dólares currency tag.
+      - regex: '(?i)disminuye[n]?\s+(?:un\s+)?([\d.]+)%[^.]{0,20}?(?:en\s+)?(?:usd|d[oó]lares)'
+        source: prose
+        multiplier: -1
+      - regex: '(?i)disminuyeron\s+un\s+([\d.]+)%[^.]{0,20}?(?:en\s+)?(?:usd|d[oó]lares)'
+        source: prose
+        multiplier: -1
+
+ir_website:
+  url: https://inversionistas.grupochedraui.com.mx/reportes-trimestrales/
+  pdf_link_pattern: 'Reporte-BMV.*\.pdf'
+  xbrl_ticker: CHDRAUI
+  use_playwright: true       # listing page exposes only recent quarters
+  max_reports: 120

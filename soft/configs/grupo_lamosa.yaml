@@ -1,0 +1,13 @@
+# Grupo Lamosa — minimal coverage config (XBRL-sourced fundamentals; no custom extractor).
+company:
+  name: Grupo Lamosa
+  ticker: "LAMOSA MM"
+  currency: MXN
+  exchange: BMV
+  unit: millions
+
+tier_precedence:
+  default: [xbrl, bmv, prose, search, table, calc]
+
+ir_website:
+  xbrl_ticker: "LAMOSA"

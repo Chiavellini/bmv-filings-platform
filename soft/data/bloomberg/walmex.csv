@@ -1,0 +1,67 @@
+entity,entity_kind,field,period,label,unit,bbg_hint,value
+walmex,subject,px_last,,Last price,price,PX_LAST,58.0
+chedraui,peer,px_last,,CHDRAUI* MM — Last price,price,PX_LAST,120.0
+soriana,peer,px_last,,SORIANA B MM — Last price,price,PX_LAST,28.0
+lacomer,peer,px_last,,LACOMUBC MM — Last price,price,PX_LAST,34.0
+costco,peer,px_last,,COST US — Last price,price,PX_LAST,
+walmex,subject,shares_out,,Diluted shares out (mn),shares,EQY_SH_OUT (diluted),17400
+chedraui,peer,shares_out,,CHDRAUI* MM — Diluted shares out (mn),shares,EQY_SH_OUT (diluted),960
+soriana,peer,shares_out,,SORIANA B MM — Diluted shares out (mn),shares,EQY_SH_OUT (diluted),1790
+lacomer,peer,shares_out,,LACOMUBC MM — Diluted shares out (mn),shares,EQY_SH_OUT (diluted),1080
+costco,peer,shares_out,,COST US — Diluted shares out (mn),shares,EQY_SH_OUT (diluted),
+walmex,subject,net_debt,,Net debt (mn),currency,NET_DEBT,90000
+chedraui,peer,net_debt,,CHDRAUI* MM — Net debt (mn),currency,NET_DEBT,40000
+soriana,peer,net_debt,,SORIANA B MM — Net debt (mn),currency,NET_DEBT,20000
+lacomer,peer,net_debt,,LACOMUBC MM — Net debt (mn),currency,NET_DEBT,-3000
+costco,peer,net_debt,,COST US — Net debt (mn),currency,NET_DEBT,
+walmex,subject,minority_interest,,Minority interest (mn),currency,MINORITY_NONCONTROLLING_INTEREST,0
+chedraui,peer,minority_interest,,CHDRAUI* MM — Minority interest (mn),currency,MINORITY_NONCONTROLLING_INTEREST,0
+soriana,peer,minority_interest,,SORIANA B MM — Minority interest (mn),currency,MINORITY_NONCONTROLLING_INTEREST,0
+lacomer,peer,minority_interest,,LACOMUBC MM — Minority interest (mn),currency,MINORITY_NONCONTROLLING_INTEREST,0
+costco,peer,minority_interest,,COST US — Minority interest (mn),currency,MINORITY_NONCONTROLLING_INTEREST,
+walmex,subject,dvd_yield,,"Dividend yield, %",pct,EQY_DVD_YLD_IND,3.0
+chedraui,peer,dvd_yield,,"CHDRAUI* MM — Dividend yield, %",pct,EQY_DVD_YLD_IND,1.5
+soriana,peer,dvd_yield,,"SORIANA B MM — Dividend yield, %",pct,EQY_DVD_YLD_IND,3.2
+lacomer,peer,dvd_yield,,"LACOMUBC MM — Dividend yield, %",pct,EQY_DVD_YLD_IND,1.2
+costco,peer,dvd_yield,,"COST US — Dividend yield, %",pct,EQY_DVD_YLD_IND,
+chedraui,peer,sales_ltm,,"CHDRAUI* MM — Sales, LTM (mn)",currency,SALES_REV_TURN (LTM),290000
+soriana,peer,sales_ltm,,"SORIANA B MM — Sales, LTM (mn)",currency,SALES_REV_TURN (LTM),165000
+lacomer,peer,sales_ltm,,"LACOMUBC MM — Sales, LTM (mn)",currency,SALES_REV_TURN (LTM),40000
+costco,peer,sales_ltm,,"COST US — Sales, LTM (mn)",currency,SALES_REV_TURN (LTM),
+chedraui,peer,ebitda_ltm,,"CHDRAUI* MM — EBITDA, LTM (mn)",currency,EBITDA (LTM),24000
+soriana,peer,ebitda_ltm,,"SORIANA B MM — EBITDA, LTM (mn)",currency,EBITDA (LTM),15500
+lacomer,peer,ebitda_ltm,,"LACOMUBC MM — EBITDA, LTM (mn)",currency,EBITDA (LTM),5000
+costco,peer,ebitda_ltm,,"COST US — EBITDA, LTM (mn)",currency,EBITDA (LTM),
+chedraui,peer,net_income_ltm,,"CHDRAUI* MM — Net income, LTM (mn)",currency,NET_INCOME (LTM),9000
+soriana,peer,net_income_ltm,,"SORIANA B MM — Net income, LTM (mn)",currency,NET_INCOME (LTM),7500
+lacomer,peer,net_income_ltm,,"LACOMUBC MM — Net income, LTM (mn)",currency,NET_INCOME (LTM),2300
+costco,peer,net_income_ltm,,"COST US — Net income, LTM (mn)",currency,NET_INCOME (LTM),
+walmex,subject,total_equity,,Total equity / book value (mn),currency,TOTAL_EQUITY,250000
+chedraui,peer,total_equity,,CHDRAUI* MM — Total equity / book value (mn),currency,TOTAL_EQUITY,70000
+soriana,peer,total_equity,,SORIANA B MM — Total equity / book value (mn),currency,TOTAL_EQUITY,95000
+lacomer,peer,total_equity,,LACOMUBC MM — Total equity / book value (mn),currency,TOTAL_EQUITY,24000
+costco,peer,total_equity,,COST US — Total equity / book value (mn),currency,TOTAL_EQUITY,
+walmex,subject,fcf_ltm,,"Free cash flow, LTM (mn)",currency,FREE_CASH_FLOW (LTM),60000
+chedraui,peer,fcf_ltm,,"CHDRAUI* MM — Free cash flow, LTM (mn)",currency,FREE_CASH_FLOW (LTM),7000
+soriana,peer,fcf_ltm,,"SORIANA B MM — Free cash flow, LTM (mn)",currency,FREE_CASH_FLOW (LTM),6000
+lacomer,peer,fcf_ltm,,"LACOMUBC MM — Free cash flow, LTM (mn)",currency,FREE_CASH_FLOW (LTM),1500
+costco,peer,fcf_ltm,,"COST US — Free cash flow, LTM (mn)",currency,FREE_CASH_FLOW (LTM),
+walmex,subject,total_assets,,Total assets (mn),currency,BS_TOT_ASSET,520000
+mexico,segment,seg_ev_ebitda,,Mexico — Peer-implied EV/EBITDA for the segment,x,peer comp median EV/EBITDA,10.5
+cam,segment,seg_ev_ebitda,,Central America — Peer-implied EV/EBITDA for the segment,x,peer comp median EV/EBITDA,8.0
+walmex,subject,replacement_cost_per_sqm,,Replacement cost per m2 of sales floor,currency,analyst assumption / build cost,15000
+walmex,history,px_fy_close,2025,Price at fiscal-year close FY2025,price,PX_LAST @ FY close,57.0
+walmex,history,px_fy_close,2024,Price at fiscal-year close FY2024,price,PX_LAST @ FY close,60.0
+walmex,history,px_fy_close,2023,Price at fiscal-year close FY2023,price,PX_LAST @ FY close,62.0
+walmex,history,px_fy_close,2022,Price at fiscal-year close FY2022,price,PX_LAST @ FY close,66.0
+walmex,history,px_fy_close,2021,Price at fiscal-year close FY2021,price,PX_LAST @ FY close,68.0
+gdp_growth,macro,value,,"Mexico GDP growth, %",index,per the spec row,1.5
+policy_rate,macro,value,,"Banxico policy rate, %",index,per the spec row,8.0
+usdmxn,macro,value,,USDMXN,index,per the spec row,18.5
+consumer_confidence,macro,value,,Consumer confidence index,index,per the spec row,46.0
+retail_sales,macro,value,,"Retail sales YoY, %",index,per the spec row,2.5
+walmex,subject,eps_ntm,,"Consensus EPS, next 12m",price,BEST_EPS (NTM),0.665
+chedraui,peer,eps_ntm,,"CHDRAUI* MM — Consensus EPS, next 12m",price,BEST_EPS (NTM),2.135
+soriana,peer,eps_ntm,,"SORIANA B MM — Consensus EPS, next 12m",price,BEST_EPS (NTM),0.558
+lacomer,peer,eps_ntm,,"LACOMUBC MM — Consensus EPS, next 12m",price,BEST_EPS (NTM),0.638
+costco,peer,eps_ntm,,"COST US — Consensus EPS, next 12m",price,BEST_EPS (NTM),6.551

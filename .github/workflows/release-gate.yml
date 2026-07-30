@@ -1,0 +1,99 @@
+name: Repository release gate
+
+on:
+  pull_request:
+  push:
+    branches: ["main"]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PDFS_MATERIALIZE: "0"
+
+jobs:
+  payload:
+    name: Git payload and history
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13.9"
+      - run: python scripts/audit_git_payload.py
+
+  root:
+    name: Root / Python 3.13 / no estate
+    runs-on: ubuntu-latest
+    env:
+      PDFS_DOCUMENT_ESTATE: ${{ runner.temp }}/absent-estate
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13.9"
+          cache: pip
+      - run: python -m pip install --disable-pip-version-check -e ".[test]"
+      - run: python -m pip check
+      - run: python -m pytest -q -m "not network and not model" -p no:cacheprovider
+
+  alpha-go:
+    name: Alpha Go / Python 3.12 / no estate
+    runs-on: ubuntu-latest
+    env:
+      PDFS_DOCUMENT_ESTATE: ${{ runner.temp }}/absent-estate
+    defaults:
+      run:
+        working-directory: alpha-go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12.13"
+          cache: pip
+          cache-dependency-path: alpha-go/requirements.txt
+      - run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - run: python -m pip check
+      - run: python -m pytest -q -m "not network and not model" -p no:cacheprovider
+
+  soft:
+    name: Soft / Python 3.11 / no estate
+    runs-on: ubuntu-latest
+    env:
+      PDFS_DOCUMENT_ESTATE: ${{ runner.temp }}/absent-estate
+    defaults:
+      run:
+        working-directory: soft
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11.13"
+          cache: pip
+          cache-dependency-path: soft/requirements.txt
+      - run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - run: python -m pip check
+      - run: python -m pytest -q -m "not network and not model" -p no:cacheprovider
+
+  earnings:
+    name: Earnings / Python 3.11 / no estate
+    runs-on: ubuntu-latest
+    env:
+      PDFS_DOCUMENT_ESTATE: ${{ runner.temp }}/absent-estate
+    defaults:
+      run:
+        working-directory: earnings
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11.13"
+          cache: pip
+          cache-dependency-path: earnings/requirements.txt
+      - run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - run: python -m pip check
+      - run: python -m pytest -q -m "not network and not model" -p no:cacheprovider

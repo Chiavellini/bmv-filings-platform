@@ -1,0 +1,177 @@
+company:
+  name: GRUMA
+  ticker: GRUMAB
+  exchange: BMV
+  language: es
+  currency: USD
+  unit: millions
+
+custom_extractor: gruma
+segments_file: gruma_segments.yaml
+table_scale: 1.0
+
+ir_website:
+  url: "https://www.gruma.com/es/inversionistas/inversionistas-gruma/informacion-financiera/reportes-trimestrales.aspx"
+  pdf_link_pattern: "(?:gruma[-_]?e|reporte(?:s)?\\s+de\\s+resultados|resultados).*\\.pdf"
+  max_reports: 160
+  delay_ms: 100
+  use_playwright: false
+
+metric_overrides: {}
+
+custom_metrics:
+  - key: volume
+    label: Volume
+    label_es: Volumen
+    section: kpi
+    unit: volume
+  - key: net_sales_usa
+    label: Net Sales Gruma USA
+    label_es: Ventas Netas Gruma USA
+    section: income
+    unit: currency
+  - key: volume_usa
+    label: Volume Gruma USA
+    label_es: Volumen Gruma USA
+    section: kpi
+    unit: volume
+  - key: gross_profit_usa
+    label: Gross Profit Gruma USA
+    label_es: Utilidad Bruta Gruma USA
+    section: income
+    unit: currency
+  - key: operating_income_usa
+    label: EBIT Gruma USA
+    label_es: Utilidad de Operacion Gruma USA
+    section: income
+    unit: currency
+  - key: ebitda_usa
+    label: EBITDA Gruma USA
+    label_es: UAFIRDA Gruma USA
+    section: income
+    unit: currency
+  - key: net_sales_gimsa
+    label: Net Sales GIMSA
+    label_es: Ventas Netas GIMSA
+    section: income
+    unit: currency
+  - key: volume_gimsa
+    label: Volume GIMSA
+    label_es: Volumen GIMSA
+    section: kpi
+    unit: volume
+  - key: gross_profit_gimsa
+    label: Gross Profit GIMSA
+    label_es: Utilidad Bruta GIMSA
+    section: income
+    unit: currency
+  - key: operating_income_gimsa
+    label: EBIT GIMSA
+    label_es: Utilidad de Operacion GIMSA
+    section: income
+    unit: currency
+  - key: ebitda_gimsa
+    label: EBITDA GIMSA
+    label_es: UAFIRDA GIMSA
+    section: income
+    unit: currency
+  - key: net_sales_europe
+    label: Net Sales Gruma Europe
+    label_es: Ventas Netas Gruma Europe
+    section: income
+    unit: currency
+  - key: volume_europe
+    label: Volume Gruma Europe
+    label_es: Volumen Gruma Europe
+    section: kpi
+    unit: volume
+  - key: gross_profit_europe
+    label: Gross Profit Gruma Europe
+    label_es: Utilidad Bruta Gruma Europe
+    section: income
+    unit: currency
+  - key: operating_income_europe
+    label: EBIT Gruma Europe
+    label_es: Utilidad de Operacion Gruma Europe
+    section: income
+    unit: currency
+  - key: ebitda_europe
+    label: EBITDA Gruma Europe
+    label_es: UAFIRDA Gruma Europe
+    section: income
+    unit: currency
+  - key: net_sales_ao
+    label: Net Sales Gruma Asia & Oceania
+    label_es: Ventas Netas Gruma Asia & Oceania
+    section: income
+    unit: currency
+  - key: volume_ao
+    label: Volume Gruma Asia & Oceania
+    label_es: Volumen Gruma Asia & Oceania
+    section: kpi
+    unit: volume
+  - key: gross_profit_ao
+    label: Gross Profit Gruma Asia & Oceania
+    label_es: Utilidad Bruta Gruma Asia & Oceania
+    section: income
+    unit: currency
+  - key: operating_income_ao
+    label: EBIT Gruma Asia & Oceania
+    label_es: Utilidad de Operacion Gruma Asia & Oceania
+    section: income
+    unit: currency
+  - key: ebitda_ao
+    label: EBITDA Gruma Asia & Oceania
+    label_es: UAFIRDA Gruma Asia & Oceania
+    section: income
+    unit: currency
+  - key: net_sales_cam
+    label: Net Sales Gruma Central America
+    label_es: Ventas Netas Gruma Central America
+    section: income
+    unit: currency
+  - key: volume_cam
+    label: Volume Gruma Central America
+    label_es: Volumen Gruma Central America
+    section: kpi
+    unit: volume
+  - key: gross_profit_cam
+    label: Gross Profit Gruma Central America
+    label_es: Utilidad Bruta Gruma Central America
+    section: income
+    unit: currency
+  - key: operating_income_cam
+    label: EBIT Gruma Central America
+    label_es: Utilidad de Operacion Gruma Central America
+    section: income
+    unit: currency
+  - key: ebitda_cam
+    label: EBITDA Gruma Central America
+    label_es: UAFIRDA Gruma Central America
+    section: income
+    unit: currency
+  - key: net_sales_other
+    label: Net Sales Other Subsidiaries & Eliminations
+    label_es: Ventas Netas Other Subsidiaries & Eliminations
+    section: income
+    unit: currency
+  - key: volume_other
+    label: Volume Other Subsidiaries & Eliminations
+    label_es: Volumen Other Subsidiaries & Eliminations
+    section: kpi
+    unit: volume
+  - key: gross_profit_other
+    label: Gross Profit Other Subsidiaries & Eliminations
+    label_es: Utilidad Bruta Other Subsidiaries & Eliminations
+    section: income
+    unit: currency
+  - key: operating_income_other
+    label: EBIT Other Subsidiaries & Eliminations
+    label_es: Utilidad de Operacion Other Subsidiaries & Eliminations
+    section: income
+    unit: currency
+  - key: ebitda_other
+    label: EBITDA Other Subsidiaries & Eliminations
+    label_es: UAFIRDA Other Subsidiaries & Eliminations
+    section: income
+    unit: currency

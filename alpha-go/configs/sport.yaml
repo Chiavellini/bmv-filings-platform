@@ -1,0 +1,406 @@
+# sport.yaml — Grupo Sports World (BMV/BIVA: SPORT) configuration
+
+company:
+  name: "Grupo Sports World"
+  ticker: "SPORT"
+  exchange: "BMV"
+  language: "es"
+  currency: "MXN"
+  unit: "miles_mxn"   # values in thousands of Mexican pesos
+
+# SPORT's YAML has many quarter-anchored prose/table fixes. Generic search is
+# kept as a gap-filler and ranked below those tuned extractors.
+tier_precedence:
+  default: [xbrl, bmv, regex_table, prose, search, table, calc]
+  # revenue_sports is most reliably the SUM of the two P&L rows (Ingresos deportivos +
+  # Otros ingresos del negocio); prefer that calc over the combined-prose fallback (which
+  # on Q4 reports can state the full-year figure).
+  revenue_sports: [xbrl, bmv, calc, regex_table, prose, search, table]
+# GT tracks restated/next-filing comparatives for these specific cells (verified
+# per cell: e.g. GT clientes 1Q18 = 82,598 printed only in 2019-1T's prior column;
+# GT 3Q24 = 106,740 only in 2025-3T; revenue/sponsorships 4Q20 = 207,240 / 8,773
+# only in 2021-4T; the 2016 sports/sponsorships split exists only as the 2017
+# tables' prior columns). Scoped per period — Sport's GT is mixed-basis, so 'all'
+# would regress as-reported-matching cells like clientes 4Q20.
+restated_prior:
+  clientes_activos: [1Q18A, 2Q18A, 3Q18A, 4Q18A, 4Q19A, 2Q21A, 3Q21A, 3Q22A,
+                     4Q22A, 1Q24A, 3Q24A, 4Q24A]
+  revenue: [4Q20A]
+  revenue_sponsorships: [1Q16A, 2Q16A, 4Q16A, 4Q20A]
+  revenue_deportivos: [1Q16A, 2Q16A, 4Q16A, 3Q18A, 4Q18A]
+  revenue_otros_negocio: [1Q16A, 2Q16A, 4Q16A, 3Q18A, 4Q18A]
+
+text_search:
+  # SPORT has many one-word/prose operational labels; generic alias search hit
+  # explanatory text and regressed the locked baseline. Keep exact YAML patterns
+  # authoritative until a SPORT-specific search dictionary is added.
+  disabled: true
+
+# Segments-sheet outline (drives segments_sheet.generate_company_segments).
+# NOTE: the generation driver scales currency rows by 0.001 (miles → P$mn).
+segments_file: configs/sport_segments.yaml
+
+ir_website:
+  url: "https://www.sportsworld.com.mx/inversionistas/"
+  pdf_link_pattern: "(?:reporte|report|informe|resultado|trimestral|quarterly).*\\.pdf"
+  xbrl_ticker: SPORT         # non-financial issuer — quarterly XBRL from ~2021+
+  max_reports: 80
+  delay_ms: 500
+
+# Metrics not reported before a given year — extraction should MISS, not guess.
+# SPORT adopted IFRS 16 in 2019; pre-2019 reports carry only pre-IFRS UAFIDA
+# (captured by ebitda_sin_ifrs), so post-IFRS `ebitda` does not exist then.
+era_gates:
+  ebitda: { available_from_year: 2019 }
+
+# Documented data-unavailability (proof-cited). Net churn % is disclosed only in some
+# quarters; from ~2021 the operational KPI table often drops the "Deserción neta promedio"
+# row entirely (verified: these 17 periods have NO "deserción neta" mention at all). 2Q16
+# and 2Q21 DO mention it (left as honest misses, not excluded). NOT a blanket 2021+ gate —
+# net_churn reappears in 4Q21/4Q22/1Q22/1Q26/4Q25.
+unavailable:
+  clientes_activos:
+    # GT 2Q22 (66,386) and 2Q23 (83,361) match no printed figure: the own filings
+    # print 67,955 / 83,712, and the following year's comparatives print 67,955 /
+    # 81,586 (2024-2T.md:135 'Clientes activos al cierre 86,659 81,586').
+    reason: "GT matches neither the filing's own count nor the next year's comparative"
+    proof: "grep '66,386|83,361' over data/reports/sport/*.md = 0 hits; 2024-2T.md:135 prints the 2Q23 comparative as 81,586"
+    periods: [2Q22A, 2Q23A]
+  clubs_count:
+    # GT "Total Clubs in Operation" counts SW-brand clubs only (its own component
+    # rows: Opening Clubs SW + openings − closures = 53 for 1Q18), while the
+    # 2016-1Q19 releases print only the combined count including the
+    # shared-operation clubs ("57 clubes en operación", which "incluye a Tijuana,
+    # Luna Parc y Arboledas ... acuerdo de operación compartida", 2018-1T:23,42;
+    # 1Q19 prints 62 vs GT 58). The SW-only count is not printed in these filings.
+    reason: "GT counts SW-brand clubs only; the release prints only the combined count incl. shared-operation clubs"
+    proof: "data/reports/sport/2018-1T.md:23 — '57 clubes en operación'; :42 — 'incluye a Tijuana, Luna Parc y Arboledas ... operación compartida' (GT 53)"
+    periods: [2Q16A, 4Q17A, 1Q18A, 2Q18A, 3Q18A, 4Q18A, 1Q19A]
+  net_churn:
+    periods: [1Q21A, 1Q23A, 1Q24A, 1Q25A, 2Q22A, 2Q23A, 2Q24A, 2Q25A, 3Q20A, 3Q21A,
+              3Q22A, 3Q23A, 3Q24A, 3Q25A, 4Q20A, 4Q23A, 4Q24A]
+    reason: "Net churn % not disclosed these quarters (operational KPI table dropped the 'Deserción neta promedio' row; no 'deserción neta' mention in the report)"
+    proof: "data/reports/sport/2024-3T.md — no 'Deserción neta' line (grep count 0); data/reports/sport/2022-3T.md, 2023-2T.md — same"
+
+# Extend canonical metric patterns with SPORT-specific label variants
+metric_overrides:
+  # Net debt: the (now correctly parsed) DEUDA table's first column is the
+  # SIN-IFRS-16 figure ("Deuda financiera neta 26,170 … 1,214,056"); GT tracks
+  # the IFRS-16-inclusive value stated in prose ("Incluyendo el IFRS 16, la
+  # Deuda Financiera Neta ascendió a $1,241.0 millones"). Prepend the prose
+  # pattern so it outranks the base table-row pattern; pre-2019 reports (no
+  # IFRS 16) don't match it and keep the row read.
+  net_debt:
+    patterns:
+      - regex: '[Ii]ncluyendo\s+el\s+IFRS\s*16[\s\S]{0,120}?[Dd]euda\s+[Ff]inanciera\s+[Nn]eta[\s\S]{0,160}?(?:ascendi[oó]|fue|alcanz[oó]|finaliz[oó])\s+(?:a|en)?\s*\$?\s*([\d,.]+)\s+millones'
+        multiplier: 1000
+        source: prose
+  # Post-IFRS-16 EBITDA (headline). Era-gated to 2019+ (see era_gates): pre-2019
+  # reports carry only pre-IFRS UAFIDA, which belongs to ebitda_sin_ifrs — so the
+  # `UAFIDA` alias is intentionally NOT here (it made post-2019 ebitda grab the
+  # sin-IFRS figure). These prepended patterns pin the QUARTERLY post-IFRS value,
+  # avoiding both the acumulado lead and the "sin considerar IFRS 16" variant.
+  ebitda:
+    patterns:
+      # 2025+ explicit: "El EBITDA con IFRS 16 finalizó en $194.8 millones de pesos"
+      - regex: 'EBITDA\s+con(?:siderando)?\s+(?:el\s+efecto\s+de\s+)?IFRS\s*16\s+(?:finalizó|cerró|fue|alcanzó|totalizó|terminó)\s+(?:el\s+trimestre\s+)?(?:en\s+|de\s+|a\s+)?\$?\s?([\d.]+)\s+millones'
+        multiplier: 1000
+        source: prose
+      # Quarter anchor: "El EBITDA finalizó el trimestre en $63.5 millones de pesos vs $28.8
+      # millones" (3Q22A). Requires the "vs $prior" tail so it captures BOTH current and
+      # prior AND only fires on the explicit quarter-vs-prior-quarter bullet — quarters
+      # whose precise value already comes from a table (e.g. 2022-1T "...es decir, $135.3")
+      # have no "vs $prior" here, so the table extraction keeps winning (current + prior).
+      # EBITDA must be immediately followed by the verb (excludes "EBITDA sin..."/"con...").
+      - regex: 'EBITDA\s+(?:finalizó|cerró|fue|alcanzó|totalizó|terminó)\s+el\s+trimestre\s+(?:en\s+)?\$?\s?([\d.]+)\s+millones\s+de\s+pesos\s+vs\s+\$?\s?([\d.]+)'
+        multiplier: 1000
+        source: prose
+  revenue:
+    extra_aliases:
+      - "Total de Ingresos Netos"
+      - "Ingresos Netos"
+  # Pre-IFRS-16 EBITDA. The base patterns use a loose [\s\S]{0,120} jump that, in SPORT's
+  # two-column PDFs, skips the quarterly figure ($104.8) and grabs an interleaved number
+  # (cash $358.7). These prepended patterns anchor tightly so the number must immediately
+  # follow the verb / be suffixed by "millones de pesos vs|comparado", avoiding the interleave.
+  ebitda_sin_ifrs:
+    patterns:
+      # Quarter-anchored by an EXPLICIT "en el NTYY" tail (highest priority). The
+      # 3T20 exec-summary leads with the ACUMULADO bullet "EBITDA (sin considerar
+      # IFRS 16) terminó en -$96.2" (YTD = table col (96,249)); the QUARTER figure
+      # is "...(sin considerar IFRS 16) fue -$26.8 millones de pesos en el 3T20"
+      # (table col (26,826)). Requiring "millones de pesos en el NTYY" right after
+      # the verb pins the quarter and ignores the acumulado bullet (which has no
+      # such tail). Captures the sign so negatives (-$26.8) survive.
+      - regex: 'EBITDA\s*\(sin\s+considerar\s+(?:el\s+efecto\s+de\s+)?IFRS\s*16\)\s+(?:fue|totalizó|finalizó|cerró|alcanzó|terminó)\s+(?:en\s+)?(-?\$?\s?[\d.]+)\s+millones\s+de\s+pesos\s+en\s+el\s+\d{1,2}[Tt]\d{2}'
+        multiplier: 1000
+        source: prose
+      # WS3 quarter anchors (prepended — pin the QUARTERLY figure over the annual/acumulado
+      # lead that appears first in the executive-summary bullets).
+      # 2023-24: "En el último trimestre, el EBITDA, sin considerar IFRS 16, alcanzó los $70.4 millones"
+      - regex: 'En\s+el\s+[uú]ltimo\s+trimestre,?\s+el\s+EBITDA,?\s+sin\s+(?:considerar\s+)?(?:el\s+efecto\s+de\s+)?IFRS\s*16,?\s+(?:alcanzó|finalizó|cerró|fue|totalizó)\s+(?:los?\s+|en\s+)?\$?\s?([\d.]+)\s+millones'
+        multiplier: 1000
+        source: prose
+      # 2019: "El EBITDA (sin considerar IFRS 16) finalizó en $97.5 millones" — the quarterly
+      # bullet uses "finalizó"; the annual bullet uses "totalizó", so this pins the quarter.
+      # "millones" is optional: in two-column PDFs it wraps into the other column (3Q19),
+      # so the "$" + paren-form + "finalizó" anchor carries the match on its own.
+      - regex: 'EBITDA\s*\(sin\s+considerar\s+(?:el\s+efecto\s+de\s+)?IFRS\s*16\)\s+finalizó\s+en\s+\$\s?([\d.]+)(?:\s+millones)?'
+        multiplier: 1000
+        source: prose
+      # 2016 quarterly: "En el 4T16 la UAFIDA alcanzó $66.4 millones" (pins quarter over annual lead).
+      - regex: 'En\s+el\s+\d{1,2}[Tt]\d{2,4}\s+la\s+UAFIDA\s+(?:alcanzó|fue|de)\s+\$?\s?([\d.]+)\s+millones'
+        multiplier: 1000
+        source: prose
+      # Quarter-anchored (2016-2020): "La UAFIDA en el 2T16 alcanzó $52.0 millones" — the explicit
+      # "en el NTYY" pins the quarterly figure over the acumulado lead that appears first.
+      - regex: '(?:UAFIDA|EBITDA)(?:\s+\(?sin\s+considerar\s+(?:el\s+efecto\s+de\s+)?IFRS\s*16\)?)?\s+en\s+el\s+\d{1,2}[Tt]\d{2}\s+(?:alcanzó|fue|cerró|finalizó|totalizó)\s+(?:en\s+)?\$?\s?([\d.]+)\s+millones'
+        multiplier: 1000
+        source: prose
+      # 2025+ clean quarterly bullet: "...sin considerar IFRS 16 cerró el trimestre en $104.8 millones de pesos vs los..."
+      - regex: 'sin\s+considerar\s+IFRS\s*16\s+cerró\s+el\s+trimestre\s+en\s+\$?\s?([\d.]+)\s+millones\s+de\s+pesos\s+vs'
+        multiplier: 1000
+        source: prose
+      # 2023-24 inline: "el EBITDA (sin considerar IFRS 16) fue $38.2 millones de pesos comparado/una mejora con"
+      - regex: 'EBITDA\s+\(sin\s+considerar\s+(?:el\s+efecto\s+de\s+)?IFRS\s*16\)\s+(?:fue|alcanzó|cerró|finalizó|totalizó)\s+(?:el\s+trimestre\s+en\s+|en\s+|de\s+|a\s+)?\$?\s?([\d.]+)\s+millones\s+de\s+pesos\s+(?:comparado|una\s+mejora|vs)'
+        multiplier: 1000
+        source: prose
+      # Tight general "sin considerar IFRS 16 <verb> $X millones" (number directly after verb — no jump).
+      - regex: 'EBITDA\s+sin\s+(?:considerar\s+)?(?:el\s+efecto\s+de\s+)?IFRS\s*16\s+(?:cerró|fue|finalizó|alcanzó|totalizó|terminó|llegó)(?:\s+el\s+trimestre)?(?:\s+en|\s+a|\s+de)?\s+\$?\s?([\d.]+)\s+millones'
+        multiplier: 1000
+        source: prose
+      # 2016-2018 single UAFIDA/EBITDA (no IFRS-16 split → the reported figure IS pre-IFRS-16).
+      - regex: '(?:La|El)\s+UAFIDA\s+(?:del\s+\d{1,2}[Tt]\d{2,4}\s+)?(?:alcanzó|fue|de)\s+\$?\s?([\d.]+)\s+millones'
+        multiplier: 1000
+        source: prose
+      # NOTE: a bare "^EBITDA <num> <num>" P&L table fallback was tried to recover the 6
+      # 2017-2018 misses, but it sits before the base registry patterns and intercepted
+      # 4Q20/4Q21 (COVID losses; GT negative), grabbing the positive post-IFRS row. Reverted
+      # — the pre-2019 misses need a period-scoped fix, not a blanket table row.
+
+# Company-specific KPIs not in the universal dictionary
+custom_metrics:
+  - key: clientes_activos
+    label: "Total Active Clients"
+    label_es: "Clientes Activos Totales"
+    unit: count
+    section: kpi
+    patterns:
+      # 2022+ operational summary table: "Clientes activos totales  96,616  99,830  -3.2%"
+      - regex: "^\\s*[Cc]lientes\\s+activos\\s+totales\\s+([1-9]\\d{0,2}(?:,\\d{3})+)\\s+([1-9]\\d{0,2}(?:,\\d{3})+)\\s+([\\(\\-]?[\\d,]+\\.?\\d*\\%?\\)?)"
+        source: table
+      # 2017-2021 operational table with asterisk: "Clientes activos al cierre*  72,558  64,871"
+      # [*\\s\\d]* absorbs asterisks and footnote digits after "cierre"
+      - regex: "^\\s*[Cc]lientes\\s+activos\\s+al\\s+cierre[*\\s\\d]*\\s+([1-9]\\d{0,2}(?:,\\d{3})+)\\s+([1-9]\\d{0,2}(?:,\\d{3})+)\\d?\\s+([\\(\\-]?[\\d,]+\\.?\\d*\\%?\\)?)"
+        source: table
+      # 2016 prose: "alcanzó un máximo histórico de 69,230"
+      - regex: "[Cc]lientes\\s+[Aa]ctivos[^.\\n]*?alcanz[oó]\\s+un\\s+m[aá]ximo\\s+hist[oó]rico\\s+de\\s+([1-9]\\d{0,2}(?:,\\d{3})+)"
+        source: prose
+      # 2Q16 wording drops "Activos": "El número de Clientes al cierre del periodo
+      # alcanzó un máximo histórico de 69,230".
+      - regex: "[Cc]lientes\\s+al\\s+cierre\\s+del\\s+periodo\\s+alcanz[oó]\\s+un\\s+m[aá]ximo\\s+hist[oó]rico\\s+de\\s+([1-9]\\d{0,2}(?:,\\d{3})+)"
+        source: prose
+      # 2025-2026 prose: "alcanzó los 99,830 usuarios" (usuarios is optional from 2024)
+      - regex: "[Cc]lientes\\s+[Aa]ctivos[^.\\n]*?alcanzó\\s+los?\\s+([1-9]\\d{0,2}(?:,\\d{3})+)"
+        source: prose
+      # 2016-2018 prose: "número de Clientes Activos fue 83,495" / "fue de 64,871"
+      - regex: "[Nn]úmero\\s+(?:total\\s+)?de\\s+[Cc]lientes\\s+[Aa]ctivos[^.\\n]*?fue\\s+(?:de\\s+)?([1-9]\\d{0,2}(?:,\\d{3})+)"
+        source: prose
+      # 2021-2023 prose: "al cierre del 1T21 fue 51,827" — up to 4 words before "fue"
+      - regex: "[Cc]lientes\\s+[Aa]ctivos\\s+(?:Totales\\s+)?al\\s+cierre[^.\\n]*?(?:fue\\s+(?:de\\s+)?|alcanz[oó]\\s+los?\\s+)([1-9]\\d{0,2}(?:,\\d{3})+)"
+        source: prose
+      # 2024 prose: "alcanzó los 86,110, lo que representa" (no "usuarios")
+      - regex: "alcanz[oó]\\s+los?\\s+([1-9]\\d{0,2}(?:,\\d{3})+)(?=,|\\s+usuarios|\\s+clientes)"
+        source: prose
+      # Fallback: "total de X clientes"
+      - regex: "total\\s+de\\s+([1-9]\\d{0,2}(?:,\\d{3})+)\\s+clientes\\b"
+        source: prose
+
+  - key: net_churn
+    label: "Net Churn Rate (avg)"
+    label_es: "Deserción Neta Promedio"
+    unit: pct
+    section: kpi
+    patterns:
+      # Operational table (2019+): "Deserción neta promedio  5.6%  5.6%"
+      - regex: "^\\s*[Dd]eserci[oó]n\\s+neta\\s+promedio\\s+([\\d.]+%)\\s+([\\d.]+%)"
+        source: table
+      # Operational table (2017-2018): "Deserción neta   5.0%   5.5%   -0.5 pp"
+      - regex: "^\\s*[Dd]eserci[oó]n\\s+neta\\s+([\\d.]+%)\\s+([\\d.]+%)"
+        source: table
+      # 2Q16 prose: "la tasa de deserción neta tocó mínimos históricos colocándose
+      # por debajo del 2.0%" (GT records the 2.0 bound).
+      - regex: "deserci[oó]n\\s+neta\\s+toc[oó]\\s+m[ií]nimos\\s+hist[oó]ricos\\s+coloc[aá]ndose\\s+por\\s+debajo\\s+del\\s+([\\d.]+)%"
+        source: prose
+        source: table
+      # Prose (2016-2018): "La tasa de Deserción Neta fue de 5.0%"
+      - regex: "[Tt]asa\\s+de\\s+[Dd]eserci[oó]n\\s+[Nn]eta[^%\\n]*?([\\d.]+)%"
+        source: prose
+      # Prose alternative: "deserción neta del XTY fue de X%"
+      - regex: "[Dd]eserci[oó]n\\s+[Nn]eta[^%\\n]*?fue\\s+de\\s+[-]?([\\d.]+)%"
+        source: prose
+
+  - key: gross_churn
+    label: "Average Gross Churn Rate"
+    label_es: "Deserción Bruta Promedio"
+    unit: pct
+    section: kpi
+    patterns:
+      # Operational table: "Deserción bruta promedio  7.2%  7.8%"
+      - regex: "^\\s*[Dd]e[sc]erci[oó]n\\s+bruta\\s+promedio\\s+([\\d.]+%)\\s+([\\d.]+%)"
+        source: table
+      # Prose: "deserción bruta del X% / deserción bruta fue de X%"
+      - regex: "[Dd]eserci[oó]n\\s+[Bb]ruta[^%\\n]*?([\\d.]+)%"
+        source: prose
+
+  - key: monthly_visits
+    label: "Monthly Avg Foot Traffic"
+    label_es: "Aforo Promedio Mensual"
+    unit: count
+    section: kpi
+    patterns:
+      # 2022+ operational table (standard): "Aforo promedio mensual  877,678  836,103  5.0%"
+      - regex: "^\\s*[Aa]foro\\s+promedio\\s+mensual\\s*\\d?\\s+([\\d,]+)\\s+([\\d,]+)\\s+([\\(\\-]?[\\d,]+\\.?\\d*\\%?\\)?)"
+        source: table
+      # 2016-2018 operational table with "**": "Aforo promedio mensual**  544,589  467,304"
+      # [*\\s]* absorbs double-asterisk and spaces between label and first number
+      - regex: "^\\s*[Aa]foro\\s+promedio\\s+mensual[*\\s]+([\\d,]+)\\s+([\\d,]+)"
+        source: table
+      # 2024-2025 prose: "alcanzó un promedio de 836,103 visitas por mes"
+      - regex: "[Aa]foro[^\\n]*?alcanzó\\s+un\\s+promedio\\s+(?:mensual\\s+)?de\\s+([\\d,]+)\\s+visitas?"
+        source: prose
+      # 2017-2018 prose multi-line: "fue de\n  672,347" (number wraps to next line)
+      - regex: "[Aa]foro\\s+[Pp]romedio\\s+[Mm]ensual[^.\\n]*?fue\\s+de\\n?\\s*([\\d,]+)"
+        source: prose
+      # Prose fallback: "promedio mensual de X visitas"
+      - regex: "promedio\\s+mensual\\s+de\\s+([\\d,]+)\\s+visitas?"
+        source: prose
+      # 2016 prose: "aproximadamente 518,000 visitas mensuales promedio"
+      - regex: "(?:aproximadamente\\s+)?([\\d,]+)\\s+visitas?\\s+mensuales?\\s+promedio"
+        source: prose
+
+  - key: visits_per_member
+    label: "Monthly Visits per Client"
+    label_es: "Visitas Mensuales por Cliente"
+    unit: ratio
+    section: kpi
+    patterns:
+      # 2022+ operational table: "Visitas mensuales por cliente  9.3  8.9  4.5%"
+      - regex: "^\\s*[Vv]isitas\\s+mensuales\\s+por\\s+cliente\\s*\\d?\\s+([\\d.]+)\\s+([\\d.]+)"
+        source: table
+      # 2016-2018 table (no "por mes" qualifier, may have mismos clubes line below):
+      # "Visitas mensuales por cliente  7.4   6.9   7.5%"
+      - regex: "^\\s*[Vv]isitas\\s+mensuales\\s+por\\s+cliente[*\\s]*([\\d.]+)\\s+([\\d.]+)"
+        source: table
+      # OCR variants sometimes drop the leading V or append "mismos clubes".
+      - regex: "^\\s*[Vv]?isitas\\s+mensuales\\s+por\\s+cliente(?:\\s+mismos\\s+clubes)?[*\\s]*([\\d.]+)\\s+([\\d.]+)"
+        source: table
+      # 2017-2018 prose multi-line: "fue de\n  9.0" / "fue de 7.9"
+      # Also handles "Visitas Mensuales Promedio por Cliente" (with "Promedio" between)
+      - regex: "[Vv]isitas\\s+[Mm]ensuales\\s+(?:[Pp]romedio\\s+)?por\\s+[Cc]liente[^.\\n]*?fue\\s+de\\n?\\s*([\\d.]+)"
+        source: prose
+      # Line-wrapped narrative and OCR variants.
+      - regex: "[Vv]isitas\\s+[Mm]ensuales\\s+(?:[Pp]romedio\\s+)?por\\s+[Cc]liente[\\s\\S]{0,120}?fue\\s+de\\s*([\\d.]+)"
+        source: prose
+      # 2025 prose: "las 9.3 accesos al mes vs. las 8.9 visitas"
+      - regex: "[Vv]isitas[^\\n]*?por\\s+cliente[^\\n]*?(?:alcanzaron?\\s+(?:\\w+\\s+){0,4}|promedio\\s+de\\s+)([\\d.]+)"
+        source: prose
+
+  - key: clubs_count
+    label: "Clubs in Operation"
+    label_es: "Clubes en Operación"
+    unit: count
+    section: kpi
+    patterns:
+      # Prose: tolerate quarter codes, "primer trimestre", and split text between the
+      # count and the trailing club description. (\d{2})\d* absorbs footnote digits.
+      - regex: "cerr[oó]\\s+el\\s+\\d+T\\d{2,4}\\s+con\\s+(\\d{2})\\d*[\\s\\S]{0,120}?clubes?"
+        source: prose
+      - regex: "cerr[oó]\\s+el\\s+(?:primer|segundo|tercer|cuarto)\\s+trimestre(?:\\s+de\\s+\\d{4})?\\s+con\\s+(\\d{2})\\d*[\\s\\S]{0,120}?clubes?"
+        source: prose
+      - regex: "cerr[oó]\\s+el\\s+trimestre\\s+con\\s+(\\d{2})\\d*[\\s\\S]{0,120}?clubes?"
+        source: prose
+      # Historical rolling table: last number = most recent quarter
+      - regex: "Total\\s+de\\s+clubes\\s+en\\s+operaci[oó]n\\s+al\\s+final\\s+del\\s+periodo(?:\\s+\\d+)+\\s+(\\d{2})\\d*\\s*$"
+        source: table
+      # Fallback: "con X clubes en operación"
+      - regex: "con\\s+(\\d{2})\\d*\\s+clubes?\\s+en\\s+operaci[oó]n"
+        source: prose
+
+  - key: revenue_memberships
+    label: "Membership & Maintenance Revenue"
+    label_es: "Membresías y Mantenimiento"
+    unit: currency
+    section: income
+    patterns:
+      - regex: "^\\s*[Ii]ngresos\\s+por\\s+cuotas\\s+de\\s+mantenimiento\\s+y\\s+membres\\S+(?:\\s+\\d(?![\\d.,]))?\\s+([\\d]{1,3}(?:,[\\d]{3})+\\.?\\d*)\\s+([\\d]{1,3}(?:,[\\d]{3})+\\.?\\d*)"
+        source: table
+      # 1Q16/2Q16 OCR splits the leading digit off both values:
+      # "…membresías 2 80,993 2 31,032" = 280,993 / 231,032 (parse_number rejoins).
+      - regex: "^\\s*[Ii]ngresos\\s+por\\s+cuotas\\s+de\\s+mantenimiento\\s+y\\s+membres\\S+\\s+(\\d\\s\\d{2},\\d{3})\\s+(\\d\\s\\d{2},\\d{3})"
+        source: table
+      # Verb-tolerant prose: "...y Mantenimiento finalizaron/alcanzaron en $385.6 millones".
+      - regex: "[Ii]ngresos\\s+por\\s+[Mm]embres[ií]as\\s+y\\s+[Mm]antenimiento[^$\\n]{0,90}?\\$\\s*([\\d.]+)\\s+millones"
+        multiplier: 1000
+        source: prose
+
+  # Helper components: GT "Sports & Other Business Revenue" = the SUM of these two P&L
+  # rows ("Ingresos deportivos" + "Otros ingresos del negocio"). Each row's first two
+  # numbers are the quarter (current, prior). Captured so revenue_sports can calc the sum.
+  - key: revenue_deportivos
+    label: "Ingresos Deportivos (component)"
+    label_es: "Ingresos Deportivos"
+    unit: currency
+    section: income
+    patterns:
+      - regex: "^\\s*[Ii]ngresos\\s+deportivos\\s+([\\d]{1,3}(?:,[\\d]{3})+)\\s+([\\d]{1,3}(?:,[\\d]{3})+)"
+        source: table
+  - key: revenue_otros_negocio
+    label: "Otros Ingresos del Negocio (component)"
+    label_es: "Otros Ingresos del Negocio"
+    unit: currency
+    section: income
+    patterns:
+      - regex: "^\\s*[Oo]tros\\s+[Ii]ngresos\\s+del\\s+[Nn]egocio\\s+([\\d]{1,3}(?:,[\\d]{3})+)\\s+([\\d]{1,3}(?:,[\\d]{3})+)"
+        source: table
+      # 2017-era P&L row: "Otros Ingresos core 21,164 9,134 12,030 131.7%"
+      - regex: "^\\s*[Oo]tros\\s+[Ii]ngresos\\s+[Cc]ore\\s+([\\d]{1,3}(?:,[\\d]{3})+)\\s+([\\d]{1,3}(?:,[\\d]{3})+)"
+        source: table
+
+  - key: revenue_sports
+    label: "Sports & Other Business Revenue"
+    label_es: "Ingresos Deportivos y Otros"
+    unit: currency
+    section: income
+    # Primary: sum the two P&L component rows (see tier_precedence: calc wins). Falls back
+    # to the combined-row / combined-prose patterns below where the components don't parse.
+    calc: "revenue_deportivos + revenue_otros_negocio"
+    patterns:
+      - regex: "^\\s*[Ii]ngresos\\s+[Dd]eportivos\\s+y\\s+[Oo]tros\\s+[Ii]ngresos(?:\\s+del\\s+[Nn]egocio)?\\s+([\\d]{1,3}(?:,[\\d]{3})+\\.?\\d*)\\s+([\\d]{1,3}(?:,[\\d]{3})+\\.?\\d*)"
+        source: table
+      # Combined prose "...del Negocio: $93.7 millones" (colon/space then $ — will NOT match
+      # the Q4 annual form "...del Negocio finalizaron en $303.6" because letters block [:\s]+).
+      - regex: "[Ii]ngresos\\s+[Dd]eportivos\\s+y\\s+[Oo]tros\\s+[Ii]ngresos(?:\\s+del\\s+[Nn]egocio)?[:\\s]+\\$\\s*([\\d.]+)\\s+millones"
+        multiplier: 1000
+        source: prose
+
+  - key: revenue_sponsorships
+    label: "Sponsorships & Other Revenue"
+    label_es: "Patrocinios y Otras Actividades"
+    unit: currency
+    section: income
+    patterns:
+      # P&L row is "Ingresos por patrocinios y otras actividades comerciales <cur> <prior>"
+      # — the "comerciales" word (optional) sits between the label and the numbers.
+      - regex: "^\\s*[Ii]ngresos\\s+por\\s+patrocinios\\s+y\\s+otras\\s+actividades(?:\\s+comerciales)?\\s+([\\d]{1,3}(?:,[\\d]{3})+\\.?\\d*)\\s+([\\d]{1,3}(?:,[\\d]{3})+\\.?\\d*)"
+        source: table
+      - regex: "[Ii]ngresos\\s+por\\s+patrocinios\\s+y\\s+otras\\s+actividades[^\\n]*?\\$\\s*([\\d.]+)\\s+millones"
+        multiplier: 1000
+        source: prose
+      # 2017-era P&L row: "Otros Ingresos No core 24,281 11,287 12,994 115.1%"
+      - regex: "^\\s*[Oo]tros\\s+[Ii]ngresos\\s+[Nn]o\\s+[Cc]ore\\s+([\\d]{1,3}(?:,[\\d]{3})+)\\s+([\\d]{1,3}(?:,[\\d]{3})+)"
+        source: table
+      # 2017 prose: "Los Otros Ingresos No Core registraron $24.9 millones"
+      - regex: "[Oo]tros\\s+[Ii]ngresos\\s+[Nn]o\\s+[Cc]ore\\s+registraron\\s+\\$\\s*([\\d.]+)\\s+millones"
+        multiplier: 1000
+        source: prose

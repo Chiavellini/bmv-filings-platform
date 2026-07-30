@@ -1,0 +1,38 @@
+# alpha-go — self-contained dependencies.
+# Core (inherited from the vendored extraction/parse/download infra):
+pdfplumber>=0.11
+requests>=2.31
+beautifulsoup4>=4.12
+openpyxl>=3.1
+pandas>=2.0
+pyyaml>=6.0
+numpy>=1.26
+
+# Dashboard (Phase 4):
+streamlit>=1.36
+# In-app PDF reader — open a result's source document inline with the found text highlighted
+# on the page (AlphaSense-style), no new tab. streamlit-pdf-viewer embeds the real PDF;
+# pymupdf (fitz) locates the highlight rectangles via a text search on the PDF itself.
+streamlit-pdf-viewer>=0.0.29
+pymupdf>=1.24
+
+# Search index (Phase 2/3): keyword index uses stdlib sqlite3 (FTS5, no dep).
+# Semantic index uses the portable estate model — no API key required. These two runtime
+# versions are the certified Mac/Python 3.12 pair used to build the shipped 384-dim index.
+torch==2.13.0
+sentence-transformers==5.6.0
+
+# LLM layers (sentiment refine + Q&A synthesis). Lazy-imported; the app still runs offline
+# without them (it degrades to the lexicon / disables Q&A), but they're declared so the default
+# DeepSeek sentiment actually works on a fresh install.
+#   DeepSeek (default sentiment provider) is OpenAI-compatible → uses the openai SDK:
+openai>=1.0
+#   Anthropic (default Q&A provider — only used if qa.enabled):
+anthropic>=0.40
+# Optional — only needed for JS-rendered IR sites during ingest:
+# playwright>=1.45
+
+# Test runner. Previously undeclared, which is why the README-prescribed
+# `.venv312/bin/python -m pytest` failed with "No module named pytest" on an
+# environment built strictly from this file.
+pytest>=8

@@ -1,0 +1,35 @@
+company:
+  name: Fomento Económico Mexicano (FEMSA)
+  ticker: FEMSAUBD
+  exchange: BMV
+  language: en
+  currency: MXN
+  unit: millions          # GT model is in P$mn
+  # FEMSA UBD units = 5 ordinary shares each → market cap divides the listed
+  # unit count by 5. Consumed by soft's coverage engine (inert for the root
+  # deliverable pipeline); losing it put FEMSA's P/BV at 13.1 (the 5x cap bug).
+  shares_per_unit: 5
+
+metric_overrides: {}
+custom_metrics: []
+
+ir_website:
+  url: https://femsa.gcs-web.com/financial-reports/quarterly-results
+  pdf_link_pattern: '(?i)\.pdf'
+  use_playwright: true
+  max_reports: 120
+  delay_ms: 500
+  xbrl_ticker: FEMSA
+
+# GT 2022-23 revenue = the discontinued-ops RESTATED series (Envases/Solistica
+# divestitures), printed only as the next year's filings' prior-year XBRL contexts
+# (verified: 3Q23 xbrl prior 157,693.26 = GT 3Q22; 1Q24 prior 159,630.0 = GT 1Q23
+# within tolerance). 4Q22 is a model FY-derivation matching no filing.
+restated_prior:
+  revenue: [3Q22A, 1Q23A, 2Q23A, 3Q23A, 4Q23A]
+
+unavailable:
+  revenue:
+    periods: [4Q22A]
+    reason: "GT 4Q22 (124,175.35) matches no printed or XBRL figure — as-reported 186,467, next-year restated prior 181,454; a model FY−9M derivation on a different divestiture basis"
+    proof: "grep '124,175' over data/reports/femsa/*.md = 0 hits; 2023-4T xbrl prior = 181,454.359"

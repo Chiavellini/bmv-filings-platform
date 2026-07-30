@@ -1,0 +1,250 @@
+# Segments-sheet outline spec for WALMEX.
+#
+# Consumed by segments_sheet.generate_company_segments():
+#   - `outline`  : the metric list verbatim (section headers, data rows, and
+#                  computed rows). parse_outline() classifies each line.
+#   - `sections` : exact header lines that are GROUP TITLES (not data). Needed
+#                  to disambiguate labels like "Mexico" that are a section in
+#                  one place and a data row in another.
+#   - `mapping`  : data-row label -> extractor metric key. Use "Section/Label"
+#                  to disambiguate repeated sub-labels (e.g. Gross Profit/Mexico
+#                  vs EBITDA/Mexico). Unmapped rows render blank (no data yet).
+#
+# Computed rows (YoY, Check, Margin, bps change, 2-year comp, As % of …) are
+# never extracted — they become Excel formulas or label-only placeholders.
+
+title: "WALMEX: Walmart de México y Centroamérica"
+units: "P$mn"
+
+sections:
+  - Revenues
+  - Mexico
+  - Central America
+  - Sales per m2
+  - Stores
+  - New Total Stores
+  - Net New Stores Mexico (quarter)
+  - Net New Stores CAM (quarter)
+  - Sales Floor (m2)
+  - Profitability
+  - Gross Profit
+  - Operating Income
+  - EBITDA
+
+# label (or Section/label) -> extractor metric key
+mapping:
+  "Walmart de México y CAM": revenue
+  "Merchandise": net_sales
+  "Total MX Sales": revenue_mexico
+  "MX SSS YoY": sss_mexico
+  "Ticket": ticket_mexico
+  "Traffic": traffic_mexico
+  "e-Commerce": ecommerce_gmv_growth
+  "Total CAM Sales": revenue_cam
+  "CAM SSS YoY": sss_cam
+  "Total Stores": total_stores
+  "Total Stores Mexico": total_stores_mexico
+  "Total Stores CAM": total_stores_cam
+  "Sales Floor (m2)/Area Mexico": sales_floor_mexico
+  "Area Central America": sales_floor_cam
+  "Gross Profit/Consolidated": gross_profit
+  "Gross Profit/Mexico": gross_profit_mexico
+  "Gross Profit/Central America": gross_profit_cam
+  "Consolidated Operating Income": operating_income
+  "MX - Operating Income": operating_income_mexico
+  "CAM - Operating Income": operating_income_cam
+  "EBITDA/Consolidated": ebitda
+  "EBITDA/Mexico": ebitda_mexico
+  "EBITDA/Central America": ebitda_cam
+
+outline: |
+  Revenues
+
+  Walmart de México y CAM
+  YoY
+  Merchandise
+  YoY
+  As % of Consolidated
+  Others
+  YoY
+  As % of Consolidated
+  Check
+
+  Mexico
+
+  Total MX Sales
+  YoY
+  As % of Consolidated
+  MX SSS YoY
+  2-year comp
+  Ticket
+  Traffic
+  MX Unit Growth YoY
+  New store utilization
+  e-Commerce
+  YoY
+  As % of Total
+  Private Label Penetration
+
+  Central America
+
+  Total CAM Sales
+  YoY
+  As % of Consolidated
+  CAM SSS YoY
+  2-year comp
+  Unit Growth YoY
+  New store utilization
+  FX Impact
+  Nicaragua (as a % of CAM sales)
+  Honduras (as a % of CAM sales)
+  El Salvador (as a % of CAM sales)
+  Guatemala (as a % of CAM sales)
+  Costa Rica (as a % of CAM sales)
+  Check
+
+  Sales per m2
+
+  Mexico
+  YoY
+
+  Central America
+  YoY
+
+  Stores
+  Total Stores
+  YoY
+
+  New Total Stores
+
+  Total Stores Mexico
+  YoY
+  Bodega Aurrera
+  Walmart
+  Sam's
+  Walmart Express
+
+  Net New Stores Mexico (quarter)
+  Bodega Aurrera
+  Walmart
+  Sam's
+  Walmart Express (Superama)
+
+  Total Stores CAM
+  YoY
+  Discount Stores + Bodega Aurrera
+  Walmart
+  Sam's
+  Supermarkets
+
+  Net New Stores CAM (quarter)
+  Discount Stores + Bodega Aurrera
+  Walmart
+  Sam's
+  Supermarkets
+
+  Sales Floor (m2)
+
+  Total Area
+  YoY
+
+  Area Mexico
+  MX Sales floor area YoY growth
+  As % of Consolidated
+  Bodega Aurrera
+  Walmart
+  Sam's
+  Walmart Express (Superama)
+
+  Average Area per Store Mexico
+  YoY
+  Bodega Aurrera
+  Walmart
+  Sam's
+  Walmart Express (Superama)
+
+  Area Central America
+  CAM Sales floor area YoY growth
+  As % of Consolidated
+  Discount Stores + Bodega Aurrera
+  Walmart
+  Sam's
+  Supermarkets
+
+  Average Area per Store Central America
+  YoY
+  Discount Stores + Bodega Aurrera
+  Walmart
+  Sam's
+  Supermarkets
+
+  Profitability
+  Gross Profit
+
+  Consolidated
+  YoY
+  Margin
+  bps change
+
+  Mexico
+  YoY
+  Margin
+  bps change
+  As % of Consolidated
+
+  Central America
+  YoY
+  Margin
+  bps change
+  As % of Consolidated
+  Check
+
+  Operating Income
+
+  Consolidated Operating Income
+  YoY
+  Margin
+  bps change
+
+  MX - Income before Other Income (Net)
+  YoY
+  Margin
+  bps change
+  As % of Consolidated
+  MX - Operating Income
+  YoY
+  Margin
+  bps change
+  As % of Consolidated
+
+  CAM - Income before Other Income (Net)
+  YoY
+  Margin
+  bps change
+  As % of Consolidated
+  CAM - Operating Income
+  YoY
+  Margin
+  bps change
+  As % of Consolidated
+  Check
+
+  EBITDA
+
+  Consolidated
+  YoY
+  Margin
+  bps change
+
+  Mexico
+  YoY
+  Margin
+  bps change
+  As % of Consolidated
+
+  Central America
+  YoY
+  Margin
+  bps change
+  As % of Consolidated
+  Check

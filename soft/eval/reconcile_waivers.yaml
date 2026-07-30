@@ -1,0 +1,57 @@
+# Reconciliation waivers — explicit, human-reviewed suppressions for findings that are NOT our bug
+# and that the auto-noise rules in reconcile._oracle_kind can't infer. A waived finding is downgraded
+# to kind="expected" (dropped from the Actionable list, kept in the Suppressed summary for audit).
+#
+# Schema:  <Company display name>:
+#            metrics: [<Metric>, ...]   # exact Metric strings as they appear in the report
+#            reason:  <one line — WHY this is not an actionable defect>
+#
+# Keep this list SHORT and evidence-backed. Do NOT waive a finding just to make the count go down —
+# a genuine scale/shares/currency defect must stay 'real' so the book scorecard flags it RED.
+# The auto-rules already suppress: Yahoo absolute share/market-cap disagreements, and Yahoo's
+# garbage EV/EBITDA & P/E denominators — so those do NOT need entries here.
+
+# --- Verified 2026-07-14 (round-5 correctness pass; each deep-checked against the raw XBRL / Yahoo) ---
+
+Rotoplas:
+  metrics: ["P/E", "ROE", "Net margin", "EV/EBITDA"]
+  reason: "2025 earnings collapsed (annual NI 790→312→53→11 mn, verified) → trailing-12m ROE 1.7% / P/E 64 are CORRECT; Yahoo's P/E 9 uses an older/normalised earnings basis."
+
+Simec:
+  metrics: ["P/E"]
+  reason: "2025 steel-downturn earnings collapse (annual NI 10,480→1,495 mn, verified) → trailing P/E 45 is CORRECT; Yahoo's P/E 8 uses FY2024 earnings."
+
+AC:
+  metrics: ["P/E", "P/BV", "Net margin", "Dividend yield"]
+  reason: "Yahoo's stats are for a mis-resolved instrument (net margin 31% ≠ Arca Continental's ~9%); ours match the BMV listing AC.MX (P/E ~15, margin ~9%)."
+
+Consorcio ARA:
+  metrics: ["P/BV", "ROE", "Net margin"]
+  reason: "Yahoo shows a NEGATIVE ROE/margin — wrong; ARA is a profitable homebuilder trading below book, so our P/BV 0.35 / positive ROE are correct."
+
+# --- Round-6 (trust scorecard): evidence-backed downgrades of sentinels/oracle flags that are real
+# values or reference-side, NOT engine defects. These also clear the scorecard RED/AMBER for these rows.
+
+GBM:
+  metrics: ["P/E", "ROE"]
+  reason: "Broker with near-zero trailing earnings → P/E 146 / ROE 2.7% are REAL (Yahoo also shows a very high P/E 78); the 'implausible for a bank' sentinel is a false alarm on a plausible share count. High P/E is shown deliberately (round 3)."
+
+Procorp:
+  metrics: ["P/E", "ROE"]
+  reason: "Broker with near-zero trailing earnings → P/E 126 / ROE 0.4% are REAL, not a price/share defect; shown per the show-every-P/E policy."
+
+Cultiba:
+  metrics: ["P/Sales"]
+  reason: "Revenue is genuinely ~108mn post-divestiture (verified) so P/Sales 79 is a real business state, not a mis-scale; Cultiba's price-multiples are already reduced to N/A in residual_na, so nothing wrong ships."
+
+Megacable:
+  metrics: ["P/E"]
+  reason: "Our P/E 16.9 matches Megacable's real ~15-17; Yahoo 36.8 uses a depressed/stale EPS."
+
+Nemak:
+  metrics: ["EV/EBITDA"]
+  reason: "Nemak is a cheap cyclical auto-parts name (EV/EBITDA ~4-5); Yahoo 22.5 uses a depressed trailing EBITDA."
+
+Value GF:
+  metrics: ["P/BV", "ROE"]
+  reason: "Yahoo P/BV 0.12 is a wrong-instrument artifact for this small broker; ours (1.9 / small negative ROE) are plausible."

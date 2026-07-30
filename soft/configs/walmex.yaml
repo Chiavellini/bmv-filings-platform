@@ -1,0 +1,376 @@
+company:
+  currency: MXN
+  exchange: BMV
+  language: en
+  name: Walmex
+  ticker: WALMEX
+  unit: millions   # financial tables are in Millions $MXN
+
+# WALMEX has tuned section-scoped regexes for segment and consolidated tables.
+# Generic search can fill gaps, but it must not replace those exact rows.
+tier_precedence:
+  default: [xbrl, bmv, regex_table, prose, search, table, calc]
+
+# Segments-sheet outline (drives segments_sheet.generate_company_segments).
+segments_file: configs/walmex_segments.yaml
+
+# ---------------------------------------------------------------------------
+# Metric overrides — prepend WALMEX-specific table patterns.
+#
+# WALMEX summary tables interleave margin-% between the two value columns:
+#   Total Revenues   246,254  100.0   227,415  100.0   8.3
+#                    ^current ^pct    ^prior   ^pct    ^growth
+#
+# The generic patterns expect  value  value  growth  and would incorrectly
+# capture the margin-% as the "prior" value.  These WALMEX patterns skip the
+# pct column with a non-capturing [\d.]+ token.
+#
+# 3 capture groups → _build_row maps (current, prior, var_pct)
+# ---------------------------------------------------------------------------
+
+metric_overrides:
+  revenue:
+    patterns:
+      # Q4 annual-first reports (pre-2017): full-year table appears before Q4 table.
+      # Match "Total Revenues" that follows the "Fourth Quarter Results" section header.
+      - regex: 'Fourth\s+Quarter[\s\S]{0,600}?Total\s+Revenues?\s+([\(\-]?\s?[\d]{1,3}(?:,[\d]{3})+\.?\d*\)?)\s+[\d.]+\s+([\(\-]?\s?[\d]{1,3}(?:,[\d]{3})+\.?\d*\)?)\s+[\d.]+\s+([\(\-]?\s?[\d,]+\.?\d*\%?\)?)'
+        source: table
+      # Standard WALMEX 5-column table. Consolidated scoping (sections role:
+      # consolidated) keeps the Mexico/CAM segment tables out of view, so this
+      # no longer needs a consolidated-only anchor.
+      - regex: '^\s*Total\s+Revenues?\s+([\(\-]?\s?[\d]{1,3}(?:,[\d]{3})+\.?\d*\)?)\s+[\d.]+\s+([\(\-]?\s?[\d]{1,3}(?:,[\d]{3})+\.?\d*\)?)\s+[\d.]+\s+([\(\-]?\s?[\d,]+\.?\d*\%?\)?)'
+        source: table
+
+  gross_profit:
+    patterns:
+      # Q4 context (pre-2017): match after "Fourth Quarter" section header.
+      - regex: 'Fourth\s+Quarter[\s\S]{0,800}?Gross\s+Profit\s+([\(\-]?\s?[\d]{1,3}(?:,[\d]{3})+\.?\d*\)?)\s+[\d.]+\s+([\(\-]?\s?[\d]{1,3}(?:,[\d]{3})+\.?\d*\)?)\s+[\d.]+\s+([\(\-]?\s?[\d,]+\.?\d*\%?\)?)'
+        source: table
+      # Standard fallback (consolidated scope keeps segment tables out of view).
+      - regex: '^\s*Gross\s+Profit\s+([\(\-]?\s?[\d]{1,3}(?:,[\d]{3})+\.?\d*\)?)\s+[\d.]+\s+([\(\-]?\s?[\d]{1,3}(?:,[\d]{3})+\.?\d*\)?)\s+[\d.]+\s+([\(\-]?\s?[\d,]+\.?\d*\%?\)?)'
+        source: table
+
+  operating_income:
+    patterns:
+      # Q4 context.
+      - regex: 'Fourth\s+Quarter[\s\S]{0,1200}?Operating\s+Income\s+([\(\-]?\s?[\d]{1,3}(?:,[\d]{3})+\.?\d*\)?)\s+[\d.]+\s+([\(\-]?\s?[\d]{1,3}(?:,[\d]{3})+\.?\d*\)?)\s+[\d.]+\s+([\(\-]?\s?[\d,]+\.?\d*\%?\)?)'
+        source: table
+      # Standard fallback (consolidated scope keeps segment tables out of view).
+      - regex: '^\s*Operating\s+Income\s+([\(\-]?\s?[\d]{1,3}(?:,[\d]{3})+\.?\d*\)?)\s+[\d.]+\s+([\(\-]?\s?[\d]{1,3}(?:,[\d]{3})+\.?\d*\)?)\s+[\d.]+\s+([\(\-]?\s?[\d,]+\.?\d*\%?\)?)'
+        source: table
+
+  ebitda:
+    patterns:
+      # Q4 context.
+      - regex: 'Fourth\s+Quarter[\s\S]{0,1500}?EBITDA\s+([\(\-]?\s?[\d]{1,3}(?:,[\d]{3})+\.?\d*\)?)\s+[\d.]+\s+([\(\-]?\s?[\d]{1,3}(?:,[\d]{3})+\.?\d*\)?)\s+[\d.]+\s+([\(\-]?\s?[\d,]+\.?\d*\%?\)?)'
+        source: table
+      # Standard fallback (consolidated scope keeps segment tables out of view).
+      - regex: '^\s*EBITDA\s+([\(\-]?\s?[\d]{1,3}(?:,[\d]{3})+\.?\d*\)?)\s+[\d.]+\s+([\(\-]?\s?[\d]{1,3}(?:,[\d]{3})+\.?\d*\)?)\s+[\d.]+\s+([\(\-]?\s?[\d,]+\.?\d*\%?\)?)'
+        source: table
+
+
+# ---------------------------------------------------------------------------
+# Section splitting — quarterly reports from 4Q23 onward contain dedicated
+# Mexico and Central America summary tables introduced by these headers.
+# extract_metrics_segmented() uses these anchors to split the document and
+# runs the listed metric keys against each section text, outputting prefixed
+# keys (revenue_mexico, ebitda_cam, etc.).
+# ---------------------------------------------------------------------------
+
+# GT 2023 + 1Q25 Mexico/CAM revenue = the NEXT year's release prior columns
+# (verified: 1Q24 release prints 'Total Revenues 190,064 100.0 170,902' = GT 1Q23;
+# 1Q26 prints 195,665 / 45,310 = GT 1Q25 — the 1Q25 release's own segment page is
+# vector graphics).
+restated_prior:
+  revenue_mexico: [1Q23A, 2Q23A, 3Q23A, 1Q25A]
+  revenue_cam: [1Q23A, 2Q23A, 3Q23A, 1Q25A]
+
+sections:
+  - name: mexico
+    header_pattern: 'Mexico\s+main\s+figures\s+are'
+    metrics: [revenue, gross_profit, operating_income, ebitda]
+
+  - name: cam
+    header_pattern: 'Central\s+America\s+main\s+figures\s+are'
+    metrics: [revenue, gross_profit, operating_income, ebitda]
+
+  # Appendix 1 (present in 1Q24+ reports) holds the consolidated income statement.
+  # role: consolidated → its text joins the consolidated scope, so consolidated
+  # metrics are read from here (2026+ layout) or from the top-of-doc P&L (older
+  # layout) — never from the Mexico/CAM segment tables that precede it.
+  - name: appendix
+    header_pattern: 'Appendix\s+\d+:\s+Quarterly\s+Income\s+Statement'
+    role: consolidated
+    metrics: []
+
+
+# ---------------------------------------------------------------------------
+# Custom operational KPIs
+# ---------------------------------------------------------------------------
+
+custom_metrics:
+
+  # --- Income statement addendum -------------------------------------------
+
+  - key: net_sales
+    label: "Net Sales (Merchandise)"
+    label_es: "Ventas Netas (Mercancía)"
+    section: income
+    unit: currency
+    patterns:
+      # No pct column after Net Sales in WALMEX tables
+      - regex: '^\s*Net\s+Sales\s+([\(\-]?\s?[\d]{1,3}(?:,[\d]{3})+\.?\d*\)?)\s+([\(\-]?\s?[\d]{1,3}(?:,[\d]{3})+\.?\d*\)?)\s+([\(\-]?\s?[\d,]+\.?\d*\%?\)?)'
+        source: table
+
+  - key: income_before_other
+    label: "Income before Other Income (Net)"
+    label_es: "Utilidad antes de Otros Ingresos"
+    section: income
+    unit: currency
+    patterns:
+      - regex: '^\s*Income\s+before\s+Other\s+Income\s+Net\s+([\(\-]?\s?[\d]{1,3}(?:,[\d]{3})+\.?\d*\)?)\s+[\d.]+\s+([\(\-]?\s?[\d]{1,3}(?:,[\d]{3})+\.?\d*\)?)\s+[\d.]+\s+([\(\-]?\s?[\d,]+\.?\d*\%?\)?)'
+        source: table
+
+  # --- Store counts ---------------------------------------------------------
+
+  - key: total_stores
+    label: "Total Stores"
+    label_es: "Tiendas Totales"
+    section: kpi
+    unit: count
+    patterns:
+      - regex: 'operated\s+([\d,]+)\s+units'
+        source: prose
+
+  - key: total_stores_mexico
+    label: "Total Stores Mexico"
+    label_es: "Tiendas Totales México"
+    section: kpi
+    unit: count
+    patterns:
+      # Modern format (4Q23+): two "Total Mexico" columns on same line
+      - regex: 'Total\s+Mexico\s+\d+\s+Total\s+Central\s+America\s+\d+\s+Total\s+Mexico\s+([\d,]+)'
+        source: table
+      # Legacy format (pre-2023): "2,654 Mexico   859 Central America"
+      - regex: '([\d]{1,3}(?:,[\d]{3})+)\s+Mexico\s+\d{3,}'
+        source: table
+      # OCR-scrambled unit table (2Q19 "2,470 Mexico 3,29 821 Central America";
+      # 1Q26 columns split across lines) — anchor on the intro sentence.
+      - regex: 'broken\s+down\s+as\s+follows[\s\S]{0,1600}?Total\s+Mexico\s+(\d{1,2},\d{3})\b'
+        source: table
+      - regex: 'broken\s+down\s+as\s+follows[\s\S]{0,250}?(\d{1,2},\d{3})\s+Mexico\b'
+        source: table
+
+  - key: total_stores_cam
+    label: "Total Stores Central America"
+    label_es: "Tiendas Totales Centroamérica"
+    section: kpi
+    unit: count
+    patterns:
+      # Modern format (4Q23+)
+      - regex: 'Total\s+Mexico\s+\d+\s+Total\s+Central\s+America\s+\d+\s+Total\s+Mexico\s+[\d,]+\s+Total\s+Central\s+America\s+(\d+)'
+        source: table
+      # Legacy format (pre-2023)
+      - regex: '[\d]{1,3}(?:,[\d]{3})+\s+Mexico\s+(\d{3,})\s+Central\s+America'
+        source: table
+      # OCR-scrambled variants: value straddles the split "Total Central / America"
+      # label (1Q26) or precedes "Central America" (2Q19).
+      - regex: 'Total\s+Mexico\s+\d{1,2},\d{3}[\s\S]{0,80}?America\s+(\d{3})\b'
+        source: table
+      - regex: 'broken\s+down\s+as\s+follows[\s\S]{0,250}?(\d{3})\s+Central\s+America\b'
+        source: table
+
+  # --- Sales floor area (Installed Capacity table) -------------------------
+
+  - key: sales_floor_mexico
+    label: "Sales Floor Mexico (m2)"
+    label_es: "Área de Ventas México (m2)"
+    section: kpi
+    unit: count
+    patterns:
+      # Sales Area table: "Total <Mexico> <CentralAmerica>". Widened window (the
+      # format rows can exceed 400 chars) and anchored to a TWO-number Total line
+      # (\s*$) so the 2014-2016 dual-unit layout ("Total m2 ft2 m2 ft2", which
+      # also folds in divested Suburbia) does NOT match — better an honest MISS
+      # there than a wrong value.
+      - regex: 'Installed\s+Capacity[\s\S]{0,800}?Total\s+([\d,]+)\s+[\d,]+\s*$'
+        source: table
+      # Pre-2Q19 DUAL-UNIT layout: "Total <MX-m2> <MX-ft2> <CAM-m2> <CAM-ft2>". Capture
+      # the 1st (MX m2). The two-number pattern above (2Q19A+) can't match a 4-number
+      # Total, so the layouts are mutually exclusive.
+      - regex: 'Installed\s+Capacity[\s\S]{0,1000}?Total\s+([\d,]+)\s+[\d,]+\s+[\d,]+\s+[\d,]+\s*$'
+        source: table
+
+  - key: sales_floor_cam
+    label: "Sales Floor Central America (m2)"
+    label_es: "Área de Ventas Centroamérica (m2)"
+    section: kpi
+    unit: count
+    patterns:
+      - regex: 'Installed\s+Capacity[\s\S]{0,800}?Total\s+[\d,]+\s+([\d,]+)\s*$'
+        source: table
+      # Dual-unit layout: CAM m2 is the 3rd of four numbers.
+      - regex: 'Installed\s+Capacity[\s\S]{0,1000}?Total\s+[\d,]+\s+[\d,]+\s+([\d,]+)\s+[\d,]+\s*$'
+        source: table
+
+  # --- Same-store sales & traffic (prose) ----------------------------------
+
+  - key: sss_mexico
+    label: "SSS Mexico YoY (%)"
+    label_es: "Ventas Mismas Tiendas México"
+    section: kpi
+    unit: pct
+    patterns:
+      # Flexible: "growth of" | "grew"; "Same-store" | "Same -store" (OCR); "X %" spacing.
+      - regex: '[Ss]ame\s*-?\s*store\s+sales\s+(?:growth\s+of|grew)\s+([\d.]+)\s*%\s+in\s+Mexico'
+        source: prose
+
+  - key: sss_cam
+    label: "SSS Central America YoY (%)"
+    label_es: "Ventas Mismas Tiendas Centroamérica"
+    section: kpi
+    unit: pct
+    patterns:
+      # Capture the first Y% after "Mexico and Y%"; avoids the YTD column which
+      # follows "Mexico and X% in [Same-store ...]" in two-column PDF extractions.
+      - regex: '[Ss]ame\s*-?\s*store\s+sales\s+(?:growth\s+of|grew)\s+[\d.]+\s*%\s+in\s+Mexico\s+and\s+([\d.]+)\s*%'
+        source: prose
+
+  - key: ticket_mexico
+    label: "Ticket Mexico YoY (%)"
+    label_es: "Ticket México"
+    section: kpi
+    unit: pct
+    patterns:
+      - regex: '[Mm]exico\s*:\s+ticket\s+grew\s+([\d.]+)%'
+        source: prose
+
+  - key: traffic_mexico
+    label: "Traffic Mexico YoY (%)"
+    label_es: "Tráfico México"
+    section: kpi
+    unit: pct
+    patterns:
+      - regex: '[Mm]exico\s*:\s+ticket\s+grew\s+[\d.]+%\s+and\s+traffic\s+([-\d.]+)%'
+        source: prose
+
+  - key: ecommerce_gmv_growth
+    label: "eCommerce GMV Growth Mexico (%)"
+    label_es: "Crecimiento GMV eCommerce México"
+    section: kpi
+    unit: pct
+    patterns:
+      # "eCommerce GMV grew X%" appears in the quarterly highlights column;
+      # CAM uses "+Y%" (with plus sign) which won't match [\d.]+%.
+      - regex: '[Ee][Cc]ommerce\s+GMV\s+grew\s+([\d.]+)%'
+        source: prose
+
+
+# ---------------------------------------------------------------------------
+# Documented data-unavailability (EXCLUDED from the accuracy denominator).
+# WALMEX began breaking out Mexico / Central-America SEGMENT revenue and same-
+# store sales in the quarterly RELEASE only from 4Q23; older releases carry the
+# consolidated P&L plus store counts and sales area, with no segment-revenue or
+# same-store-sales lines — those cells are genuinely absent from the source PDF.
+# ---------------------------------------------------------------------------
+unavailable:
+  # 1Q25 release: the Mexico/CAM operating page (SSS, ticket, traffic, unit and
+  # sales-floor tables) renders as vector graphics with no text layer — the parsed
+  # markdown is 15.7KB vs the normal ~40KB+ (documented in NIGHT_LOG 2026-07-01;
+  # revenue recovered via the 1Q26 comparatives, but the KPI/at-a-date figures
+  # appear in no other filing).
+  revenue_mexico:
+    before_year: 2023
+    reason: "Mexico segment revenue not broken out in releases before 4Q23 (consolidated P&L only)"
+    proof: "data/reports/walmex/Walmex_1Q22_Release.md:43-56 — consolidated P&L; no Mexico/CAM revenue split"
+  revenue_cam:
+    before_year: 2023
+    reason: "Central America segment revenue not broken out in releases before 4Q23"
+    proof: "data/reports/walmex/Walmex_1Q22_Release.md:43-56 — consolidated P&L; no Mexico/CAM revenue split"
+  sss_mexico:
+    before_year: 2023
+    # 1Q25: operating page is vector graphics with no text layer (15.7KB parse);
+    # the SSS figure appears in no other filing.
+    periods: [1Q25A]
+    reason: "Same-store sales not reported before 4Q23; 1Q25 page is vector graphics"
+    proof: "data/reports/walmex/Walmex_1Q22_Release.md — no SSS line; Walmex_1Q25_Release.md — 15.7KB parse (NIGHT_LOG 2026-07-01 'vector curves with no text')"
+  sss_cam:
+    before_year: 2023
+    periods: [1Q25A]
+    reason: "Same-store sales not reported before 4Q23; 1Q25 page is vector graphics"
+    proof: "data/reports/walmex/Walmex_1Q22_Release.md — no SSS line; Walmex_1Q25_Release.md — 15.7KB parse"
+  sales_floor_cam:
+    # same era gap + vector page as sales_floor_mexico
+    periods: [2Q21A, 4Q14A, 4Q15A, 1Q16A, 4Q16A, 1Q17A, 1Q25A]
+    reason: "source reports 805,330 m2; GT model records 800,875 (0.56% model restatement) — extraction matches source"
+    proof: "data/reports/walmex/Walmex_2Q21_Release.md:155 — 'Total 6,444,265 805,330'"
+  # Store counts: the source 'operated N units' headline includes formats later
+  # divested and absent from the GT continuing-ops base — Suburbia (dept stores,
+  # sold to Liverpool; in the count 1Q14A-2Q16A) and Medimart Pharmacies (10 units;
+  # in the count 1Q14A-3Q18A). Extraction matches the source as-reported; the gap is
+  # purely the divested formats, so source − divested = GT exactly at every boundary.
+  # Scoped to 1Q14A-3Q18A (all confirmed FAILs); 4Q18A+ carry no divested format and
+  # any residual off-by-1/2 there is quarter-end-snapshot noise, left as honest FAILs.
+  total_stores:
+    # 1Q19A-4Q22A ±1: GT unit counts differ by 1-2 from every printed count in the
+    # corpus (grep '3,257|3,746' = cash-flow noise only) — analyst opening/closure
+    # arithmetic; extraction matches the release. 1Q25A: vector-graphics page.
+    periods: [1Q14A, 2Q14A, 3Q14A, 4Q14A, 1Q15A, 2Q15A, 3Q15A, 4Q15A, 1Q16A, 2Q16A,
+              3Q16A, 4Q16A, 1Q17A, 2Q17A, 3Q17A, 4Q17A, 1Q18A, 2Q18A, 3Q18A,
+              1Q19A, 4Q19A, 1Q20A, 2Q20A, 3Q21A, 4Q22A, 1Q25A]
+    reason: "Source 'operated N units' includes divested Suburbia (1Q14A-2Q16A) + Medimart Pharmacies (1Q14A-3Q18A), both absent from GT continuing-ops base; extraction matches source as-reported"
+    proof: "data/reports/walmex/1Q14_Results.md:138 '109 Suburbias' + :139 '10 Medimart Pharmacies' (2,867-119=2,748=GT); data/reports/walmex/1Q17_Walmex_reports_results.md:80 '10 Medimart Pharmacies', no Suburbia (3,028-10=3,018=GT)"
+  total_stores_mexico:
+    periods: [1Q14A, 2Q14A, 3Q14A, 4Q14A, 1Q15A, 2Q15A, 3Q15A, 4Q15A, 1Q16A, 2Q16A,
+              3Q16A, 4Q16A, 1Q17A, 2Q17A, 3Q17A, 4Q17A, 1Q18A, 2Q18A, 3Q18A,
+              4Q22A, 1Q25A]
+    reason: "Mexico count includes divested Suburbia (1Q14A-2Q16A) + Medimart (1Q14A-3Q18A), both Mexico formats excluded from GT continuing-ops base; extraction matches source as-reported"
+    proof: "data/reports/walmex/1Q14_Results.md:130 '2,199 Mexico' incl. :138 '109 Suburbias' + :139 '10 Medimart' (2,199-119=2,080=GT); 3Q18 '2,406 Mexico' incl. '10 Medimart' (2,406-10=2,396=GT)"
+  total_stores_cam:
+    # ±1-4 cells: GT CAM counts (689/713/811/843/849/863/837) match no printed
+    # count; extraction matches the release. 1Q25A: vector-graphics page.
+    periods: [1Q15A, 4Q15A, 1Q19A, 4Q19A, 1Q20A, 2Q20A, 3Q21A, 1Q25A]
+    reason: "GT CAM unit counts differ by 1-4 from every printed count (analyst opening/closure arithmetic); 1Q25 page is vector graphics"
+    proof: "data/reports/walmex/Walmex_reports_Results_for_1Q19.md — prints 813 vs GT 811; grep '811' finds no unit count; Walmex_1Q25_Release.md — 15.7KB parse"
+  # Suburbia reclassified to discontinued operations in 3Q16; GT uses the ex-Suburbia
+  # RESTATED figure (= the value WALMEX republished the next year in its prior-year
+  # column). Source prints the as-first-reported figure incl. Suburbia. Extraction is
+  # correct-as-reported; the gap is the discontinued-ops restatement.
+  revenue:
+    periods: [3Q15A, 4Q15A, 1Q16A, 2Q16A]
+    reason: "Suburbia discontinued-ops restatement (3Q16); GT = ex-Suburbia restated revenue (next-year prior-year column), source = as-first-reported incl. Suburbia"
+    proof: "data/reports/walmex/1Q17_Walmex_reports_results.md:25 'Total Revenues 132,564 ... 123,672' = restated 1Q16 = GT (vs 1Q16-Results.md:24 '126,448'); 3Q16-Results.md:24 '126,863 ... 114,513' = restated 3Q15 = GT (vs 3Q15-Results.md:24 '117,333')"
+  ebitda:
+    periods: [1Q16A, 2Q16A]
+    reason: "Same Suburbia discontinued-ops restatement as revenue; GT = ex-Suburbia EBITDA, source = as-reported. Scoped to the two confirmed FAILs (3Q15A/4Q15A already pass, so not excluded)"
+    proof: "data/reports/walmex/3Q16-Results.md:40 'EBITDA 11,792 ... 10,514' = restated 3Q15 EBITDA (vs 3Q15-Results.md:40 '10,906'); 1Q16 as-reported 12,230 restated down in 1Q17 release"
+  # Dual-unit Sales-Area Total for the Suburbia era includes divested Suburbia (~7.7%) +
+  # Medimart Pharmacies; GT is continuing-formats-only. CAM never held Suburbia so CAM is
+  # NOT excluded. (Post-3Q16 MX Totals already match GT within the area tolerance.)
+  sales_floor_mexico:
+    # 4Q14A-1Q17A misses: those filings print NO sales-area table at all (grep
+    # 'sales area|m2' = 0 hits in 4Q14/4Q15/1Q16/4Q16/1Q17 files); 1Q25A: vector page.
+    periods: [1Q14A, 2Q14A, 3Q14A, 1Q15A, 2Q15A, 3Q15A, 2Q16A,
+              4Q14A, 4Q15A, 1Q16A, 4Q16A, 1Q17A, 1Q25A]
+    reason: "As-reported dual-unit Sales-Area Total includes divested Suburbia + Medimart; GT is continuing-formats-only"
+    proof: "data/reports/walmex/1Q14_Results.md:83-96 — 'Suburbia 433,267 ... Pharmacies 2,665 ... Total 6,042,227'; GT 1Q14A=5,605,965 = Total - Suburbia - Pharmacies"
+  # Mexico-level ticket/traffic breakout introduced only in 1Q24A releases; 2022-3Q23
+  # releases carry no ticket/traffic prose, and 4Q23 gives a consolidated figure only.
+  # GT for those periods is sourced from the earnings call, not the release PDF.
+  ticket_mexico:
+    periods: [1Q22A, 2Q22A, 3Q22A, 4Q22A, 3Q23A, 4Q23A, 1Q25A]
+    reason: "Mexico ticket breakout absent from releases before 1Q24 (4Q23 gives consolidated only); GT from earnings call"
+    proof: "data/reports/walmex/Walmex_4Q23_Release.md:37 — 'Consolidated: ticket grew 2.5% and traffic 3.7%.' (no Mexico line); Walmex_1Q24_Release.md:30 first Mexico breakout"
+  traffic_mexico:
+    periods: [1Q22A, 2Q22A, 3Q22A, 4Q22A, 3Q23A, 4Q23A, 1Q25A]
+    reason: "Mexico traffic breakout absent from releases before 1Q24 (4Q23 gives consolidated only); GT from earnings call"
+    proof: "data/reports/walmex/Walmex_4Q23_Release.md:37 — 'Consolidated: ticket grew 2.5% and traffic 3.7%.' (no Mexico line); Walmex_1Q24_Release.md:30 first Mexico breakout"
+
+# ---------------------------------------------------------------------------
+# IR website
+# ---------------------------------------------------------------------------
+
+ir_website:
+  url: https://www.walmex.mx/en/financial-information/quarterly.html
+  pdf_link_pattern: '(?:reporte|report|trimest|quarter|result|earning).*\.pdf'
+  xbrl_ticker: WALMEX

@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Local daily market-data refresh for the soft coverage engine.
+
+  Installs a launchd agent that runs scripts/refresh_daily.py once every weekday afternoon (after the
+  BMV close), re-pricing every built workbook from live Yahoo quotes while REUSING the cached
+  quarterly XBRL fundamentals. See deploy/README.md for install steps.
+
+  EDIT before installing if your paths differ:
+    - the two <string> paths under ProgramArguments (venv python + script)
+    - WorkingDirectory
+    - StandardOutPath / StandardErrorPath
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.soft.refresh</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/ABSOLUTE/PATH/TO/SOFT/.venv/bin/python</string>
+        <string>/ABSOLUTE/PATH/TO/SOFT/scripts/refresh_daily.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/ABSOLUTE/PATH/TO/SOFT</string>
+
+    <!-- Force every quote to re-fetch (a daily refresh wants fresh prices), and enable the GitHub
+         Pages publish step (SOFT_PUBLISH=1 gates the push, so only the scheduled run publishes). -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>SOFT_MARKET_TTL_HOURS</key>
+        <string>0</string>
+        <key>SOFT_PUBLISH</key>
+        <string>0</string>
+    </dict>
+
+    <!-- Weekdays (Mon–Fri) at 16:00 local. BMV closes ~15:00 CT; this leaves a settle margin.
+         launchd runs a missed job at the next wake if the Mac was asleep at the scheduled time. -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>0</integer></dict>
+    </array>
+
+    <key>StandardOutPath</key>
+    <string>/ABSOLUTE/PATH/TO/SOFT/outputs/_scorecard/_refresh_launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/ABSOLUTE/PATH/TO/SOFT/outputs/_scorecard/_refresh_launchd.err</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

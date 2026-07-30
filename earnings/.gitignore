@@ -1,0 +1,20 @@
+# Inputs, analyst records, study outputs, and audit inventories belong to the
+# separately transferred research-data bundle, not the GitHub source release.
+# Their provenance/timestamps must be preserved by that bundle's manifest.
+/data/
+/outputs/
+/audit/*.csv
+/vendor/alpha-go/data/
+
+__pycache__/
+*.pyc
+*.db-shm
+*.db-wal
+
+# Vendored site-packages snapshot. Was committed (636 files, ~22MB, roughly
+# two-thirds of the whole repository's tracked file count) including a compiled
+# _cffi_backend.cpython-311-darwin.so that pinned this subproject to the CPython
+# 3.11 ABI. Its contents are now declared in requirements.txt instead; the
+# directory is kept on disk so existing local runs of scripts/us_fetch.py and
+# scripts/build_prices.py keep working, but it is no longer the source of truth.
+/.vendor/

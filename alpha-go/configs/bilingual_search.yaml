@@ -1,0 +1,18 @@
+# bilingual_search.yaml — direct, reviewable ES/EN equivalences for corpus search.
+#
+# These are language equivalents, not learned similarity or broad topic expansion.  They are
+# always applied to the Command-F finder, result highlights, and Trends so a user can search an
+# English term in a Spanish filing (and vice versa) without changing panels or modes.
+version: 1
+
+concepts:
+  passenger_traffic:
+    metric_keys: []
+    aliases:
+      - passenger
+      - passengers
+      - passenger traffic
+      - pasajero
+      - pasajeros
+      - trafico de pasajeros
+      - trafico pasajero

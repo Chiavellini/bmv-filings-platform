@@ -1,0 +1,188 @@
+version: 1
+name: alpha_go_local_alphasense
+summary: >
+  Authoritative phase graph for alpha-go, a local AlphaSense. Ingest and Index build a
+  searchable corpus; Search/Financials/Q&A consume it; the Dashboard renders it. Validation
+  and evaluation are reused quality gates, not product phases. The download/parse/extract
+  layers are VENDORED from the parent repo (see docs/REUSE_MAP.md) and keep their contracts.
+
+product_phases:
+  - id: ingest
+    ordinal: 1
+    label: Ingest
+    package: src.corpus
+    status: scaffold
+    purpose: >
+      Download and parse configured IR sources into a document corpus with a manifest,
+      wrapping the vendored download + parse phases (no new download/parse logic).
+    entrypoints:
+      - kind: python
+        symbol: src.corpus.ingest:ingest_source
+      - kind: python
+        symbol: src.corpus.ingest:ingest_all
+    reuses:
+      - src.download.downloader:download_from_ir
+      - src.download.bmv_xbrl:download_ticker
+      - src.parse.parse_pdf:parse_pdf
+      - src.shared.report_index:infer_period_label
+    inputs:
+      - name: alpha_go_config
+        contract: "configs/alpha_go.yaml with a sources[] list (slug, ir_website, doc_types)"
+    outputs:
+      - name: corpus
+        contract: "data/corpus/<doc>.md + manifest.json (CorpusManifest of Document records)"
+    downstream: [index]
+    commands:
+      - "python3 scripts/ingest.py --config configs/alpha_go.yaml"
+    tests:
+      - tests/test_smoke.py::test_module_imports
+    quality_gates:
+      - "No new download/parse logic — wrap the vendored phases."
+      - "Every Document carries a canonical period (infer_period_label) when derivable."
+
+  - id: index
+    ordinal: 2
+    label: Index
+    package: src.index
+    status: scaffold
+    purpose: >
+      Chunk the corpus and build the hybrid index: FTS5 keyword (BM25) + local-embedding
+      vectors, persisted with document/chunk metadata in one SQLite database.
+    entrypoints:
+      - kind: python
+        symbol: src.index.build:build_index
+      - kind: python
+        symbol: src.index.chunker:chunk_document
+      - kind: python
+        symbol: src.index.store:IndexStore
+    inputs:
+      - name: corpus
+        contract: "data/corpus/ + manifest.json"
+    outputs:
+      - name: search_index
+        contract: "SQLite db (documents, chunks, chunks_fts, embeddings, meta)"
+        artifacts:
+          - data/index/alpha_go.db
+    upstream: [ingest]
+    downstream: [search, financials, qa]
+    commands:
+      - "python3 scripts/build_index.py --config configs/alpha_go.yaml"
+    tests:
+      - tests/test_smoke.py::test_index_schema_present
+    quality_gates:
+      - "Keyword index uses stdlib sqlite3 FTS5 — no extra dependency."
+      - "Embeddings come from a local model (offline, no API key)."
+      - "Chunk offsets round-trip: markdown[char_start:char_end] == chunk.text."
+
+  - id: search
+    ordinal: 3
+    label: Search
+    package: src.search
+    status: scaffold
+    purpose: >
+      Hybrid retrieval over the index — BM25 + semantic fused by reciprocal rank, scoped by
+      filters, returning ranked Hits with highlighted snippets. Deterministic and offline.
+    entrypoints:
+      - kind: python
+        symbol: src.search.retriever:HybridRetriever.search
+      - kind: python
+        symbol: src.search.fusion:reciprocal_rank_fusion
+      - kind: python
+        symbol: src.search.snippets:make_snippet
+    inputs:
+      - name: query
+        contract: "free-text query + optional SearchFilters (company/period/doc_type/language)"
+      - name: search_index
+        contract: "data/index/alpha_go.db"
+    outputs:
+      - name: hits
+        contract: "list[Hit] with score, snippet (highlight spans), and document provenance"
+    upstream: [index]
+    downstream: [dashboard, qa]
+    tests:
+      - tests/test_smoke.py::test_filters_dataclass_contract
+      - tests/test_smoke.py::test_stub_entrypoints_raise_not_implemented
+    quality_gates:
+      - "Retrieval is deterministic and offline (no LLM, no network)."
+      - "HybridRetriever.search is the stable interface for the UI and Q&A."
+
+  - id: financials
+    ordinal: 4
+    label: Financials
+    package: src.extract
+    status: reused
+    purpose: >
+      Per-company metric panel, reusing the vendored 4-tier extraction cascade unchanged.
+    entrypoints:
+      - kind: python
+        symbol: src.extract.tiered_extract:extract_metrics_tiered
+      - kind: python
+        symbol: src.model.financial_model:apply_config
+    upstream: [index]
+    downstream: [dashboard]
+    quality_gates:
+      - "No new extraction logic — call the vendored cascade as-is."
+
+  - id: qa
+    ordinal: 5
+    label: Q&A
+    package: src.qa
+    status: scaffold
+    purpose: >
+      Optional retrieval-augmented Q&A: synthesize a cited answer from retrieved hits.
+      The ONLY LLM-using feature; off by default.
+    entrypoints:
+      - kind: python
+        symbol: src.qa.rag:answer
+    inputs:
+      - name: question
+        contract: "free-text question + retrieved Hits"
+    outputs:
+      - name: cited_answer
+        contract: "CitedAnswer(text, citations[]) — every claim cites a Hit"
+    upstream: [search]
+    downstream: [dashboard]
+    quality_gates:
+      - "Off by default (qa.enabled=false); requires ANTHROPIC_API_KEY."
+      - "Answer only from provided snippets; cite every claim; never invent figures."
+
+  - id: dashboard
+    ordinal: 6
+    label: Dashboard
+    package: app
+    status: scaffold
+    purpose: >
+      Local Streamlit UI: search box, facet filters, results with highlighted snippets, a
+      document viewer, the financials panel, and the Q&A panel.
+    entrypoints:
+      - kind: command
+        command: "streamlit run app/streamlit_app.py"
+    upstream: [search, financials, qa]
+    commands:
+      - "streamlit run app/streamlit_app.py"
+    quality_gates:
+      - "UI is a thin adapter over the service interfaces; no business logic in the app."
+
+quality_gates:
+  - id: validate
+    label: Validate
+    package: src.shared.validator
+    status: reused
+    purpose: "Reused confidence scoring / sanity checks for the financials panel."
+    entrypoints:
+      - kind: python
+        symbol: src.shared.validator:validate
+  - id: evaluate
+    label: Evaluate
+    package: src.eval
+    status: reused
+    purpose: "Reused accuracy comparison for the financials panel (vs ground truth)."
+    entrypoints:
+      - kind: python
+        symbol: src.eval.compare_extractions:run_comparison
+
+agent_rules:
+  - "Start with this manifest before changing phase wiring."
+  - "Do not edit vendored packages in place; re-sync from the parent via scripts/vendor_sync.py."
+  - "Keep search deterministic and offline; the LLM lives only in the qa phase, off by default."
+  - "Build phases in ROADMAP order: ingest -> index -> search -> dashboard -> qa."

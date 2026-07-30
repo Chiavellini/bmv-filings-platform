@@ -1,0 +1,17 @@
+# Native acquisition-worker dependencies, pinned to the locally certified
+# 2026-07-29 development set. Install them in the worker's dedicated Python
+# 3.13 virtual environment and record the resolved environment before enabling
+# unattended operation.
+#
+# These must stay equal to the corresponding pins in pyproject.toml. Install
+# the root project with `--no-deps` after this file so the reviewed worker set
+# remains authoritative; otherwise dependency drift is invisible until runtime.
+#
+# pandas/openpyxl are deliberately absent: the worker entrypoint is
+# `refresh-quarterly-estate` (acquisition only). It never builds a workbook.
+PyYAML==6.0.3
+requests==2.34.2
+beautifulsoup4==4.15.0
+pdfplumber==0.11.10
+curl-cffi==0.15.0
+playwright==1.60.0

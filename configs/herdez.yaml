@@ -1,0 +1,171 @@
+company:
+  currency: MXN
+  exchange: BMV
+  language: es
+  name: Grupo Herdez
+  ticker: HERDEZ
+  unit: millions
+# Herdez reports consolidated + per-segment (Net Sales / Gross Profit / EBIT / EBITDA),
+# equity-in-associates (MegaMex / McCormick / Others), and the MegaMex standalone (100%
+# of the JV) income statement. src/extract/herdez.py recovers all of these deterministically
+# from the report markdown (ported from the battle-tested archive extractor — handles the
+# ES/EN dual format, narrative-vs-table rejection, annual-vs-quarterly, and the segment
+# relabeling Conservas/Impulso→Preserves→Nacional). Tagged source "[statement]".
+custom_extractor: herdez
+# Keys produced by src/extract/herdez.py. No patterns — the deterministic custom extractor
+# supplies them ("[statement]"). Section tags group rows for the outline/excel.
+custom_metrics:
+  # ── consolidated P&L headline (segment-summed) ──
+  - {key: ns_domestic,    label: "Net Sales — Domestic",        section: segment, unit: currency}
+  - {key: ns_export,      label: "Net Sales — Export",          section: segment, unit: currency}
+  - {key: gp_domestic,    label: "Gross Profit — Domestic",     section: segment, unit: currency}
+  - {key: gp_export,      label: "Gross Profit — Export",       section: segment, unit: currency}
+  - {key: ebit_domestic,  label: "EBIT — Domestic",             section: segment, unit: currency}
+  - {key: ebit_export,    label: "EBIT — Export",               section: segment, unit: currency}
+  - {key: ebitda_domestic, label: "EBITDA — Domestic",          section: segment, unit: currency}
+  - {key: ebitda_export,  label: "EBITDA — Export",             section: segment, unit: currency}
+  # ── legacy segment breakdown (Conservas / Impulso), reported through 4Q24 ──
+  - {key: ns_conservas,     label: "Net Sales — Conservas (legacy)",  section: legacy, unit: currency}
+  - {key: ns_impulso,       label: "Net Sales — Impulso (legacy)",    section: legacy, unit: currency}
+  - {key: gp_conservas,     label: "Gross Profit — Conservas (legacy)", section: legacy, unit: currency}
+  - {key: gp_impulso,       label: "Gross Profit — Impulso (legacy)",   section: legacy, unit: currency}
+  - {key: ebit_conservas,   label: "EBIT — Conservas (legacy)",       section: legacy, unit: currency}
+  - {key: ebit_impulso,     label: "EBIT — Impulso (legacy)",         section: legacy, unit: currency}
+  - {key: ebitda_conservas, label: "EBITDA — Conservas (legacy)",     section: legacy, unit: currency}
+  - {key: ebitda_impulso,   label: "EBITDA — Impulso (legacy)",       section: legacy, unit: currency}
+  # ── equity in associates ──
+  - {key: equity_associates, label: "Equity in Earnings of Associates — Total", section: equity, unit: currency}
+  - {key: equity_megamex,    label: "MegaMex (50% share)",      section: equity, unit: currency}
+  - {key: equity_others,     label: "Others",                   section: equity, unit: currency}
+  # ── MegaMex standalone (100% of JV) ──
+  - {key: megamex_net_sales,    label: "MegaMex — Net Sales",    section: megamex, unit: currency}
+  - {key: megamex_gross_profit, label: "MegaMex — Gross Profit", section: megamex, unit: currency}
+  - {key: megamex_ebit,         label: "MegaMex — EBIT",         section: megamex, unit: currency}
+  - {key: megamex_ebitda,       label: "MegaMex — EBITDA",       section: megamex, unit: currency}
+  - {key: megamex_net_income,   label: "MegaMex — Net Income",   section: megamex, unit: currency}
+  # ── operating KPIs (prose) ──
+  - {key: plants,        label: "Production Plants",      section: kpi, unit: count}
+  - {key: dist_centers,  label: "Distribution Centers",   section: kpi, unit: count}
+ir_website:
+  url: https://grupoherdez.com.mx/investors-financial-information#reportarchive
+  use_playwright: true
+  max_reports: 120
+  delay_ms: 500
+
+# Verification-gate expectations (see docs/VERIFICATION.md). Declare disclosure
+# windows / sparsity / sign so the gate doesn't chase genuinely-undisclosed cells.
+metric_expectations:
+  # Legacy Conservas/Impulso breakdown: reported through 4Q24, then folded into Domestic.
+  ns_conservas:     {window: "2016-1T:2024-4T"}
+  ns_impulso:       {window: "2016-1T:2024-4T"}
+  gp_conservas:     {window: "2016-1T:2024-4T"}
+  gp_impulso:       {window: "2016-1T:2024-4T"}
+  ebit_conservas:   {window: "2016-1T:2024-4T"}
+  ebit_impulso:     {window: "2016-1T:2024-4T"}
+  ebitda_conservas: {window: "2016-1T:2024-4T"}
+  ebitda_impulso:   {window: "2016-1T:2024-4T"}
+  # Export + Impulso EBIT/EBITDA swing around zero (small segments, often loss-making);
+  # a negative is a real disclosed figure, not an extraction error.
+  ebit_export:    {sign: any}
+  ebitda_export:  {sign: any}
+  ebit_impulso:   {sign: any}
+  ebitda_impulso: {sign: any}
+  # Equity associates: Others small & signed.
+  equity_others:    {sparse: true, sign: any}
+  # MegaMex standalone: Q4 reports disclose full-year only → some quarters blank.
+  megamex_net_sales:    {sparse: true}
+  megamex_gross_profit: {sparse: true}
+  megamex_ebit:         {sparse: true}
+  megamex_ebitda:       {sparse: true}
+  megamex_net_income:   {sparse: true}
+
+# The Herdez deliverable's four consolidated lines (revenue, gross_profit,
+# operating_income, ebitda) all come from the deterministic [statement] extractor.
+# Every OTHER base financial metric is out of scope here — keeping them only invites
+# generic-tier mis-grabs (a stray "80" read as ebitda_margin; a wrong cogs/total_assets)
+# that fail margin_consistency / gross_profit_identity / balance_sheet_identity and
+# poison the confidence of the lines we DO want. Exclude the whole non-deliverable set.
+exclude_metrics:
+  - cogs
+  - gross_margin
+  - sga
+  - rd_expense
+  - operating_expense
+  - operating_margin
+  - ebitda_sin_ifrs
+  - ebitda_margin
+  - ebitda_margin_sin_ifrs
+  - depreciation
+  - interest_expense
+  - interest_income
+  - ebt
+  - tax_expense
+  - net_income
+  - net_margin
+  - eps
+  - shares_outstanding
+  - dividends_per_share
+  - cash
+  - accounts_receivable
+  - inventory
+  - prepaid
+  - current_assets
+  - ppe_net
+  - intangibles
+  - goodwill
+  - right_of_use
+  - non_current_assets
+  - total_assets
+  - accounts_payable
+  - short_term_debt
+  - current_liabilities
+  - long_term_debt
+  - lease_liabilities
+  - total_debt
+  - non_current_liabilities
+  - total_liabilities
+  - equity
+  - retained_earnings
+  - net_debt
+  - cfo
+  - capex
+  - free_cash_flow
+  - cfi
+  - cff
+  - dividends_paid
+  - share_repurchases
+  - net_change_cash
+  - net_debt_to_ebitda
+  - debt_to_equity
+  - current_ratio
+  - interest_coverage
+  - return_on_equity
+  - return_on_assets
+  - asset_turnover
+  - operating_profit_sin_ifrs
+
+tier_precedence:
+  # `statement` (the deterministic Herdez segment recovery) is the MANAGEMENT-basis
+  # "ventas netas" series and must outrank `bmv`, which reads the regulatory IFRS
+  # "Ingresos" line — a different (larger) basis in 2026 reports. Only XBRL outranks it.
+  # Exclude regex_table/table so a Q4 full-year table grab can never win.
+  default: [xbrl, statement, bmv, prose, search, regex_table, table, calc]
+
+# Documented data-unavailability (verified at PDF level, not just the .md parse —
+# pdfplumber sweep 2026-07-28 found zero plant-count phrases and no MegaMex
+# standalone results table in these filings).
+unavailable:
+  plants:
+    periods: [4Q19A, 2Q20A]
+    reason: "filing does not disclose the plant count (only capex narrative / PP&E lines)"
+    proof: "data/reports/herdez/2019-4T.md:391 'projects to improve manufacturing plants'; 2019-4T.pdf p15 & 2020-2T.pdf p14 only 'Property, Plant and Equipment' rows"
+  megamex_net_sales:
+    periods: [3Q25A]
+    reason: "3Q25 has no MEGAMEX CONSOLIDATED RESULTS table — narrative only ('$4.1 billion', rounded; GT 4,149 sits outside 1% of 4,100)"
+    proof: "data/reports/herdez/2025-3T.md:576-583; 2025-3T.pdf p10 narrative-only"
+  megamex_ebitda:
+    periods: [3Q25A]
+    reason: "3Q25 prints no MegaMex EBITDA value — only margins in prose (7.2%/8.8%); GT 364 is not printed in the filing"
+    proof: "data/reports/herdez/2025-3T.md:596-599; 2025-3T.pdf p10-11 narrative-only"
+
+metric_overrides: {}

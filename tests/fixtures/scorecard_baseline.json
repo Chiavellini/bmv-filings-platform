@@ -1,0 +1,121 @@
+{
+  "ac": {
+    "obs_correct": 269,
+    "obs_excluded": 54,
+    "obs_fail": 0,
+    "obs_miss": 0,
+    "obs_total": 269
+  },
+  "becle": {
+    "obs_correct": 288,
+    "obs_excluded": 40,
+    "obs_fail": 0,
+    "obs_miss": 0,
+    "obs_total": 288
+  },
+  "bimbo": {
+    "obs_correct": 436,
+    "obs_excluded": 15,
+    "obs_fail": 0,
+    "obs_miss": 0,
+    "obs_total": 436
+  },
+  "chedraui": {
+    "obs_correct": 266,
+    "obs_excluded": 225,
+    "obs_fail": 0,
+    "obs_miss": 0,
+    "obs_total": 266
+  },
+  "femsa": {
+    "obs_correct": 19,
+    "obs_excluded": 1,
+    "obs_fail": 0,
+    "obs_miss": 0,
+    "obs_total": 19
+  },
+  "grupo_mexico": {
+    "obs_correct": 107,
+    "obs_excluded": 2,
+    "obs_fail": 0,
+    "obs_miss": 0,
+    "obs_total": 107
+  },
+  "herdez": {
+    "obs_correct": 265,
+    "obs_excluded": 4,
+    "obs_fail": 0,
+    "obs_miss": 0,
+    "obs_total": 265
+  },
+  "kimber": {
+    "obs_correct": 66,
+    "obs_excluded": 54,
+    "obs_fail": 0,
+    "obs_miss": 0,
+    "obs_total": 66
+  },
+  "kof": {
+    "obs_correct": 38,
+    "obs_excluded": 1,
+    "obs_fail": 0,
+    "obs_miss": 0,
+    "obs_total": 38
+  },
+  "lab": {
+    "obs_correct": 140,
+    "obs_excluded": 17,
+    "obs_fail": 0,
+    "obs_miss": 0,
+    "obs_total": 140
+  },
+  "lacomer": {
+    "obs_correct": 476,
+    "obs_excluded": 57,
+    "obs_fail": 0,
+    "obs_miss": 0,
+    "obs_total": 476
+  },
+  "liverpool": {
+    "obs_correct": 331,
+    "obs_excluded": 181,
+    "obs_fail": 0,
+    "obs_miss": 0,
+    "obs_total": 331
+  },
+  "orbia": {
+    "obs_correct": 186,
+    "obs_excluded": 0,
+    "obs_fail": 0,
+    "obs_miss": 0,
+    "obs_total": 186
+  },
+  "soriana": {
+    "obs_correct": 228,
+    "obs_excluded": 0,
+    "obs_fail": 0,
+    "obs_miss": 0,
+    "obs_total": 228
+  },
+  "sport": {
+    "obs_correct": 322,
+    "obs_excluded": 37,
+    "obs_fail": 0,
+    "obs_miss": 0,
+    "obs_total": 322
+  },
+  "tbbb": {
+    "obs_correct": 29,
+    "obs_excluded": 1,
+    "obs_fail": 0,
+    "obs_miss": 0,
+    "obs_total": 29
+  },
+  "walmex": {
+    "obs_correct": 378,
+    "obs_excluded": 237,
+    "obs_fail": 0,
+    "obs_miss": 0,
+    "obs_total": 378
+  }
+}

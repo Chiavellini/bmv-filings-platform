@@ -1,0 +1,255 @@
+# AI reader — prompt templates, output schema, and the entity scrubber.
+#
+# FROZEN 2026-07-29 together with study.yaml `hybrid`, BEFORE any read ran.
+# The model/temperature/cache rules live in study.yaml `hybrid.reader`; this
+# file is the prompt surface. Changing anything here is a NEW pre-registration,
+# never a refresh of an existing one — the cache key includes this file's hash.
+#
+# Design follows the eight outcome-blinded case reads (outputs/ANALYST_EDGE.md):
+# the information that beat the SUE was FX-vs-organic revenue, one-offs
+# distorting the comparison, adjusted-vs-reported margins, forward guidance,
+# and what had already been pre-released. The prompt asks for exactly those.
+
+version: 1
+
+system: |
+  You are a sell-side equity analyst covering Mexican listed issuers. You are
+  given one quarterly report's management discussion (MD&A) and that issuer's
+  own prior-quarter KPI history. Nothing else.
+
+  Your job: judge how the stock trades on the FIRST session after this report
+  becomes public, relative to the market.
+
+  You have no price data, no consensus estimates, and no knowledge of what
+  happened. Do not pretend otherwise. If the report does not support a call,
+  say so — "flat" and "low" are real answers and are preferred over a guess.
+
+  Reason **only** from this document and the history table above. Nothing dated
+  after this report may enter your answer. If you recognize the issuer or the
+  period, set aside everything you know about what happened next — later
+  results, the share-price reaction, subsequent news — and judge the report on
+  what is in front of you. A call that depends on knowing the outcome is worse
+  than no call: answer "flat" with "low" conviction instead.
+
+  Reason like the analysts who beat a naive surprise score. Specifically ask:
+
+  1. Is the headline revenue growth REAL? Separate FX translation and price
+     from volume and organic growth. A peso number flattered by a weak currency
+     is not a beat.
+  2. Are one-off items distorting the comparison in EITHER direction?
+     Construction revenue passed through under IFRIC-12, equity pickups from
+     associates, asset sales and sale-leasebacks, restructuring charges,
+     insurance recoveries, provisions that are reversing. State them.
+  3. Do adjusted and reported margins tell different stories? Which one is the
+     underlying business?
+  4. What does management say about the FUTURE — guidance raised, maintained,
+     lowered, or withdrawn? A withdrawn full-year guide or a next-quarter
+     margin guided far below the current print outweighs the print itself.
+  5. What was already PUBLIC before this report? Pre-released monthly traffic
+     or sales, a pre-announced tariff step, a peer's guidance cut. Information
+     the market already had cannot move the stock again.
+  6. Sector and macro conditions visible in the report itself.
+
+  Answer with a single JSON object and nothing else.
+
+user: |
+  ## Issuer
+  {issuer_label}
+  Sector: {sector}
+
+  ## Its own reported history, through the quarter BEFORE this report
+  (Every row below was public before the report you are about to read.
+  Amounts in millions of the reporting currency.)
+
+  {kpi_history}
+
+  ## The report's management discussion
+
+  {mdna_text}
+
+  ## Your answer
+
+  Return ONE JSON object with exactly these keys:
+
+  {{
+    "direction": "up" | "down" | "flat",
+    "conviction": "high" | "medium" | "low",
+    "reason_code": one of {reason_codes},
+    "reason_code_secondary": one of {reason_codes}, or null,
+    "headline_rev_growth_pct": number or null,
+    "organic_constant_fx_growth_pct": number or null,
+    "one_off_items": [
+      {{"label": string, "direction": "flatters" | "depresses",
+        "approx_amount": number or null, "material": true | false}}
+    ],
+    "adjusted_vs_reported_ebitda_gap_pct": number or null,
+    "ex_associate_net_income_note": string or null,
+    "guidance_direction": "raised" | "maintained" | "lowered" | "withdrawn" | "none",
+    "beat_quality": "high" | "low" | "na",
+    "rationale": one sentence
+  }}
+
+  "direction" is the stock's move on the session after publication, relative to
+  the market. "conviction" is high only when you would put the trade on.
+  "beat_quality" describes the quality of the result versus its own history:
+  "high" when the improvement is organic and margin-backed, "low" when it is
+  FX, price, or one-off driven, "na" when there is no beat to grade.
+
+# The identification probe. Run on the SCRUBBED (arm B) text only, in a
+# SEPARATE call, after the read — it measures how much the reader recognizes
+# rather than reasons. Its answer never enters a trading decision.
+probe_system: |
+  You are shown an anonymized quarterly report from a Mexican listed issuer.
+  Identify it if you can. Guessing is worse than "unknown" — answer "unknown"
+  unless you are genuinely confident.
+
+probe_user: |
+  {mdna_text}
+
+  Return ONE JSON object and nothing else:
+
+  {{
+    "company": issuer name, or "unknown",
+    "ticker": BMV ticker, or "unknown",
+    "quarter": e.g. "2Q25", or "unknown",
+    "confidence": "high" | "medium" | "low",
+    "next_day_move": "up" | "down" | "unknown",
+    "recall_basis": one sentence on what you recognized, or "nothing"
+  }}
+
+  "next_day_move" asks what this stock actually did on the session after this
+  report was published, IF you remember the event. Answer "unknown" if you do
+  not remember it — that is the expected answer.
+
+reason_codes: [vs_expectativas, guia_outlook, margenes_calidad, partida_unica,
+               valuacion_tecnico, sector_macro, otro]
+
+schema:
+  required: [direction, conviction, reason_code, guidance_direction,
+             beat_quality, rationale]
+  enums:
+    direction: [up, down, flat]
+    conviction: [high, medium, low]
+    guidance_direction: [raised, maintained, lowered, withdrawn, none]
+    beat_quality: [high, low, na]
+
+# ---------------------------------------------------------------------------
+# Entity scrubber (arm B). Matching is case- and accent-insensitive, on word
+# boundaries, longest alias first. Numbers are NEVER touched.
+#
+# Years and quarter labels are not deleted but made RELATIVE to the reported
+# period (2025 -> YEAR_T when reading a 2025 quarter, 2024 -> YEAR_T-1, ...)
+# so year-over-year comparisons stay readable while the calendar anchor goes.
+# ---------------------------------------------------------------------------
+scrub:
+  issuer_placeholder: "THE COMPANY"
+  brand_placeholder: "[BRAND]"
+  place_placeholder: "[PLACE]"
+  relative_year_span: 6          # YEAR_T-5 .. YEAR_T+1 get relative labels
+  strip_month_names: true        # Spanish + English month names -> [MONTH]
+
+  # AMENDMENT 2026-07-29 (single bounded fix, then FROZEN — see REPORT.md
+  # ledger item 5). The pilot's identification probes named the issuer with
+  # high confidence off officer names in signature and IR-contact blocks, a
+  # mechanical leak class the original alias-only scrubber never addressed.
+  # Officer names are redacted where they sit next to a title; the title itself
+  # survives, since "Director General" identifies nobody.
+  redact_person_names: true
+  person_placeholder: "[PERSON]"
+  person_titles:
+    [Director General, Directora General, Director de Finanzas,
+     Directora de Finanzas, Director General de Finanzas, Director Corporativo,
+     Director de Administración y Finanzas, Director de Relación con Inversionistas,
+     Relación con Inversionistas, Relaciones con Inversionistas,
+     Investor Relations, Chief Executive Officer, Chief Financial Officer,
+     Presidente del Consejo, Presidente Ejecutivo, Vicepresidente,
+     Contacto, Contact, CEO, CFO, IRO]
+
+  # Per-slug aliases: names, brands, subsidiaries and signature assets that
+  # would identify the issuer. Ticker and slug are always added automatically.
+  aliases:
+    ac: [Arca Continental, Arca, Bokados, Wise Foods, Topo Chico, Coca-Cola,
+         Coca Cola, Deep River, Inalecsa, Tonicorp]
+    aeromexico: [Aeromexico, Aeroméxico, Grupo Aeroméxico, Aerovías de México,
+                 SkyTeam, Club Premier, Delta Air Lines]
+    alsea: [Alsea, Domino's Pizza, Domino's, Starbucks, Burger King, Vips,
+            Chili's, Italianni's, P.F. Chang's, Foster's Hollywood, Archies,
+            The Cheesecake Factory]
+    asur: [ASUR, Aeropuertuario del Sureste, Aerostar, Airplan, Cancún, Cancun,
+           Cozumel, Mérida, Merida, Villahermosa, Huatulco, Oaxaca, Tapachula,
+           Veracruz, Minatitlán, Luis Muñoz Marín, Rionegro, Medellín]
+    # NOTE: the "1800" tequila brand is deliberately NOT listed. A bare-number
+    # alias would rewrite any amount that happens to equal it, breaking this
+    # block's own guarantee that numbers are never altered. The issuer is
+    # already covered by Cuervo / José Cuervo / Proximo.
+    becle: [Becle, José Cuervo, Jose Cuervo, Cuervo, Casa Cuervo, Proximo Spirits,
+            Proximo, Sunrise Spirits, JC Overseas, Maestro Dobel, Dobel,
+            Centenario, Bushmills, Old Bushmills, Three Olives, Kraken,
+            Boodles, Stranahan's, Pendleton, b:oost, Lalo, Beckmann]
+    bimbo: [Grupo Bimbo, Bimbo, Marinela, Barcel, Ricolino, Oroweat, Sara Lee,
+            Entenmann's, Thomas', Arnold, Vachon, Rustik, Tia Rosa, Wonder]
+    cadu: [Cadu, CADU Inmobiliaria, Corpovael]
+    cemex: [CEMEX, Cemex, Neoris, Vertua, Cemex Go]
+    chedraui: [Chedraui, Grupo Comercial Chedraui, Selecto, Super Chedraui,
+               Súper Chedraui, Smart & Final, El Super, El Súper, Fiesta Mart,
+               Bodega Chedraui, RCDC, Supera]
+    consorcio_ara: [Consorcio ARA, ARA, Ara]
+    femsa: [FEMSA, Fomento Económico Mexicano, OXXO, Oxxo, Coca-Cola FEMSA,
+            Spin by OXXO, Spin Premia, Valora, Envoy Solutions, Solistica,
+            Imperial, Bara, OXXO Gas]
+    fibra_danhos: [Fibra Danhos, Danhos, Parque Toreo, Parque Delta,
+                   Parque Tezontle, Parque Las Antenas, Reforma 222,
+                   Vía Vallejo, Torre Virreyes]
+    fibra_hotel: [FibraHotel, Fibra Hotel, Grupo GDI]
+    fibra_inn: [Fibra Inn, FINN, Administradora de Activos Fibra Inn]
+    fibra_mty: [Fibra Mty, FMTY, Administrador Fibra Mty]
+    fibra_next: [Fibra Next, NEXT, Vesta]
+    fibra_prologis: [Fibra Prologis, Prologis, FIBRAPL]
+    fibra_shop: [FibraShop, Fibra Shop, FSHOP, Plaza Cibeles, Puerta Texcoco]
+    fibra_uno: [Fibra Uno, FUNO, Mitikah, Torre Latino, Helios, Fibra Next,
+                Samara, Antara]
+    fibra_via: [Fibra Vía, Fibra Via, FibraVía, FVIA]
+    fideal: [FIDEAL, Fideicomiso Deal, Grupo Deal]
+    gap: [Grupo Aeroportuario del Pacífico, GAP, Guadalajara, Tijuana,
+          Los Cabos, Puerto Vallarta, Hermosillo, Bajío, La Paz, Los Mochis,
+          Manzanillo, Morelia, Aguascalientes, Mexicali, Montego Bay,
+          Kingston, Sangster, Norman Manley, MBJ]
+    gcc: [GCC, Grupo Cementos de Chihuahua, Cementos de Chihuahua, Chihuahua]
+    gruma: [GRUMA, Gruma, Maseca, Mission Foods, Mission, Azteca Milling,
+            Molinera de México, Tortimasa]
+    grupo_hotelero: [Grupo Hotelero Santa Fe, Hoteles Santa Fe, Santa Fe, Krystal,
+                     Krystal Grand, Krystal Urban, HOTEL]
+    hoteles_city: [Hoteles City Express, City Express, HCITY, City Junior,
+                   City Suites, City Centro, Marriott]
+    kimber: [Kimberly-Clark de México, Kimberly Clark, KCM, Kleenex, Huggies,
+             Kotex, Scott, Pétalo, Petalo, Suavel, Depend, Evenflo]
+    kof: [Coca-Cola FEMSA, Coca Cola FEMSA, KOF, Coca-Cola, Coca Cola, FEMSA,
+          Valle Frut, Ciel, Fanta, Sprite, Jugos del Valle]
+    lab: [Genomma Lab, Genomma, Cicatricure, Tío Nacho, Tio Nacho, Asepxia,
+          Suerox, Novamil, Silka, Goicoechea, Vanart]
+    lacomer: [La Comer, LaComer, City Market, Fresko, Sumesa, Comercial Mexicana]
+    liverpool: [El Puerto de Liverpool, Liverpool, Suburbia, Nordstrom,
+                Galerías, Galerias, Perisur, Fábricas de Francia,
+                Arco Norte, La Gran Barata]
+    oma: [Grupo Aeroportuario del Centro Norte, OMA, Monterrey, Culiacán,
+          Ciudad Juárez, Chihuahua, Mazatlán, Zihuatanejo, Acapulco, Torreón,
+          Tampico, Zacatecas, Durango, San Luis Potosí, Reynosa, Minatitlán,
+          Hilton Garden Inn, NH Collection, OMA Carga]
+    pinfra: [PINFRA, Pinfra, Promotora y Operadora de Infraestructura,
+             México-Toluca, Mexico-Toluca, Peñón-Texcoco, Ecatepec-Pirámides,
+             Santa Ana-Altar, Tenango-Ixtapan, Armería-Manzanillo]
+    traxion: [Grupo Traxion, Traxion, LIPU, Muevo, AFN, Redpack, Egoba,
+              Autotransportes El Bisonte, Vanguard]
+    vesta: [Corporación Inmobiliaria Vesta, Vesta, Vesta Park, Fibra Next]
+    vinte: [Vinte, VINTE Viviendas Integrales, Viviendas Integrales]
+    volaris: [Volaris, Controladora Vuela Compañía de Aviación, Vuela,
+              Frontier Airlines, Frontier, V.Club, Volaris Costa Rica,
+              Volaris El Salvador]
+    walmex: [Wal-Mart de México, Walmart de México, Walmex, WALMEX, Walmart,
+             Bodega Aurrerá, Bodega Aurrera, Bodega, Maxi Bodega, Mi Bodega,
+             Bodega Express, Sam's Club, Sams Club, Sam's, Sams, Superama,
+             Walmart Express,
+             Bait, Cashi, Walmart Connect, BAPA, Cargill Protein,
+             Walmart Centroamérica, Despensa Familiar,
+             La Despensa de Don Juan, Mas x Menos, Más x Menos, Maxi Palí,
+             Maxi Pali, Palí, Pali, Paiz, La Unión]

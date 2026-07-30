@@ -1,0 +1,125 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# configs/<slug>.yaml — annotated template for onboarding a new company.
+#
+# Copy to configs/<slug>.yaml where <slug> == slugify(the H1 in inputs/<slug>.md).
+# DELETE every block you don't need. Only `company` is strictly required; a company
+# whose figures the generic cascade extracts well needs almost nothing else.
+#
+# Full walkthrough: docs/COMPANY_ONBOARDING.md (Stage 3). Live exemplars:
+# configs/soriana.yaml (prose-first P&L + custom store extractor),
+# configs/herdez.yaml  (ported segment extractor + exclude_metrics + 2026 prose).
+# ─────────────────────────────────────────────────────────────────────────────
+
+company:                      # REQUIRED — metadata + monetary scale
+  name: Example Co            # display name; H1 of inputs/<slug>.md must slugify to <slug>
+  ticker: EXMPL
+  currency: MXN              # MXN | USD | …
+  exchange: BMV
+  language: es              # es | en  (drives some prose patterns)
+  unit: millions            # millions | thousands | miles_mxn — the scale figures are reported in
+
+# ── Custom extractor (OPTIONAL) ──────────────────────────────────────────────
+# Set ONLY if you added src/extract/<slug>.py and wired its dispatch block in
+# src/extract/tiered_extract.py. The value is the dispatch key checked there.
+# Build one only when the generic cascade can't recover the company's structure
+# (segment tables, equity-in-associates, standalone JV statements, rotated PDFs).
+# custom_extractor: example
+
+# ── Custom metrics (OPTIONAL) ────────────────────────────────────────────────
+# Company-specific keys the base registry doesn't have. A custom extractor can
+# supply them with NO patterns; otherwise give regex patterns (source ∈
+# xbrl|bmv|table|prose|search; multiplier scales the captured number).
+# custom_metrics:
+#   - {key: ns_domestic, label: "Net Sales — Domestic", section: segment, unit: currency}
+#   - key: capex_annual
+#     label: "Annual Capex"
+#     section: kpi
+#     unit: currency
+#     patterns:
+#       - regex: 'Annual\s+Capex\s+of\s+\$?\s*([\d.,]+)\s+billion'
+#         source: prose
+#         multiplier: 1000.0          # billions → millions
+
+# ── Metric overrides (OPTIONAL) ──────────────────────────────────────────────
+# Augment a BASE metric with extra patterns / aliases / an identity `calc` fallback.
+# metric_overrides:
+#   revenue:
+#     patterns:
+#       - regex: 'Total\s+Income\s+reached\s+\$?\s*([\d.]+)\s+billion'
+#         source: prose
+#         multiplier: 1000.0
+#   cogs:
+#     calc: "revenue - gross_profit"   # identity fallback, ranked last
+
+# ── BMV income-note segments (OPTIONAL) ──────────────────────────────────────
+# Header-aligned extraction of the CNBV "[800200] Análisis de ingresos y gastos"
+# income note. Use INSTEAD of positional regexes for segment-revenue rows: the
+# note's column order varies by year/quarter (2024: Trim=3rd col; 2025: Trim=1st;
+# Q1: 2 cols) and a fixed-position regex silently grabs the prior-year column. The
+# `note` tier reads the header and picks the single-quarter Actual column, scaling
+# full pesos → company.unit; degrades to {} (positional fallback) when unsure.
+# Rank `note` in tier_precedence for these keys. See docs/COMPANY_ONBOARDING.md.
+# An OPERATING SEGMENT (what GT usually labels) is often the SUM of several note
+# revenue TYPES — map a key to a list to sum them; a single matching label stays a
+# string. Verify the basis against ground truth (goods vs goods+services, etc.).
+# income_note:
+#   enabled: true
+#   code: "800200"
+#   fallback_codes: ["310000"]        # rescues consolidated `revenue` only when the note is absent
+#   rows:                             # canonical metric key → note label, or a LIST summed together
+#     revenue_commercial:  ["Venta de bienes", "Servicios"]
+#     revenue_financial:   "Intereses"
+#     revenue_real_estate: "Arrendamiento"
+#     revenue:             "Total de ingresos"
+
+# ── Verification-gate expectations (OPTIONAL but recommended) ─────────────────
+# Tells the gate which low-coverage / signed / undisclosed cells NOT to chase.
+# Consumed by src/eval/verification_gate.py:score_metrics.
+# metric_expectations:
+#   capex:          {sparse: true}                 # disclosed irregularly — low coverage ≠ WEAK
+#   fx_gain_loss:   {sign: any}                    # legitimately negative
+#   sodimac_units:  {window: "2021-4T:"}           # only disclosed from this period (start:end, either side optional)
+#   employees:      {expected_empty: true}         # never extracted → status EXPECTED_EMPTY (won't block STRONG)
+#   some_ratio:     {range: [0, 100]}              # flag values outside [min, max]
+
+# ── Exclude metrics (OPTIONAL) ───────────────────────────────────────────────
+# Drop BASE metrics you don't deliver. Critical when a custom extractor supplies
+# the consolidated lines: a stray generic-tier cogs/total_assets/ebitda_margin can
+# fail an identity check (gross_profit_identity / balance_sheet_identity /
+# margin_consistency) and poison the confidence of the lines you DO keep.
+# exclude_metrics: [cogs, gross_margin, ebitda_margin, net_margin, total_assets]
+
+# ── Reject negative (OPTIONAL) ───────────────────────────────────────────────
+# Drop physically-impossible negatives a fallback tier may leave as the sole
+# candidate (e.g. capex grabbed from a cumulative cash-flow outflow).
+# reject_negative: [capex]
+
+# ── Delta metrics (OPTIONAL) ─────────────────────────────────────────────────
+# Compute a metric as the period-over-period change of another (e.g. net new
+# stores = Δ total store count).
+# delta_metrics:
+#   net_new_stores: total_units
+
+# ── Tier precedence (OPTIONAL) ───────────────────────────────────────────────
+# Rank extraction tiers (best first) globally and/or per metric. Tags seen in
+# source_line: xbrl, bmv, statement (custom extractor), prose, search,
+# regex_table, table, calc, plus any custom tag your extractor emits.
+# GOTCHA: put `statement` BEFORE `bmv` when the company reports a management basis
+# (press-release "net sales") that differs from the regulatory IFRS line ("Ingresos").
+# tier_precedence:
+#   default: [xbrl, statement, bmv, prose, search, regex_table, table, calc]
+#   capex: [qcapex]                  # pin a metric to one custom tag
+
+# ── IR website (OPTIONAL — only if you let build_segments download) ───────────
+# If you drop PDFs into data/reports/<slug>/ manually, this is unused.
+ir_website:
+  url: https://investor.example.com/reports
+  use_playwright: false       # true for JS-rendered link lists (slower)
+  impersonate: chrome         # curl_cffi TLS fingerprint for bot-walled static sites
+  max_reports: 120
+  delay_ms: 500
+  # When the index page 403s even impersonated but document URLs are
+  # deterministic, enumerate them directly ({year}=2024, {quarter}=1-4).
+  # Attempted only for periods the live IR crawl left missing.
+  # direct_url_templates:
+  #   - "https://example.com/docs/{year}/RF_ES_{year}_{quarter}T.pdf"

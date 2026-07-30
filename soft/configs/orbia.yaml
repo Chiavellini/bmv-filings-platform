@@ -1,0 +1,169 @@
+# Orbia Advance Corporation (formerly Mexichem, renamed 2019) — USD reporter,
+# English-primary earnings releases. Five business groups since ~2020:
+# Polymer Solutions (Vestolit/Alphagary), Building & Infrastructure (Wavin),
+# Precision Agriculture (Netafim, consolidated from 1Q18), Connectivity
+# Solutions (Dura-Line), Fluorinated Solutions (Koura). Mexichem era reported
+# Vinyl / Fluent / Fluor chains.
+company:
+  name: Orbia Advance Corporation
+  ticker: ORBIA
+  exchange: BMV
+  language: en
+  currency: USD             # consumed by xbrl unit filter + US$mn workbook units
+  unit: millions            # releases print US$ millions
+
+custom_extractor: orbia     # header-anchored release blocks → [statement]
+
+# The release's "Financial Highlights"/segment blocks are the model basis
+# (majority net income, printed EBITDA); XBRL remains the backstop for pure
+# IFRS lines. Statement wins where both answer.
+tier_precedence:
+  default: [statement, xbrl, bmv, search, prose, regex_table, table, calc]
+  revenue: [xbrl, statement, bmv, search, prose, regex_table, table]
+  cogs: [xbrl, statement, bmv, search, prose, regex_table, table]
+  gross_profit: [xbrl, statement, bmv, search, prose, regex_table, table]
+
+# Segment perimeter windows: the modern five business groups exist as reporting
+# blocks from 2020-1T (brand names Vestolit/Wavin/Netafim/Dura-Line/Koura,
+# functional names from 2022). The 2018-2019 Mexichem chains
+# (Vinyl/Fluent/Fluor) are DIFFERENT perimeters and are never stitched.
+era_gates:
+  ns_polymer: {available_from_year: 2020}
+  ns_building: {available_from_year: 2020}
+  ns_precision_ag: {available_from_year: 2020}
+  ns_connectivity: {available_from_year: 2020}
+  ns_fluor: {available_from_year: 2020}
+  ebitda_polymer: {available_from_year: 2020}
+  ebitda_building: {available_from_year: 2020}
+  ebitda_precision_ag: {available_from_year: 2020}
+  ebitda_connectivity: {available_from_year: 2020}
+  ebitda_fluor: {available_from_year: 2020}
+
+# Release blocks are the only trustworthy source for these lines; generic alias
+# search over the prose ("Operating Cash Flow of $4 million decreased…",
+# covenant-debt footnotes) grabbed unrelated figures. Statement + XBRL cover
+# every quarter.
+text_search:
+  skip_metrics: [ebt, tax_expense, net_income, cfo, capex, free_cash_flow,
+                 total_debt, net_debt, net_debt_to_ebitda, minority_interest,
+                 ebitda_margin]
+
+# Orbia prints income-tax BENEFITS as negative "Income tax" rows (e.g. 2Q24
+# -85); exempt from the negative-cost quarantine so they stay extracted.
+# skip_rules — printed figures are definitionally outside these identities:
+#   fcf_derivation: Orbia FCF = OCF − capex − interest paid − leases (not cfo−capex)
+#   net_income_identity: majority NI; discontinued ops + equity income break ebt−tax−mi
+#   sanity_nonneg_tax_expense: genuine tax benefits (see allow_negative)
+#   net_debt_identity: 2018-2020 total debt printed at BILLION precision in prose
+#     ("$3.6 billion") — net = total − cash can't hold to 0.5% against it
+validator:
+  allow_negative: [tax_expense]
+  skip_rules: [fcf_derivation, net_income_identity, sanity_nonneg_tax_expense,
+               net_debt_identity]
+
+# Generic PDF table-cell reads only added noise on these releases (prior-year
+# "Net Debt" cells, exploded balance rows); statement/xbrl/prose cover the map.
+table_extract:
+  disabled: true
+
+# Gate expectations: Orbia swings to losses (2022-4T, 2024-2026 quarters), tax
+# benefits, and negative cash flows — signed by nature, not extraction errors.
+# cash/total_debt/net_debt appear as clean rows/prose only from 2019 (2018-era
+# releases discuss leverage via the ratio alone).
+metric_expectations:
+  net_income: {sign: any}
+  ebt: {sign: any}
+  tax_expense: {sign: any}
+  minority_interest: {sign: any}
+  cfo: {sign: any}
+  free_cash_flow: {sign: any}
+  operating_income: {sign: any}
+  cash: {window: "2019-1T:"}
+  net_debt: {window: "2019-1T:"}
+  total_debt: {window: "2021-1T:"}
+  net_debt_to_ebitda: {range: [0.5, 6]}
+
+custom_metrics:
+  - key: minority_interest
+    label: "Minority Interest"
+    label_es: "Interés minoritario"
+    section: income
+    unit: currency
+    patterns: []
+  - key: ns_polymer
+    label: "Polymer Solutions — Revenues"
+    label_es: "Polymer Solutions"
+    section: income
+    unit: currency
+    patterns: []
+  - key: ns_building
+    label: "Building & Infrastructure — Revenues"
+    label_es: "Building & Infrastructure"
+    section: income
+    unit: currency
+    patterns: []
+  - key: ns_precision_ag
+    label: "Precision Agriculture — Revenues"
+    label_es: "Precision Agriculture"
+    section: income
+    unit: currency
+    patterns: []
+  - key: ns_connectivity
+    label: "Connectivity Solutions — Revenues"
+    label_es: "Connectivity Solutions"
+    section: income
+    unit: currency
+    patterns: []
+  - key: ns_fluor
+    label: "Fluor & Energy Materials — Revenues"
+    label_es: "Fluor & Energy Materials"
+    section: income
+    unit: currency
+    patterns: []
+  - key: ebitda_polymer
+    label: "Polymer Solutions — EBITDA"
+    label_es: "Polymer Solutions EBITDA"
+    section: income
+    unit: currency
+    patterns: []
+  - key: ebitda_building
+    label: "Building & Infrastructure — EBITDA"
+    label_es: "Building & Infrastructure EBITDA"
+    section: income
+    unit: currency
+    patterns: []
+  - key: ebitda_precision_ag
+    label: "Precision Agriculture — EBITDA"
+    label_es: "Precision Agriculture EBITDA"
+    section: income
+    unit: currency
+    patterns: []
+  - key: ebitda_connectivity
+    label: "Connectivity Solutions — EBITDA"
+    label_es: "Connectivity Solutions EBITDA"
+    section: income
+    unit: currency
+    patterns: []
+  - key: ebitda_fluor
+    label: "Fluor & Energy Materials — EBITDA"
+    label_es: "Fluor & Energy Materials EBITDA"
+    section: income
+    unit: currency
+    patterns: []
+
+ir_website:
+  # Server-rendered page listing every quarter 2006→today with direct hrefs.
+  # Asset URLs carry an unpredictable per-file hex prefix (/49946d/…) — links
+  # must be harvested from the page, never templated.
+  url: https://www.orbia.com/investor-relations/financials/quarterly-earnings/
+  # English earnings release only, across all filename eras:
+  #   earnings-release-eng.pdf (2006-2019) | pr-2q19-en / pr-q420-eng-fv /
+  #   orbia_pr-1q21-eng (2019-21) | orb_prq22021_eng | download---en (4Q21) |
+  #   orbia-q1-2026-earnings-release_vf1 (2022+, ES twins excluded).
+  # Verified against the live page: 79/81 quarters, zero ES leaks, zero dupes
+  # (2006-1T and 2009-2T published Spanish-only).
+  pdf_link_pattern: '(?i)(?:earnings-release-eng\.pdf$|orbia[-_][^/]*?(?:earnings|press)-release(?![^/]*(?:esp|spa|[-_.]es\b|[-_.]sp\b))[^/]*\.pdf$|/(?:orbia_)?pr[-_][^/]*(?:eng|[-_.]en\b|[-_.]en[-_.])(?![^/]*(?:esp|spa))[^/]*\.pdf$|/orb_prq[1-4]20\d{2}_eng[^/]*\.pdf$|/download---en\.pdf$)'
+  use_playwright: false
+  max_reports: 120
+  delay_ms: 400
+  xbrl_ticker: ORBIA

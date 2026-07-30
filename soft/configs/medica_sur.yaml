@@ -1,0 +1,13 @@
+# Medica Sur — minimal coverage config (XBRL-sourced fundamentals; no custom extractor).
+company:
+  name: Medica Sur
+  ticker: "MEDICA MM"
+  currency: MXN
+  exchange: BMV
+  unit: millions
+
+tier_precedence:
+  default: [xbrl, bmv, prose, search, table, calc]
+
+ir_website:
+  xbrl_ticker: "MEDICA"

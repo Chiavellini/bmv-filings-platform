@@ -1,0 +1,13 @@
+# Banco del Bajio — minimal coverage config (XBRL-sourced fundamentals; no custom extractor).
+company:
+  name: Banco del Bajio
+  ticker: "BBAJIO MM"
+  currency: MXN
+  exchange: BMV
+  unit: millions
+
+tier_precedence:
+  default: [xbrl, bmv, prose, search, table, calc]
+
+ir_website:
+  xbrl_ticker: "BBAJIO"

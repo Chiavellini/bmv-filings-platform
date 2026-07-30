@@ -1,0 +1,493 @@
+# Bilingual financial-tone lexicon for the offline sentiment pass (src/qa/sentiment.py).
+# Deterministic and dependency-free. The engine auto-detects the passage language and applies
+# the matching section (much of the corpus is Spanish; English-only scoring read it neutral).
+#
+# Two mechanisms per language:
+#   1. Inherently-valenced words (positive / negative) count as-is.
+#   2. DIRECTIONAL words (increase / decline / crecio / cayo…) take their polarity from the
+#      NEAREST OBJECT nearby: "increase in the excise tax" is negative (up + negative_object),
+#      "reduced costs" is positive (down + negative_object), "revenue increased" is positive.
+#      With no object nearby, the direction's own sign applies.
+# Negators flip the resulting polarity within a short window ("no pressure" / "sin presion").
+#
+# Matching is accent-folded and lowercased: write words WITHOUT accents ("presion", "caida",
+# "utilidad") — the tokenizer folds "presión"/"caída" to the same key before lookup.
+# Tuned for earnings-report prose, not general sentiment. Extend freely within each section.
+
+# ============================================================ ENGLISH
+en:
+  positive:
+    - strong
+    - solid
+    - record
+    - improved
+    - improvement
+    - improve
+    - robust
+    - outperformed
+    - resilient
+    - favorable
+    - profitability
+    - profitable
+    - efficiencies
+    - efficiency
+    - efficient
+    - upside
+    - beat
+    - exceeded
+    - momentum
+    - recovery
+    - recovered
+    - outstanding
+    - healthy
+    - benefited
+    - historic
+    - strength
+    - positive
+    - successful
+    - accretive
+    - efficiently
+    - leading
+    - leader
+    - savings
+    - saving
+
+  negative:
+    - weak
+    - weakness
+    - weaker
+    - soft
+    - softness
+    - pressure
+    - pressured
+    - pressures
+    - headwind
+    - headwinds
+    - impairment
+    - loss
+    - losses
+    - challenging
+    - difficult
+    - adverse
+    - unfavorable
+    - miss
+    - missed
+    - shortfall
+    - downturn
+    - disruption
+    - volatility
+    - volatile
+    - inflationary
+    - restructuring
+    - deteriorated
+    - deterioration
+    - underperformed
+
+  directions_up:
+    - growth
+    - grew
+    - grow
+    - increase
+    - increased
+    - rose
+    - rise
+    - rising
+    - higher
+    - expansion
+    - expanded
+    - gains
+    - gained
+    - accelerated
+    - accelerating
+    - up
+
+  directions_down:
+    - decline
+    - declined
+    - decrease
+    - decreased
+    - fell
+    - lower
+    - reduced
+    - reduction
+    - drop
+    - dropped
+    - contraction
+    - contracted
+    - deceleration
+    - slowdown
+    - down
+
+  negative_objects:
+    - tax
+    - taxes
+    - cost
+    - costs
+    - expense
+    - expenses
+    - debt
+    - churn
+    - inflation
+    - liabilities
+    - provisions
+    - impairments
+    - interest
+
+  positive_objects:
+    - revenue
+    - revenues
+    - sales
+    - margin
+    - margins
+    - profit
+    - profits
+    - profitability
+    - ebitda
+    - income
+    - earnings
+    - volume
+    - volumes
+    - traffic
+    - ticket
+    - cash
+    - memberships
+    - users
+    - transactions
+
+  negators:
+    - not
+    - "no"
+    - "n't"
+    - without
+    - never
+    - neither
+    - nor
+    - hardly
+    - barely
+    - less
+    - absence
+
+# ============================================================ SPANISH (accent-folded keys)
+es:
+  positive:
+    - fuerte
+    - fuertes
+    - solido
+    - solida
+    - record
+    - mejora
+    - mejoro
+    - mejoraron
+    - robusto
+    - favorable
+    - rentabilidad
+    - rentable
+    - eficiencia
+    - eficiencias
+    - eficiente
+    - supera
+    - supero
+    - destacado
+    - sano
+    - saludable
+    - positivo
+    - positiva
+    - beneficio
+    - beneficios
+    - solidez
+    - fortaleza
+    - impulsado
+    - impulso
+    - crecimientos
+    - ahorro
+    - ahorros
+
+  negative:
+    - debil
+    - debiles
+    - debilidad
+    - debilitaron
+    - presion
+    - presiones
+    - deterioro
+    - deterioros
+    - deterioraron
+    - devaluacion
+    - perdida
+    - perdidas
+    - adverso
+    - adversa
+    - desfavorable
+    - dificil
+    - dificiles
+    - contraccion
+    - inflacionaria
+    - inflacionario
+    - reestructuracion
+    - afectado
+    - afectada
+    - afectados
+    - afectaron
+    - impactado
+    - impactada
+    - impactados
+    - impactadas
+    - volatilidad
+    - incumplimiento
+    - rezago
+    - quebranto
+
+  directions_up:
+    - crecimiento
+    - crecieron
+    - crecio
+    - crecido
+    - crecida
+    - crecidos
+    - crecidas
+    - aumento
+    - aumentaron
+    - aumento
+    - incremento
+    - incrementaron
+    - subio
+    - subieron
+    - mayor
+    - mayores
+    - expansion
+    - expandio
+    - alza
+    - elevo
+    - elevaron
+    - acelero
+    - repunte
+
+  directions_down:
+    - caida
+    - caidas
+    - disminucion
+    - disminuyo
+    - disminuyeron
+    - bajo
+    - bajaron
+    - reduccion
+    - redujo
+    - redujeron
+    - decrecio
+    - decrecieron
+    - decremento
+    - decrementos
+    - cayo
+    - cayeron
+    - contraccion
+    - descenso
+    - menor
+    - menores
+    - retroceso
+
+  negative_objects:
+    - impuesto
+    - impuestos
+    - costo
+    - costos
+    - gasto
+    - gastos
+    - deuda
+    - inflacion
+    - pasivos
+    - provisiones
+    - interes
+    - intereses
+    - comisiones
+    - endeudamiento
+
+  positive_objects:
+    - ingreso
+    - ingresos
+    - venta
+    - ventas
+    - margen
+    - margenes
+    - utilidad
+    - utilidades
+    - ganancia
+    - ganancias
+    - ebitda
+    - flujo
+    - volumen
+    - volumenes
+    - trafico
+    - transacciones
+    - exportaciones
+    - membresias
+    - rentabilidad
+
+  negators:
+    - "no"
+    - sin
+    - tampoco
+    - ni
+    - nunca
+    - jamas
+    - ausencia
+    - carece
+    - ninguna
+    - ninguno
+    - ningun
+    - ningunas
+    - ningunos
+
+# ============================================================ CONTEXT GUARDS
+# High-precision phrase guards (matched on the accent-folded, lowercased FULL text) that fix the
+# systematic false-fires of a bag-of-cues scorer on earnings prose. Kept deterministic/offline.
+#
+#   neutral_domains  — valence-free domains (accounting policy, IFRS/notes methodology, hedging &
+#                      risk-management objectives, share/dividend mechanics, education/training CSR).
+#                      A match forces NEUTRAL: cue words here ("perdida", "crecimiento", "higher")
+#                      are terminology, not tone.
+#   offset_markers   — "partially offset by" / "compensado por": the offsetting clause is
+#                      subordinate, so the DOMINANT prior clause's sign wins (cues after the marker
+#                      are dropped when the head clause already carries a cue).
+#   forward_markers  — future-modal optimism ("will continue to drive", "permitira el crecimiento").
+#                      Combined with the engine's no-concrete-evidence check, VAGUE forward-looking
+#                      optimism reads neutral while CONCRETE optimism (numbers, record, savings) stays
+#                      positive — matching the gold rubric.
+guards:
+  en:
+    neutral_domains:
+      - amortized cost
+      - fair value
+      - share-based payment
+      - strike price
+      - shares outstanding
+      - weighted average strike
+      - net settlement
+      - exchange rate published
+      - exchange rate of
+      - comprehensive income
+      - equity method
+      - intercompany
+      - honorary directors
+      - academic
+      - students
+      # executive bios / board composition — a career summary is not company tone
+      - biography
+      - his career
+      - her career
+      - serving as
+      # CSR / policy commitments — aspirational, non-tonal ("our commitment to ...")
+      - our commitment to
+      - reaffirm our commitment
+      - responsible marketing
+    positive_domains:
+      # award / recognition PR — good-news domains that otherwise land neutral or negative
+      - was recognized
+      - were recognized
+      - recognized as
+      - recognized by
+      - recognized among
+      - recognized with
+      - a recognition
+      - award
+      - awarded
+      # expansion — store / distribution-center openings read positive per the gold rubric
+      - new distribution center
+      - new stores
+    offset_markers:
+      - offset by
+      - compensated by
+      - counterbalanced by
+      - impacted by
+      - but with
+    concession_markers:
+      - despite
+      - although
+      - even though
+    forward_markers:
+      - will continue
+      - will drive
+      - will deliver
+      - we are confident
+      - confident that
+      - confident we
+      - look forward
+      - positioned to
+      - committed to
+      - expect to
+      - aim to
+      - poised to
+      - drive sustainable
+      - upside
+  es:
+    neutral_domains:
+      - se reconoce
+      - se reconocen
+      - costo amortizado
+      - valor razonable
+      - politicas contables
+      - estimaciones contables
+      - tasa de interes efectiva
+      - impuesto diferido
+      - impuestos a la utilidad
+      - diferencias temporales
+      - metodo de adquisicion
+      - obligaciones de desempeno
+      - minimizar el riesgo
+      - administrar y controlar
+      - optimizar la rentabilidad
+      - swaps de tasa
+      - fondo de recompra
+      - capital social
+      - acciones ordinarias
+      - horas de capacitacion
+      - capacitacion
+      - bachillerato
+      - alumnos
+      # accounting-method / recording explanations (IFRS lease treatment, etc.) — not tone
+      - manera de registrar
+      - forma de registrar
+      # procurement / payment-terms mechanics (accounts-payable normalization) — not tone
+      - cuentas por pagar
+    positive_domains:
+      # award / recognition PR
+      - fue reconocid
+      - fue reconocida
+      - reconocido como
+      - reconocida como
+      - reconocido por
+      - reconocida por
+      - galardon
+      - premiad
+      - distincion
+      # ranked among the best-performing (ESG / reputation rankings)
+      - mejor desempeno
+      # expansion — store openings read positive per the gold rubric
+      - aperturas de tiendas
+      - apertura de tiendas
+      - nuevas tiendas
+    offset_markers:
+      - compensado por
+      - compensada por
+      - compensados por
+      - compensadas por
+      - contrarrestado por
+      - contrarrestada por
+      - contrarrestados por
+      - contrarrestadas por
+      - pero con
+    concession_markers:
+      - a pesar de
+      - pese a
+      - aunque
+      - no obstante
+    forward_markers:
+      - permitira
+      - permitiran
+      - pueda contribuir
+      - puedan contribuir
+      - potencializar
+      - continuaremos
+      - seguiremos
+      - esperamos que
+      - pretendemos
+      - mediano y largo plazo

@@ -1,0 +1,72 @@
+company:
+  name: Kimberly-Clark de México
+  ticker: KIMBERA
+  exchange: BMV
+  language: es
+  currency: MXN
+  unit: millions          # GT model is in P$mn
+
+metric_overrides: {}
+
+text_search:
+  # KIMBER press releases repeat the same labels in quarterly and annual/YTD
+  # tables. When a nearby header contains only years (no quarter token), skip it
+  # so command-F search uses the quarterly table instead of the annual row.
+  skip_annual_rows: true
+table_extract:
+  # Segment rows are handled by anchored text regexes below; generic fuzzy PDF
+  # table matching adds latency and no scored KIMBER coverage.
+  disabled: true
+
+# Segment revenue from the IFRS-8 note ("Información ... segmentos de operación"):
+#   Productos al consumidor   <nacional> 0 0 <ingresos totales>
+#   Productos de exportación   0 <exportación> 0 <ingresos totales>
+# Capture the last column (Ingresos totales), full pesos → millions. The note is
+# YTD (acumulado), so ytd_quarterly (below) differences it to the single quarter.
+custom_metrics:
+  - key: revenue_consumer
+    label: "Consumer Products revenue"
+    label_es: "Productos al consumidor"
+    section: income
+    unit: currency
+    patterns:
+      - regex: '^Productos al consumidor[^\S\r\n]+[\d,]+[^\S\r\n]+[\d,]+[^\S\r\n]+[\d,]+[^\S\r\n]+([\d,]{7,})$'
+        source: table
+        multiplier: 0.000001
+  - key: revenue_exports
+    label: "Export revenue"
+    label_es: "Productos de exportación"
+    section: income
+    unit: currency
+    patterns:
+      - regex: '^Productos de exportaci[oó]n[^\S\r\n]+[\d,]+[^\S\r\n]+[\d,]+[^\S\r\n]+[\d,]+[^\S\r\n]+([\d,]{7,})$'
+        source: table
+        multiplier: 0.000001
+
+# Metrics the report prints year-to-date; the eval differences consecutive
+# quarters (Q1 YTD == the quarter) to recover the single-quarter figure.
+ytd_quarterly: [revenue_consumer, revenue_exports]
+
+# Documented data-unavailability (extractable-obs basis; proof-cited). The absolute
+# per-segment revenue (IFRS-8 "segmentos de operación" note) is disclosed only from
+# 2023; 2016-2022 releases report segment GROWTH % only, never an absolute figure —
+# so those cells are genuinely absent from the source (extraction correctly MISSes).
+unavailable:
+  revenue_consumer:
+    before_year: 2023
+    reason: "Absolute segment revenue (IFRS-8 note) disclosed only from 2023; earlier releases give segment growth % only"
+    proof: "data/reports/kimber/2022-2T.md:54 'ventas de Productos al Consumidor crecieron 8%' (growth% only, no absolute); 2019-2T.md:41 'Productos al Consumidor creció 6%'"
+  revenue_exports:
+    before_year: 2023
+    reason: "Absolute segment revenue (IFRS-8 note) disclosed only from 2023; earlier releases give segment growth % only"
+    proof: "data/reports/kimber/2022-2T.md:56 'las exportaciones aumentaron 43%' (growth% only); 2021-2T.md:61 'las exportaciones disminuyeron 9%'"
+
+ir_website:
+  url: https://www.kimberly-clark.com.mx/finanzas/reportes-trimestrales
+  # KIMBER names its files KCM_PR_<NT><YY>.pdf (press release) / SIFIC-ES-<Nt>-<YYYY>.pdf;
+  # accept any PDF and let period-canonicalization keep the quarter-bearing ones.
+  pdf_link_pattern: '(?i)\.pdf'
+  use_playwright: true
+  max_reports: 120
+  delay_ms: 500
+  xbrl_ticker: KIMBER

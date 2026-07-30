@@ -1,0 +1,55 @@
+# Segments-sheet outline spec for LACOMER.
+#
+# Consumed by segments_sheet.generate_company_segments(). Mirrors the structure
+# of data/ground_truth/lacomer-actual.csv. Labels that repeat across sections
+# (La Comer, Fresko, City Market, Sumesa) are disambiguated with "Section/Label"
+# mapping keys. Computed rows (YoY, As % of …) become Excel formulas.
+
+title: "LACOMER: La Comer"
+units: "P$mn"
+
+sections:
+  - Revenues
+  - Stores
+  - Sales Floor (m2)
+
+mapping:
+  "Revenues/La Comer": revenue
+  "Same-Store Sales (SSS) YoY": sss_lacomer
+  "Stores/Total Stores": total_stores
+  "Stores/La Comer": stores_la_comer
+  "Stores/Fresko": stores_fresko
+  "Stores/City Market": stores_city_market
+  "Stores/Sumesa": stores_sumesa
+  "Stores/City Market Café": stores_city_market_cafe
+  "Sales Floor (m2)/Total Area": sales_floor_total
+  "Sales Floor (m2)/La Comer": sales_floor_la_comer
+  "Sales Floor (m2)/Fresko": sales_floor_fresko
+  "Sales Floor (m2)/City Market": sales_floor_city_market
+  "Sales Floor (m2)/Sumesa": sales_floor_sumesa
+
+outline: |
+  Revenues
+
+  La Comer
+  YoY
+  Same-Store Sales (SSS) YoY
+
+  Stores
+
+  Total Stores
+  YoY
+  La Comer
+  Fresko
+  City Market
+  Sumesa
+  City Market Café
+
+  Sales Floor (m2)
+
+  Total Area
+  YoY
+  La Comer
+  Fresko
+  City Market
+  Sumesa

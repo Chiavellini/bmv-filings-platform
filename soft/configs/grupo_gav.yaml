@@ -1,0 +1,13 @@
+# Grupo GAV — minimal coverage config (XBRL-sourced fundamentals; no custom extractor).
+company:
+  name: Grupo GAV
+  ticker: "GAV MM"
+  currency: MXN
+  exchange: BMV
+  unit: millions
+
+tier_precedence:
+  default: [xbrl, bmv, prose, search, table, calc]
+
+ir_website:
+  xbrl_ticker: "GAV"

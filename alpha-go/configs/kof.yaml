@@ -1,0 +1,50 @@
+company:
+  name: Coca-Cola FEMSA
+  ticker: KOFUBL
+  exchange: BMV
+  language: en
+  currency: MXN
+  unit: millions          # GT model is in P$mn
+
+# KOF has no XBRL before 2021, so pre-2021 revenue fell to the flaky command-F
+# `search` tier, which grabbed comparable-growth prose (2016) or split-number tokens
+# ("1" from "1 37,041", 3Q18/4Q18). Anchor revenue to the clean reported summary line
+# and rank regex_table above search so it wins where it matches; search still gap-fills.
+tier_precedence:
+  default: [xbrl, bmv, note, regex_table, prose, search, table, calc]
+
+metric_overrides:
+  revenue:
+    patterns:
+      # Reported summary line, EN or ES: "Total revenues 39,939 9.3% ..." /
+      # "Ingresos totales 44,148 (0.7%) ..." / with mix-%: "44,148 100.0% 44,464".
+      # First number = the quarter (current); second money value = prior (restated
+      # in the deconsolidation era — feeds restated_prior below).
+      - regex: '^\s*(?:Total\s+revenues|Ingresos\s+totales)(?:\s*\(\s*\))?\s+([\d]{1,3}(?:,[\d]{3})+)\s+(?:[\d.]+%\s+)?([\d]{1,3}(?:,[\d]{3})+)\b'
+        source: table
+      - regex: '^\s*(?:Total\s+revenues|Ingresos\s+totales)\s+([\d]{1,3}(?:,[\d]{3})+)\b'
+        source: table
+
+# GT 2017-2018 revenue = the Venezuela/Philippines-deconsolidation RESTATED series,
+# printed only as the next year's prior column ('Ingresos totales 44,148 100.0%
+# 44,464' in 2018-3T = GT 3Q17; '46,248 … 44,122' in 2019-1T = GT 1Q18). 2Q18's
+# source (the 2019-2T filing) is missing from the corpus — see unavailable.
+restated_prior:
+  revenue: [3Q17A, 4Q17A, 1Q18A]
+
+unavailable:
+  revenue:
+    periods: [2Q18A]
+    parse_gap: true
+    reason: "GT 2Q18 (44,569.2, restated ex-deconsolidation) is printed only in the 2019-2T filing, which is missing from the corpus (kof download 39/41)"
+    proof: "as-reported 2018-2T prints 52,086; grep '44,569' over data/reports/kof/*.md = 0 hits; data/reports/kof/ has no 2019-2T files"
+
+custom_metrics: []
+
+ir_website:
+  url: https://investors.coca-colafemsa.com/en/financial-information/quarterly-reports/
+  pdf_link_pattern: '(?i)\.pdf'
+  use_playwright: true
+  max_reports: 120
+  delay_ms: 500
+  xbrl_ticker: KOF

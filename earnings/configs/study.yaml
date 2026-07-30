@@ -1,0 +1,670 @@
+# earnings/ study configuration — BMV earnings event study, phase A.
+#
+# PRE-COMMITTED 2026-07-27, before the first run of run_event_study.py.
+# Every parameter change after that date must be logged in outputs/REPORT.md
+# under "researcher degrees of freedom".
+
+universe:
+  # slug (soft/data/reports/<slug>) -> BMV ticker + Yahoo symbol (snapshot cache)
+  walmex:       {ticker: WALMEX,   symbol: WALMEX.MX}
+  femsa:        {ticker: FEMSA,    symbol: FEMSAUBD.MX}
+  kof:          {ticker: KOF,      symbol: KOFUBL.MX}
+  bimbo:        {ticker: BIMBO,    symbol: BIMBOA.MX}
+  chedraui:     {ticker: CHDRAUI,  symbol: CHDRAUIB.MX}
+  soriana:      {ticker: SORIANA,  symbol: SORIANAB.MX}
+  lacomer:      {ticker: LACOMER,  symbol: LACOMERUBC.MX}
+  liverpool:    {ticker: LIVEPOL,  symbol: LIVEPOLC-1.MX}
+  herdez:       {ticker: HERDEZ,   symbol: HERDEZ.MX}
+  kimber:       {ticker: KIMBER,   symbol: KIMBERA.MX}
+  lab:          {ticker: LAB,      symbol: LABB.MX}
+  sports_world: {ticker: SPORT,    symbol: SPORTS.MX}
+  gruma:        {ticker: GRUMA,    symbol: GRUMAB.MX}
+  grupo_mexico: {ticker: GMEXICO,  symbol: GMEXICOB.MX}
+  ac:           {ticker: AC,       symbol: AC.MX}
+  becle:        {ticker: CUERVO,   symbol: CUERVO.MX}
+  orbia:        {ticker: ORBIA,    symbol: ORBIA.MX}
+
+surprise:
+  metrics: [net_income, revenue, ebitda]     # composite components
+  eps_variant: eps                           # robustness: SUE(eps) alone
+  min_hist_quarters: 4                       # minimum trailing dX obs for sigma
+  target_hist_quarters: 8                    # trailing window length
+  sue_winsor: 5.0                            # SUE clipped to +/-5
+  z_winsor: 3.0                              # within-quarter z clipped to +/-3
+  min_components: 2                          # composite needs >=2 of 3 metrics
+  min_cs_pool: 5                             # within-quarter z needs >=5 names
+  yoy_floor_frac: 0.05                       # |prior| floor = 5% of trailing-4Q mean |current|
+
+event:
+  timezone: America/Mexico_City
+  session_open: "08:30"                      # BMV session start
+  # t0 = first trading day whose session open is strictly after filed_dt
+  # Discovered pre-analysis (2026-07-27, before any return was computed):
+  # most issuers file Q4 XBRL only with the audited annual report (72-127 days
+  # after quarter end, late Mar-May) — long after the February Q4 press release
+  # the market actually reacted to. A filing is an announcement EVENT only if
+  # it lands within max_filing_lag_days of the quarter end; stale filings are
+  # excluded from the event study but still feed SUE histories.
+  max_filing_lag_days: 60
+
+windows:
+  pre: [[-10, -1], [-5, -1]]                 # leakage CARs
+  post: [[1, 5], [1, 20]]                    # PEAD CARs
+  profile: [-10, 5]                          # day-by-day AR profile
+  min_coverage: 0.8                          # window needs >=80% of bars else null
+
+liquidity:
+  measure_window: [-70, -11]                 # trading days rel. t0 (ends before event)
+  primary_min_median_peso_volume: 5000000   # MXN
+  variants: [1000000, 20000000]              # reported alongside + unfiltered
+
+# Phase B refinements — PRE-COMMITTED 2026-07-27 before the first expanded-
+# universe run. universe_full.yaml (109 slugs, auto-resolved) is frozen in git.
+refinements:
+  sar_min_obs: 30                            # pre-event vol needs >=30 daily ARs
+  quintile_min_pool: 25                      # quintiles need >=25 names/quarter
+  # ar_react: in-session filings add the filing-day AR to ar0_cc (reaction
+  # split across two sessions); after-close/pre-open filings: ar_react = ar0_cc.
+  # Primary measure remains ar0_cc (phase-A pre-commitment); ar_react is
+  # primary-2. sar0_cc = ar0_cc / pre-event sigma over the liquidity window.
+
+# Phase C — PRE-COMMITTED 2026-07-27 before re-running analysis on new timing.
+phase_c:
+  # info_dt = min(XBRL filed_dt, matching earnings press release from the
+  # eventos-relevantes catalog) — recovers Feb Q4 announcements; staleness and
+  # alignment run on info_dt. XBRL-only timing kept as robustness variant.
+  info_dates: true
+  ticker_aliases: {PEOLES: "PE&OLES"}
+  strategy_entry_rules:
+    after_hours: open_t0_to_close_t0
+    in_session: close_filing_day_to_close_t0
+  frontier_cutoffs: [0.0, 0.5, 1.0, 1.5, 2.0]   # reported as a curve, no picking
+
+# Phase D — PRE-COMMITTED 2026-07-27 before the first historical-era run.
+phase_d:
+  era_boundary: "2021-2T"                     # < boundary => historical era
+  # historical events: day-level dates from report front pages; info_dt =
+  # date @ 23:59 CDMX (after-close assumption -> t0 = next trading day).
+  # Metric quarters without a dated event: masked available at period_end+90d,
+  # never events. Historical dX = X(q) - X(same quarter, prior year) from the
+  # splice-checked merged series (no restated priors pre-2021 — caveat).
+  splice_tolerance: 0.05
+  historical_holdout_quarters: ["2014-3T", "2016-2T", "2018-1T", "2019-4T"]
+  # prices: range=max store preferred; overlap-checked vs the frozen 6y snapshot
+
+# Phase E — PRE-COMMITTED 2026-07-27 before any refinement run.
+phase_e:
+  # Adoption protocol: every candidate reported with dev FM t / slope t / IC;
+  # adopt only if FM t >= incumbent + 0.5 AND shuffle p < 0.05 AND economic
+  # rationale; max 2 signal adoptions. Execution candidates: adopt if
+  # strategy Sharpe(25bps) >= incumbent + 0.10. Final arbiter: one-shot
+  # 2026-2T walk-forward, incumbent vs refined, no iteration afterward.
+  signal_candidates: [margin_sue, confirmed_beat, conviction, rank_composite,
+                      wf_weighted, seasonal_qoq, mdna_sentiment, s_cs_plus_sent]
+  posture_rules: [low_precar, low_prevol, both]
+  execution_candidates: [vol_sized, gap_skip_1, gap_skip_2, gap_skip_3,
+                         day_cap_3, exit_t1]
+  wf_weights_window: 8                       # trailing quarters for S5 weights
+  sentiment_overlay_weight: 0.5
+  gap_skip_ks: [1.0, 2.0, 3.0]
+  walkforward_period: "2026-2T"
+  walkforward_price_cutoff: "2026-07-23"     # last t0 with frozen bars
+
+# Phase G — PRE-COMMITTED 2026-07-27 before frontier/US runs.
+phase_g:
+  # BMV liquidity frontier: cost ladder (bps per round trip, spread+impact
+  # assumptions for BMV, labeled as such) by median peso volume bucket
+  liquidity_ladder:
+    - {min_pv: 20000000, cost_bps: 20}
+    - {min_pv: 5000000,  cost_bps: 30}
+    - {min_pv: 1000000,  cost_bps: 60}
+    - {min_pv: 250000,   cost_bps: 120}
+    - {min_pv: 0,        cost_bps: 250}
+  frontier_verdict_rule: "deepest bucket with net mean/trade > 0 and FM t >= 2"
+
+us:
+  # S&P 500 campaign. Surprise = consensus EPS surprise% (winsorized ±50%),
+  # within-quarter z; sign variant secondary. t0 = first regular session
+  # opening after the event timestamp (America/New_York; BMO -> same day,
+  # AMC/TAS evening -> next day). Hold sweep: gap / intraday / cc0 /
+  # car+1..2 / +1..5 / +1..20. Index ^GSPC. Costs 5/10/20 bps.
+  surprise_winsor_pct: 50
+  min_cs_pool: 30
+  holdout_quarters: ["2022-Q4", "2023-Q3", "2024-Q2", "2025-Q4"]
+  costs_bps: [5, 10, 20]
+  liquidity_min_usd_volume: 5000000
+
+beta:
+  estimation_days: 250
+  min_days: 120
+  end_offset: -11                            # estimation window ends at t-11
+
+validation:
+  seed: 20260727
+  n_perm_shuffle: 1000                       # within-quarter shuffle of S
+  n_perm_placebo: 500                        # random event-date shift
+  placebo_shift_days: [10, 30]               # uniform |shift| range, random sign
+
+holdout:
+  # Sacred quarters — excluded from every development run; one-shot at the end.
+  quarters: ["2022-4T", "2023-3T", "2024-2T", "2025-4T"]
+
+success_criteria:
+  next_day: >
+    Tercile T3-T1 spread of AR0_cc positive with Fama-MacBeth t > 2.0 AND
+    within-quarter permutation p < 0.05, surviving the primary liquidity filter.
+  leakage: >
+    CAR_pre5 vs S regression slope with within-quarter permutation p < 0.05
+    (direction reported either way).
+  holdout: >
+    Same sign of T3-T1 AR0_cc spread as development sample and hit rate > 50%
+    on holdout events.
+
+# Audit v2 — PRE-COMMITTED 2026-07-28, before any corrected table is produced.
+# Scope: fix mechanical defects found in the post-phase-G verification sweep,
+# regenerate affected tables with suffix _v2. Originals are never overwritten.
+audit_v2:
+  # Issues (full detail in outputs/AUDIT.md):
+  #  A  margin_sue / seasonal_qoq computed without the filed= availability
+  #     mask (run_refinements, run_walkforward) — core s_cs path was masked.
+  #  B  compute_surprises combine_first precedence inverted vs its comment
+  #     (inert today: zero key overlap between metrics and metrics_hist).
+  #  C  metrics_hist corruption (margin-%-as-level, EPS-as-net-income,
+  #     unit slips, identity violations, missing-as-zero).
+  #  D  prices: negative adj_factor rows, single-bar symbols silently kept.
+  #  E  liquidity_frontier zero-move share measured on last 250d only.
+  #  F  simulate_strategy Sharpe annualized by trade-days, not calendar.
+  #  G  modern holdout evaluated twice (proxy index, then real ^MXX) — doc only.
+  #  H  outputs/ unversioned — MANIFEST.json mechanism added.
+  #  I  universe not point-in-time (survivorship) — doc only.
+  naming_suffix: "_v2"                 # every regenerated artifact
+  rerun_scope: [metrics_hist, prices, surprises, event_study_dev, validation,
+                refinements]
+  # Decisions frozen now, before any number is seen:
+  holdout_rerun: false                 # gate 5 spent; never re-evaluated
+  walkforward_2026_2T_rerun: false     # one-shot; unmasked refined leg noted
+                                       # in AUDIT.md, not recomputed
+  price_quality:
+    drop_adj_factor_lte_zero: true
+    min_bars_per_symbol: 60
+    dropped_log: results/price_quality_dropped.csv
+  # metrics_hist cleaning — mechanical, internal-consistency-only rules.
+  # Constants calibrated 2026-07-28 against known-bad exemplars ONLY
+  # (gruma ebitda margins-as-levels, ac/becle identity violations, kimber
+  # EPS-as-net-income, gruma 2000-01 unit slips, chedraui zero row) and the
+  # known-legit stress case (sports_world 2020-2T COVID quarter survives).
+  # FORBIDDEN from here on: per-company exception lists, any rule referencing
+  # returns/events/SUEs, any threshold change after the first _v2 rerun.
+  hist_cleaning:
+    r0_exact_zero_metrics: [revenue, operating_income, ebitda, net_income]
+    r1_margin_level:                   # |v| < frac * same-period revenue
+      metrics: [ebitda, operating_income, gross_profit, depreciation]
+      revenue_frac: 0.005
+    r1b_eps_as_net_income:             # 0 < |net_income| < frac * revenue
+      revenue_frac: 0.001
+    r2_identity:                       # operating_income>revenue, ebitda>revenue
+      resolve: drop_member_with_larger_log10_distance_to_own_series_median
+    r3_jump:                           # |log10(|v| / clean-neighbor median)| > thr
+      log10_threshold: 2.0
+      neighbor_span: 4                 # up to 4 clean obs each side, >=2 required
+    r4_min_clean_series: 5             # < min_hist_quarters+1 obs -> drop series
+    eps_rules: [r3_jump]               # eps exempt from magnitude rules
+    log: results/hist_cleaning_log.csv # every dropped row + rule fired
+    rescaling: forbidden               # drop, never rescale
+
+# Phase H — PRE-COMMITTED 2026-07-28, before any phase-H evaluation run.
+# Per-company "good report" definition from the analyst's three pillars:
+# revenue growth, profitability, debt — vs own history and desk estimates.
+phase_h:
+  pillars:
+    rev_growth_sue: sue_revenue                # anchor: masked SUE of dX(revenue)
+    margin_sue_m: >
+      masked SUE of dX(operating margin), point-in-time priors —
+      the issue-A-corrected margin_sue
+    debt_signal: >
+      -1 * masked SUE of dX(net_debt / ebitda_ttm) — deleveraging is good;
+      XBRL era only; net_debt definition frozen post-census (see debt block)
+    accel_rev: >
+      yoy% (revenue, floored denominator) minus trailing-4Q mean yoy%,
+      cross-sectional z within quarter
+    beat_desk: >
+      (actual - desk estimate) / |estimate| per metric, cross-z —
+      DIAGNOSTIC ONLY until >=4 quarters of point-in-time vintages exist
+  candidates:                                  # evaluated once, on _v2 inputs
+    H1_quality3: mean cross_z(rev_growth_sue, margin_sue_m, debt_signal), min 2 of 3
+    H2_quality2: mean cross_z(rev_growth_sue, margin_sue_m)
+    H3_incumbent_plus_debt: s_cs + 0.5 * z(debt_signal)
+    H4_accel_overlay: s_cs + 0.5 * z(accel_rev)
+  overlay_weight: 0.5                          # fixed, mirrors phase_e precedent
+  # debt definition frozen AFTER census_debt_concepts.py coverage report,
+  # BEFORE any pillar value is joined to returns. Committed with the census.
+  debt:
+    gross_debt_concepts: [OtherCurrentFinancialLiabilities,
+                          OtherNoncurrentFinancialLiabilities]
+    lease_concepts: [CurrentLeaseLiabilities, NoncurrentLeaseLiabilities]
+    lease_variants_stored: [incl_leases, excl_leases]   # both computed
+    cash_concept: CashAndCashEquivalents
+    fallback: total_liabilities_tier            # when financial-liability null
+  adoption:
+    rule: >
+      dev FM t >= incumbent + 0.5 AND within-quarter shuffle p < 0.05 AND
+      economic rationale; max 1 adoption from H1-H4. beat_desk never adopted
+      from this evaluation (diagnostic only). Nominal p with 4 candidates =>
+      Bonferroni-effective alpha 0.0125, reported alongside.
+    final_arbiter: >
+      One-shot 2026-3T walk-forward (~Oct 2026), incumbent vs adopted spec,
+      no iteration afterward. Modern sacred holdout is NOT touched.
+    walkforward_period: "2026-3T"
+  seed_offset: 2                               # rng = validation.seed + 2
+
+# Audit v3 — PRE-COMMITTED 2026-07-28, before any corrected return table is
+# produced. Two independent changes, landed sequentially so diffs attribute:
+#   1. shared-infra swap (root extraction engine + document estate reads),
+#      gated by scripts/parity_check.py -> outputs/parity/PARITY.md;
+#   2. the W2 timing correction below (rule derived from TIMING-ONLY evidence
+#      in outputs/TIMING_AUDIT.md; no returns were computed or seen before
+#      this block was committed).
+audit_v3:
+  naming_suffix: "_v3"
+  estate_engine: true            # facts from the estate view (vintage-pinned
+                                 # by configs/facts_vintage.csv), root engine
+  # Timing correction, applied inside build_events under EARNINGS_V3=1:
+  timing_correction: true
+  timing_rule:
+    # (a) OUT of calendar coverage: a press-release-recovered info_dt is kept
+    #     ONLY when the XBRL filing is stale (> this many days after period
+    #     end — the Q4-recovery regime the mechanism was built for). With a
+    #     timely XBRL, the "press release" is predominantly a pre-announcement
+    #     false match (WALMEX -5d every quarter, CEMEX -4..-7d; measured 18/38
+    #     wrong dates inside coverage) -> revert to the XBRL timestamp.
+    press_requires_xbrl_stale_days: 60
+    # (b) INSIDE calendar coverage (3Q24-2Q26): info_dt := min(filed_dt,
+    #     calendar-implied timestamp: pre_open -> 06:00, after_close -> 16:00
+    #     CDMX). The XBRL filing is hard public evidence and may precede the
+    #     calendar; the press channel is dropped entirely inside coverage.
+    # NOT adopted (hypothesis tested and rejected on timing evidence): forcing
+    # in-session filings to after_close — same-date in-session events already
+    # produce the correct next-day t0 in 95.4% of covered cases.
+  holdout_rerun: false           # gate 5 stays spent; never re-evaluated
+  walkforward_rerun: false       # 2026-2T walk-forward stays one-shot
+  # Sensitivity rerun: dev quarters only, results_v3/ + TIMING_AUDIT.md table
+  # (v2 vs v3: T3-T1, FM t, shuffle p, strategy Sharpe). If the correction
+  # weakens the result, that IS the finding — reported, not iterated.
+
+# Analyst-expectations evaluation — PRE-COMMITTED 2026-07-28, before
+# eval_analyst.py first runs. Diagnostic only in this phase.
+analyst:
+  predictions: outputs/analyst_predictions.parquet     # 138 calls, 2Q24-2Q26
+  labels_config: configs/analyst_labels.yaml           # soft calls = 0.5 strength
+  outcome_primary: sign(ar0_cc)          # market-adjusted close-to-close t0 AR
+  outcome_secondary: entry-rule trade return (simulate_strategy rules)
+  min_company_n: 3                       # inferential per-company rows need >=3
+  neutral_handling: descriptive only     # |ar0| comparison, never hit-rate
+  overlay_weights: [0.25, 0.5]           # s_ts + w * direction * strength
+  overlay_cost_bps: 25
+  adoption:
+    rule: >
+      DIAGNOSTIC ONLY in this phase: no analyst signal enters the traded spec
+      from this evaluation. Any future adoption candidate must be re-specified
+      with dev FM t >= incumbent + 0.5 AND shuffle p < 0.05, arbiter one-shot
+      2026-3T walk-forward. Sample-size caveat (138 calls, fewer matched)
+      leads every table.
+  seed_offset: 4                         # rng = validation.seed + 4
+
+# Signal layer (classification / conviction / Kelly) — PRE-COMMITTED
+# 2026-07-28, before simulate_signal_layer.py first runs. Dev quarters only;
+# sacred historical holdout quarters and the modern holdout stay excluded.
+signal_layer:
+  classify:                              # on s_ts (point-in-time, tradable)
+    buy_min: 1.0                         # incumbent long cutoff, unchanged
+    short_max: -1.0                      # symmetric short leg (BMV borrow
+                                         # feasibility reported, not assumed)
+  conviction:
+    model: logistic p_hat(win) on |s_ts|, fit per leg
+    calibration_quarters: 8              # trailing dev quarters, PIT refit
+    min_calibration_events: 60           # below -> fallback sizing
+  kelly:
+    lambda: 0.25                         # fractional Kelly
+    payoff_b: trailing-8q PIT mean(win) / |mean(loss)| per leg
+    f_cap: 0.10                          # max weight per name
+    fallback: equal_weight
+  costs_bps: [0, 25, 50]
+  acknowledgment: >
+    Phase E rejected conviction filters and execution variants X1-X4 under the
+    pre-committed bar. This candidate differs materially (PIT-calibrated
+    probability, short leg, Kelly sizing) but faces the SAME bar; failure is
+    reported, not iterated.
+  adoption:
+    rule: >
+      Sharpe(25bps) >= incumbent long-only + 0.10 AND within-quarter shuffle
+      p < 0.05; max 1 adoption; final arbiter one-shot 2026-3T walk-forward.
+  seed_offset: 3                         # rng = validation.seed + 3
+
+# Direction x magnitude candidate — POST-HOC-MOTIVATED (2026-07-29, after the
+# analyst eval and overlay results were seen; logged as a researcher degree of
+# freedom). Dev battery (results_v3/dirmag_grid.csv) selected the spec below;
+# sizing by model |s_ts| or sigma_pre only de-levers (size-permutation p=1.0),
+# so the magnitude leg is a flat Kelly-capped fraction. DIAGNOSTIC ONLY until
+# the arbiter runs.
+analyst_direction:
+  rule: >
+    Trade EVERY full-strength analyst call (labels Positive/Negative only),
+    direction = the analyst's call, entry/exit = simulate_strategy rules.
+    Size = 0.10 of capital per trade (quarter-Kelly at observed hit rates
+    saturates the f_cap, collapsing to equal); idle capital earns 0.
+  provenance_requirement: >
+    2026-3T calls must be prospectively logged: the label file hash-committed
+    to git BEFORE each company's report release. Calls logged late are
+    excluded from the arbiter evaluation.
+  cost_bps: 25
+  dev_reference: 27 trades, +302 bps/trade net (t 4.24), hit 0.85,
+    Sharpe(25,cal) 1.11, direction-permutation p 0.001 (results_v3/dirmag_*)
+  adoption:
+    rule: >
+      One-shot 2026-3T walk-forward, reported alongside the phase_h,
+      signal_layer and analyst overlay candidates (Bonferroni: 4+ candidates,
+      effective alpha noted). No adoption from dev numbers; small n means
+      even the arbiter quarter is indicative, not conclusive.
+  seed_offset: 5                         # rng = validation.seed + 5
+
+# Analyst-edge decomposition — SPEC FROZEN 2026-07-29 BEFORE eval_analyst_edge.py
+# first runs (POST-HOC-MOTIVATED: the analyst eval/overlay/dirmag results were
+# seen; logged in outputs/REPORT.md ledger). Diagnostic only; no adoption path.
+analyst_edge:
+  a1_features:              # exactly 16; kpi_panel non-PIT columns are
+                            # descriptive-only and BANNED from CV and A3
+    [s_cs, s_ts, z_sue_net_income, z_sue_revenue, z_sue_ebitda, margin_sue_z,
+     n_components, car_pre5, car_pre10, ar_dm1, prevol_ratio_w, sigma_pre,
+     beta, filing_lag_days, log_liquidity, filed_in_session]
+  a1_rule: >
+    L2 logistic, leave-one-quarter-out CV, pooled out-of-fold AUC, 1000
+    within-quarter direction permutations. INTERPRETATION FROZEN: OOF AUC
+    < 0.65 OR perm p >= 0.05 => the analyst's information is OUTSIDE this
+    feature set (edge not learnable from current structured data); otherwise
+    report standardized loadings. Applies to both targets (direction;
+    full-strength-ness).
+  a3_grid: >
+    12 cells = |s_ts| >= {1.0, 1.5, 2.0} x margin gate {any, sign agree}
+    x sigma_pre {all, <= dev median}; PIT features only; cell floor n >= 15;
+    max-statistic null over qualifying cells, 1000 within-quarter JOINT
+    permutations of the (s_ts, margin_sue_z, sigma_pre) tuple.
+    EXPECTATION FROZEN: no cell approaches the analyst's 92.6%; if none does,
+    that IS the finding — reported, not iterated.
+  case_reads: >
+    8 events, coded selection (2 full-strength misses; all full-strength hits
+    with sign(s_ts) opposed; top-2 |ar0_cc| full-strength hits); readers are
+    OUTCOME-BLINDED but events are outcome-selected (caveat leads the table).
+  seed_offset: 6                          # rng = validation.seed + 6
+
+# =====================================================================
+# HYBRID decision model (system + analyst + AI) — SPEC FROZEN 2026-07-29,
+# BEFORE a single AI read was executed. POST-HOC-MOTIVATED: the analyst-edge
+# decomposition (which found the edge is text-encapsulated) was seen first;
+# logged as ledger item 5 in outputs/REPORT.md.
+#
+# This block is the PRIMARY specification the one-shot 2026-3T walk-forward
+# arbitrates. phase_h, signal_layer, `analyst` (overlay) and analyst_direction
+# are hereby demoted to pre-specified SECONDARY candidates, reported alongside
+# with the multiplicity stated.
+# =====================================================================
+hybrid:
+  seed_offset: 7                          # rng = validation.seed + 7
+
+  scope:
+    events: >
+      analyst-covered dev events — the inner join of outputs/analyst_predictions
+      on study.dev_sample(which="dev"), i.e. the canonical n=73 matched / 67
+      directional frame that eval_analyst_edge.build_join reproduces. Sacred
+      holdout quarters (holdout.quarters + phase_d.historical_holdout_quarters)
+      are excluded and their documents are never read.
+    outcome_primary: sign(ar0_cc)         # same outcome as the `analyst` block
+    cost_bps: 25
+    coverage_caveat: >
+      The AI channel is validated ONLY on the 40 analyst-covered tickers.
+      Extending it to the ~115 companies with MD&A is a documented follow-on,
+      not part of this specification.
+
+  # ---------------- the AI channel -------------------------------------
+  reader:
+    provider: anthropic
+    model: claude-opus-5
+    temperature: 0.0
+    max_output_tokens: 2000
+    reads_per_event: 1                    # per arm; temp 0 + cache => reruns
+                                          # are byte-identical, not re-sampled
+    prompt_config: configs/ai_reader.yaml # template + schema + scrub aliases;
+                                          # its sha256 is recorded in MANIFEST
+    cache_dir: data/ai_cache              # <sha256(model|arm|prompt)>.json;
+                                          # a prompt or model change is a NEW
+                                          # pre-registration, never a refresh
+    backends:
+      # AMENDMENT 2026-07-29, before any read executed. The spec above assumed
+      # the Messages API. The API key has no credit balance, so the same prompts
+      # are also runnable through outcome-blinded SUBAGENTS on a Claude
+      # subscription — the method the eight case reads in ANALYST_EDGE.md used.
+      api: >
+        the specified path: pinned model, temperature 0, content-addressed
+        cache, so a re-run returns byte-identical records.
+      subagent: >
+        identical prompt, schema, arms, probe and cache format, answered by a
+        blinded subagent instead of the API. DEVIATION: sampling is not pinned,
+        so re-runs are NOT byte-reproducible; records carry backend="subagent"
+        and a distinct cache identity, so the two can never be mixed or
+        mistaken for one another. Any result produced this way must say so.
+      blinding_note: >
+        The orchestrating session has already seen outcomes and must never
+        itself be the reader. Subagents are spawned with a fresh context and
+        given a single prompt file written OUTSIDE the repository, so a reader
+        cannot reach outputs/ and read the answer it is being asked to predict.
+    inputs_allowed: [mdna_text, prior_quarter_kpi_history, sector_label]
+    inputs_forbidden: >
+      prices, returns, the analyst's call, the current quarter's s_ts /
+      margin_sue_z, and ANY quarter whose availability timestamp is >= this
+      event's info_dt.
+    history_rule: >
+      the KPI history table shows only quarters q' with info_dt(q') <
+      info_dt(q), resolved through earnlib.study.availability_map(); columns as
+      rendered by scripts/make_kpi_tables.py. outputs/kpi_panel.parquet is NOT
+      point-in-time and must never be passed through unfiltered.
+    text_source: >
+      data/soft/data/reports/<slug>/xbrl/<TICKER>_<PERIOD>_mdna.html (HTML to
+      text). Fallback when absent: the period-named press-release .md in the
+      document-estate view. Every fallback used is logged.
+    output_schema:
+      direction: [up, down, flat]
+      conviction: [high, medium, low]
+      reason_code: &reason_codes          # SAME taxonomy as the Spanish desk
+        [vs_expectativas, guia_outlook, margenes_calidad, partida_unica,
+         valuacion_tecnico, sector_macro, otro]
+      reason_code_secondary: *reason_codes
+      headline_rev_growth_pct: number|null
+      organic_constant_fx_growth_pct: number|null
+      one_off_items: "list of {label, direction, approx_amount, material}"
+      adjusted_vs_reported_ebitda_gap_pct: number|null
+      ex_associate_net_income_note: string|null
+      guidance_direction: [raised, maintained, lowered, withdrawn, none]
+      beat_quality: [high, low, na]
+      rationale: "one line"
+
+  # ---------------- contamination control ------------------------------
+  # The reader's training data post-dates most dev events, so a dev hit rate is
+  # contaminated-until-proven-otherwise. Only 2026-3T is structurally clean.
+  contamination:
+    arms: [N, B]
+    arm_N: full text, named
+    arm_B: >
+      entity-scrubbed — company name, ticker, brand/subsidiary aliases (from
+      configs/ai_reader.yaml), all dates and the period label replaced by
+      placeholders. Numbers are NEVER altered.
+    identification_probe: >
+      a separate call on the Arm-B text asking the model to name the company and
+      quarter and to state what the stock did the next day, or "unknown".
+      Records identified (company named correctly) and outcome_recalled.
+    text_placebo: >
+      one Arm-B read per event of a DIFFERENT company's MD&A drawn (seeded) from
+      the same quarter, scored against the real event's outcome. Expectation
+      ~50%; a materially higher rate indicates the scoring path is broken.
+    primary_arm: B                        # N reported as sensitivity
+    gate: >
+      FROZEN INTERPRETATION RULE — tier T2 (the AI tier) enters HYBRID-1 only if
+      the Arm-B directional hit rate on NON-IDENTIFIED events is >= 0.65 AND the
+      within-quarter permutation p of the Arm-B direction is < 0.05, on at least
+      20 non-identified directional reads. If the gate fails, HYBRID-1 is
+      evaluated with T2 disabled and THAT IS THE FINDING — reported, never
+      iterated. No threshold, prompt or arm may be searched after seeing a hit
+      rate.
+
+  # ---------------- HYBRID-1: the decision cascade ----------------------
+  # First matching tier wins. No fitted weights: 67 directional events cannot
+  # support a fitted blend, so every threshold below is fixed here, ex ante.
+  cascade:
+    T1_analyst_full:
+      when: analyst label strength == 1.0    # Positive / Negative
+      action: the analyst's direction
+      basis: 92.6% dev (25/27); unpredictable from all 16 structured features
+    T2_ai_corroborated:
+      when: >
+        not T1; ai.direction != flat; ai.conviction == "high"; and
+        sign(ai.direction) == sign(s_ts) OR sign(ai.direction) == sign(margin_sue_z)
+      action: the AI's direction
+      basis: the text-encapsulated edge, required to be corroborated by a number
+    T3_system_ladder:
+      when: >
+        not T1/T2; abs(s_ts) >= 2.0; sign(margin_sue_z) == sign(s_ts);
+        sigma_pre <= the point-in-time median (below)
+      action: sign(s_ts)
+      basis: the pre-registered A3 precision ladder (79.3%, n=29, adj p=0.003)
+    T4_abstain: neutral
+    sigma_pre_median_rule: >
+      trailing-8-quarter cross-sectional median of sigma_pre over scope events
+      whose info_dt precedes this event's; when fewer than 40 such events exist,
+      fall back to the full-dev-scope median. The realized values are reported.
+    veto: >
+      a SOFT analyst call (strength == 0.5) whose direction OPPOSES a T2 or T3
+      action forces neutral. Soft calls never create a trade on their own.
+    conflict_rule: >
+      inside T1 the analyst's direction is taken even when the AI and/or the
+      system oppose it (dev: analyst-right/model-wrong 15 vs the reverse 8).
+      Conflicts are recorded and reported as a separate diagnostic cut, never
+      used to override.
+
+  sizing:
+    rule: >
+      per-TIER point-in-time fractional Kelly, reusing earnlib.signal
+      fit_conviction / kelly_fraction keyed on tier instead of leg.
+    lambda: 0.25
+    f_cap: 0.10
+    calibration_quarters: 8
+    min_tier_trades: 10                   # documented deviation from
+                                          # signal_layer's 60 — mirrors
+                                          # simulate_direction_magnitude's
+                                          # MIN_CLASS; too few calls exist
+    fallback: equal weight at f_cap
+    robustness: flat f_cap for every tier (pre-declared, reported alongside)
+    forbidden: >
+      sizing by |s_ts| or sigma_pre — the dirmag battery found size-permutation
+      p = 1.0 (|s_ts| does not predict move size).
+
+  # ---------------- HYBRID-2: the AI-repaired surprise ------------------
+  hybrid_2_adjusted_sue:
+    status: SECONDARY — reported alongside HYBRID-1; adoption needs the arbiter
+    rule: >
+      rebuild the surprise inputs from the reader's extractions — constant-FX /
+      organic revenue in place of headline revenue, one-off-adjusted EBITDA,
+      ex-associate net income — through the existing compute_surprises path,
+      producing s_ts_adj and margin_sue_z_adj; then re-run the SAME cascade with
+      T2's corroboration test and T3 evaluated on the adjusted signal.
+    use_rule: >
+      an extraction replaces a reported figure only when the reader supplies a
+      numeric value AND flags the adjustment material; otherwise the reported
+      figure stands. Never a per-company exception list.
+
+  validation:
+    n_perm: 1000                          # within-quarter permutations
+    channels_permuted: [analyst_direction, ai_direction, s_ts]
+    tables: >
+      per-tier coverage, hit rate + Wilson 95%, mean net return per trade,
+      Fama-MacBeth t, and calendar-basis Sharpe at costs 0 / 25 / 50 bps.
+    like_for_like: >
+      hybrid vs analyst-alone vs system-alone vs AI-alone on the IDENTICAL event
+      set (the discipline established by eval_simple_analyst.py).
+
+  adoption:
+    rule: >
+      NO adoption from dev numbers. HYBRID-1 (Arm B, primary sizing) is the
+      PRIMARY pre-registered spec of the one-shot 2026-3T walk-forward; phase_h,
+      signal_layer, the analyst overlay and analyst_direction are reported as
+      pre-specified SECONDARIES with the multiplicity stated. Small n (73 dev /
+      27 full-strength) means even the arbiter quarter is indicative, not
+      conclusive.
+    provenance_requirement: >
+      ERRATUM 2026-07-29 (corrected during implementation, before any AI read
+      executed and before any 2026-3T data exists). As first written this rule
+      required each AI read to be committed "BEFORE that company's report is
+      public" — which is impossible: the reader's input IS the report. The
+      analyst's call is a forecast and keeps the stricter pre-release rule;
+      the AI read and the system's score are both derived from the published
+      report and can only exist after it.
+      The binding deadline is therefore the boundary that makes the trade
+      real: the analyst call is hash-committed to git BEFORE the company's
+      release (inheriting analyst_direction.provenance_requirement), and the
+      AI read plus the full decision row are cached and hash-committed
+      BEFORE the session whose return they predict opens (t0). A decision
+      row first committed at or after its own t0 open is excluded from the
+      arbiter, as is a late analyst call. scripts/decide.py enforces both:
+      it refuses to emit a row whose t0 session has already opened.
+
+# =====================================================================
+# Conviction-tiered diagnostic — SPEC FROZEN 2026-07-29, before any table
+# below was computed. POST-HOC-MOTIVATED: asked for after the HYBRID-1
+# results were seen (REPORT.md ledger). DIAGNOSTIC ONLY — HYBRID-1 remains
+# the sole PRIMARY spec of the one-shot 2026-3T arbiter, and nothing here
+# creates an adoption path.
+# =====================================================================
+hybrid_conviction:
+  seed_offset: 8                          # rng = validation.seed + 8
+
+  tiers:                                  # the analyst's OWN stated conviction
+    full: Positive / Negative             # strength 1.0 — 27 dev events
+    soft: "N to P / N to N"               # strength 0.5 — 40 dev events
+    neutral: Neutral                      # no direction; descriptive only
+    all_directional: full + soft          # 67 dev events
+
+  soft_policy:                            # how a soft call is allowed to act
+    veto: >
+      the FROZEN HYBRID-1 behaviour and the default: a soft call never creates
+      a trade, and vetoes an opposing T2/T3 signal. Must stay byte-identical.
+    corroborated: >
+      HYBRID-C. A soft call trades at half size as tier T1b when
+      sign(margin_sue_z) agrees with it, OR the AI agrees at high conviction
+      where a read exists. Below T1a (full-strength), above T2. An
+      uncorroborated soft call still vetoes. Because the margin-SUE path needs
+      no AI read, T1b is computable across the whole dev frame.
+    always: >
+      HYBRID-C-naive. Every directional call trades regardless of strength —
+      "just follow the analyst's entire universe", plus the system and AI tiers.
+
+  comparators: >
+    HYBRID-1 (veto) / HYBRID-C (corroborated) / HYBRID-C-naive (always) /
+    analyst-alone-all / analyst-alone-full / system-alone (sign s_ts) /
+    AI-alone, all scored on the identical event set per cut.
+
+  expectation: >
+    FROZEN BEFORE COMPUTATION. Soft calls hit 52.5% in dev (21/40), close to a
+    coin flip, so trading them is expected to DILUTE both hit rate and net bps
+    versus HYBRID-1. The question worth answering is whether corroboration
+    lifts soft calls materially above that 52.5% base. If it does not, that is
+    the finding — reported, never iterated into a search for a gate that works.
+
+  partial_batch_caveat: >
+    The AI read batch was stopped at 116 of 219 responses to limit usage. The
+    AI cuts therefore rest on 49 of the 73 scope events, selected by where the
+    run happened to stop (issuer order), NOT at random. Every AI number in this
+    study is DESCRIPTIVE: it characterizes the reader, it does not measure a
+    hit rate. The analyst tier tables use all 67 directional calls and are
+    unaffected. This caveat leads the report.
+
+  tests: >
+    hit rate + Wilson 95% per tier, mean net bps at 25bps, Fama-MacBeth t,
+    within-quarter permutation p (n_perm from hybrid.validation), arm-N vs
+    arm-B directional agreement, and the who-was-right 2x2 of AI vs analyst.

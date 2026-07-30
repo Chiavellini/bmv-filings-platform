@@ -1,0 +1,16 @@
+# alpha-go dashboard theme — consistent dark with a single teal accent.
+[theme]
+base = "dark"
+primaryColor = "#2aa198"
+backgroundColor = "#0f1116"
+secondaryBackgroundColor = "#171a21"
+textColor = "#e6e6e6"
+
+[browser]
+gatherUsageStats = false
+
+[server]
+# The dashboard is a long-running local QA app, not a hot-reload development server. Disabling
+# module watching avoids transformers' optional vision modules being imported during path scans.
+fileWatcherType = "none"
+runOnSave = false

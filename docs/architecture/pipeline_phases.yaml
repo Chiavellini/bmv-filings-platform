@@ -1,0 +1,262 @@
+version: 1
+name: financial_reports_pipeline
+summary: >
+  Authoritative phase graph for the financial report extractor and Segments
+  workbook generator. Validation and evaluation are quality gates, not product
+  phases.
+
+product_phases:
+  - id: download
+    ordinal: 1
+    label: Acquire
+    package: src.acquisition
+    purpose: >
+      Plan, discover, fetch, validate, and durably version quarterly report
+      artifacts from issuer IR pages and BMV XBRL sources in the shared root
+      document estate. The src.download package supplies adapter primitives;
+      it is not the canonical durable writer.
+    entrypoints:
+      - kind: python
+        symbol: src.acquisition.service:QuarterlyAcquisitionService.plan
+      - kind: python
+        symbol: src.acquisition.service:QuarterlyAcquisitionService.sync
+      - kind: command
+        command: "python3 scripts/refresh_quarterly_estate.py audit"
+      - kind: command
+        command: "python3 scripts/refresh_quarterly_estate.py sync --apply"
+    inputs:
+      - name: issuer_registry
+        contract: "configs/issuers.yaml with canonical identity, memberships, lifecycle, and source bindings"
+      - name: current_estate_coverage
+        contract: "Resolvable original artifacts recorded in data/document_estate/catalog.db"
+    outputs:
+      - name: estate_documents
+        contract: "Immutable document versions, content objects, project pins, attempts, and outbox events"
+        artifacts:
+          - data/document_estate/catalog.db
+          - data/document_estate/blobs/
+          - data/document_estate/views/reports/
+    downstream:
+      - parse
+    commands:
+      - "python3 scripts/refresh_quarterly_estate.py audit"
+      - "python3 scripts/refresh_quarterly_estate.py plan --only <issuer>"
+      - "python3 scripts/refresh_quarterly_estate.py sync --only <issuer> --apply"
+    tests:
+      - tests/test_quarterly_acquisition.py
+      - tests/test_acquisition_ledger_writer.py
+      - tests/test_acquisition_registry.py
+      - tests/test_phase_contracts.py::test_download_phase_returns_paths
+      - tests/test_downloader_universal.py
+      - tests/test_downloader_archive.py
+      - tests/test_bmv_xbrl.py
+    quality_gates:
+      - "Network tests stay opt-in with pytest -m network."
+      - "Applied fleet runs use the strict coverage gate unless an operator explicitly selects the diagnostic opt-out."
+      - "The acquisition writer is the sole canonical durable write boundary; src.download functions only return staged adapter artifacts."
+
+  - id: parse
+    ordinal: 2
+    label: Parse
+    package: src.parse
+    purpose: >
+      Convert source PDFs into aligned markdown and structured document metadata
+      while keeping the raw report artifact unchanged.
+    entrypoints:
+      - kind: python
+        symbol: src.parse.parse_pdf:parse_pdf
+    inputs:
+      - name: report_pdf
+        contract: "Path to a digital PDF report"
+    outputs:
+      - name: parsed_report
+        contract: "(markdown: str, blocks: list[dict], doc: DocMeta)"
+        artifacts:
+          - data/reports/<company>/*.md
+          - data/reports/<company>/*.jsonl
+    upstream:
+      - download
+    downstream:
+      - extract
+    commands:
+      - "python3 -m src.parse.parse_pdf data/reports/<company>/<report>.pdf"
+    tests:
+      - tests/test_phase_contracts.py::test_parse_phase_contract
+      - tests/test_parse_pdf.py
+      - tests/test_report_index.py
+    quality_gates:
+      - "Parsed markdown must preserve numeric alignment and page boundaries."
+
+  - id: extract
+    ordinal: 3
+    label: Extract
+    package: src.extract
+    purpose: >
+      Resolve report text, PDFs, and XBRL facts into canonical metric rows using
+      the deterministic cascade and optional LLM fallback.
+    entrypoints:
+      - kind: python
+        symbol: src.extract.tiered_extract:extract_metrics_tiered
+      - kind: python
+        symbol: src.extract.pipeline:run
+      - kind: python
+        symbol: src.extract.interface:extract
+      - kind: python
+        symbol: src.extract.semantic_search:score_metric_label
+    inputs:
+      - name: period_source
+        contract: "PeriodSource(text, facts, pdf_path, period_end, doc)"
+      - name: metric_definitions
+        contract: "list[MetricDef] after company config overrides"
+      - name: company_config
+        contract: "configs/<company>.yaml"
+      - name: search_dictionary
+        contract: "configs/metric_search.yaml deterministic semantic aliases for table/evidence matching"
+    outputs:
+      - name: extracted_metrics
+        contract: "dict[str, MetricRow] for one period or pandas.DataFrame for batches"
+        artifacts:
+          - outputs/<Company>/csv/<company>_metrics.csv
+    upstream:
+      - parse
+    downstream:
+      - generate_excel
+      - cli
+    commands:
+      - "python3 -m src.extract.pipeline --dir data/reports/<company> --config configs/<company>.yaml --csv outputs/<company>_metrics.csv"
+      - "python3 scripts/measure_semantic_search.py lacomer sport walmex"
+    tests:
+      - tests/test_phase_contracts.py::test_extract_phase_contract
+      - tests/test_tiered_extract.py
+      - tests/test_pipeline.py
+      - tests/test_interface.py
+      - tests/test_xbrl_facts.py
+      - tests/test_parse_tables.py
+      - tests/test_llm_extract.py
+      - tests/test_semantic_search.py
+      - tests/test_measure_semantic_search.py
+    quality_gates:
+      - "LLM fallback is opt-in and off by default."
+      - "Earlier cascade tiers win per metric; later tiers only fill gaps."
+      - "Semantic search dictionary stays deterministic and provider-free."
+      - "Semantic search changes must be measured with scripts/measure_semantic_search.py against data/ground_truth before being claimed as extraction improvements."
+      - "Tier-2 table value selection is header/period-aware (src.extract.table_periods) and must fall back to positional selection when the period or column header cannot be parsed, so tables without period headers behave as before."
+
+  - id: generate_excel
+    ordinal: 4
+    label: Generate Excel
+    package: src.excel
+    purpose: >
+      Build standardized Segments workbooks from extracted metrics and company
+      outline specs, preserving formulas for derived rows.
+    entrypoints:
+      - kind: python
+        symbol: src.excel.segments_sheet:generate_company_segments
+      - kind: python
+        symbol: src.excel.segments_sheet:build_outline_workbook
+    inputs:
+      - name: extracted_dataframe
+        contract: "pandas.DataFrame with period plus metric columns"
+      - name: segments_spec
+        contract: >
+          The current path is the markdown outline in inputs/<company>.md, parsed by
+          segments_sheet.parse_outline. The legacy configs/<company>_segments.yaml
+          format is still honored but covers only 4 of 21 configured companies; an
+          inline config segments block is also accepted.
+    outputs:
+      - name: workbook
+        contract: "openpyxl.Workbook with a Segments sheet"
+        artifacts:
+          - outputs/<Company>/excel/<Company>.xlsx
+    upstream:
+      - extract
+    downstream:
+      - cli
+    commands:
+      - "python3 -m src.excel.segments_sheet --config configs/<company>.yaml --source data/reports/<company> --out outputs/<Company>/excel/<Company>.xlsx"
+    tests:
+      - tests/test_phase_contracts.py::test_excel_phase_contract
+      - tests/test_segments_sheet.py
+      - tests/test_segments_outline.py
+      - tests/test_segments_orchestrators.py
+    quality_gates:
+      - "Workbook must contain one Segments sheet and preserve formula rows."
+
+  - id: cli
+    ordinal: 5
+    label: CLI
+    package: scripts
+    purpose: >
+      Single-command workflow: read one regularized markdown (company name, IR
+      link, metric list), retain technical artifacts under the company output,
+      and publish the newest formatted Segments workbook as the sole file in
+      outputs/latest/ for an analyst to open.
+    entrypoints:
+      - kind: command
+        command: "python3 scripts/build_segments.py <company>.md"
+    inputs:
+      - name: company_markdown
+        contract: "Markdown with an H1 company name, an http(s) IR link, and a metric list"
+      - name: phase_facades
+        contract: "Stable functions from download, parse, extract, and excel phases"
+    outputs:
+      - name: company_workspace
+        contract: "outputs/<Company>/{csv,excel,validation}/ including the Segments .xlsx"
+        artifacts:
+          - "outputs/<Company>/excel/<Company>.xlsx"
+      - name: latest_analyst_workbook
+        contract: "outputs/latest/ contains exactly one .xlsx: the newest successful build"
+        artifacts:
+          - "outputs/latest/<Company>.xlsx"
+    upstream:
+      - download
+      - parse
+      - extract
+      - generate_excel
+    commands:
+      - "python3 scripts/build_segments.py <company>.md"
+    tests:
+      - tests/test_phase_contracts.py::test_cli_phase_contract
+      - tests/test_build_segments.py
+    quality_gates:
+      - "The CLI orchestrates the phase facades instead of reimplementing pipeline logic."
+      - "The previous latest workbook remains available if the new workbook cannot be copied."
+
+quality_gates:
+  - id: validate
+    label: Validate
+    package: src.shared.validator
+    purpose: >
+      Score confidence and flag suspect extracted values using cross-metric
+      sanity checks.
+    entrypoints:
+      - kind: python
+        symbol: src.shared.validator:validate
+      - kind: python
+        symbol: src.shared.validator:flagged_metrics
+    tests:
+      - tests/test_validator.py
+      - tests/test_night_fixes.py
+
+  - id: evaluate
+    label: Evaluate
+    package: src.eval
+    purpose: >
+      Compare extracted values with ground-truth CSVs and report coverage and
+      accuracy regressions.
+    entrypoints:
+      - kind: python
+        symbol: src.eval.compare_extractions:parse_actuales
+      - kind: python
+        symbol: src.eval.compare_extractions:run_comparison
+    commands:
+      - "python3 -m src.eval.compare_extractions <company> --tiers xbrl,table,prose"
+    tests:
+      - tests/test_phase_contracts.py::test_eval_quality_gate_contract
+      - tests/test_compare_extractions.py
+
+agent_rules:
+  - "Start with this manifest before editing phase wiring."
+  - "Prefer changing a phase facade or contract test before touching callers."
+  - "Keep generated artifacts out of source changes unless the user asks for deliverables."
+  - "When ground truth disagrees with the source report, keep the as-reported value and log the discrepancy."

@@ -1,0 +1,226 @@
+company:
+  currency: MXN
+  exchange: BMV
+  language: en   # Grupo Bimbo publishes English earnings releases
+  name: Grupo Bimbo
+  ticker: BIMBOA
+  unit: millions   # earnings-release tables are in millions of mexican pesos
+
+# Generic command-F search is a gap-filler for BIMBO. The configured table regexes
+# below encode the report's column order and must outrank broad alias hits.
+tier_precedence:
+  default: [xbrl, bmv, regex_table, prose, search, table, calc]
+  gross_margin: [xbrl, bmv, regex_table, prose, calc, search, table]
+  operating_margin: [xbrl, bmv, regex_table, prose, calc, search, table]
+  ebitda_margin: [xbrl, bmv, regex_table, prose, calc, search, table]
+text_search:
+  # Disabled until BIMBO's segment/YTD table layouts are represented as exact
+  # aliases. Broad generic search produced low-confidence gap fills that regressed
+  # the locked baseline; configured regex/table sources remain authoritative.
+  disabled: true
+
+# GT tracks Bimbo's RESTATED series, printed only in the FOLLOWING year's filing
+# as the prior-year column (verified against the ledger cell by cell):
+#   - 2021 + 1Q22: Ricolino discontinued-ops restatement (2022-2T:65 prints
+#     'Net Sales 96,434 81,654'; GT 2Q21 = 81,654, as-reported = 83,789).
+#   - 2019 EBITDA: IFRS-16 adoption (2020-2T:65 'Adjusted EBITDA 11,375 8,805';
+#     GT 2Q19 = 8,805, as-reported = 7,707).
+#   - 3Q16/4Q16 EBIT + 1Q17 EBITDA (2017-3T:370 '7,110 8,014 ... Consolidated';
+#     GT 3Q16 = 8,014, as-reported = 5,738).
+#   - LatAm: IAS-29 re-expression of hyperinflationary subsidiaries EVERY year
+#     (2017-1T:60 'LatinAmerica 8,134 6,489'; GT 1Q16 = 6,489, as-reported 6,052)
+#     -> all periods take the next-year re-expressed comparative.
+# Margins recompute automatically from the restated components (see
+# tiered_extract.apply_restated_priors).
+restated_prior:
+  gross_margin: [2Q24A]
+  revenue: [2Q21A, 3Q21A, 4Q21A, 1Q22A]
+  gross_profit: [2Q21A, 3Q21A, 4Q21A, 1Q22A]
+  operating_income: [3Q16A, 4Q16A, 2Q21A, 3Q21A, 4Q21A, 1Q22A]
+  ebitda: [1Q17A, 1Q19A, 2Q19A, 3Q19A, 4Q19A, 2Q21A, 3Q21A, 4Q21A, 1Q22A]
+  revenue_mexico: [1Q21A, 2Q21A, 3Q21A, 4Q21A, 1Q22A]
+  revenue_na: [1Q21A, 2Q21A, 3Q21A, 4Q21A]
+  revenue_eaa: [3Q16A, 4Q16A, 1Q17A, 1Q21A, 2Q21A, 3Q21A, 4Q21A]
+  revenue_latam: all
+
+# ---------------------------------------------------------------------------
+# BIMBO is a global CPG (bakery/food) company — no store counts or SSS.
+# Four geographic segments: North America (NA), Mexico (MX),
+# Europe/Asia/Africa (EAA), Latin America (LatAm).
+#
+# Key Metrics.csv requirements per segment:
+#   Net Sales, Gross Profit, Operating Income (EBIT), Adj. EBITDA, FX effect
+#
+# This is a skeleton config. Find the IR URL and download sample reports:
+#   1. Confirm URL (likely grupobimbo.com/es/inversionistas/reportes-trimestrales)
+#   2. Run: python3 pipeline.py --config configs/bimbo.yaml --url <url> \
+#           --max 3 --dir bimbo/
+#   3. Inspect a downloaded file for:
+#      - Report language and unit (millions MXN or millions USD?)
+#      - Table format for segment financials
+#      - Whether 4 segments appear under explicit section headers
+#        (if yes, add sections: config; else use per-segment table patterns)
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# BIMBO earnings-release tables list [CURRENT, prior, %Δ ...] — the current
+# quarter is the FIRST number after the label (the generic engine grabbed the
+# prior-year column). Two eras:
+#   2016-era segment table:  "Consolidated 56,638 50,048 13.2"
+#                            "North America 30,181 24,935 21.0"
+#   2018+ summary table:     "Net Sales 93,221 99,181 (6.0%) (0.3%)"
+#                            "Gross Profit 48,488 50,684 (4.3%) 1.3%"
+# ---------------------------------------------------------------------------
+
+metric_overrides:
+  revenue:
+    patterns:
+      # NET SALES is the first section, so the first consolidated segment row in the
+      # document IS the quarter's net sales. Anchoring here bypasses the Q4 FINANCIAL
+      # SUMMARY block ("Net Sales 291,926 ..." = FULL YEAR) that precedes the quarterly
+      # income statement and made 4Q19 grab the annual figure (also corrupting the
+      # derived gross/operating margins).
+      # Layout A (label-first): "Consolidated 65,115 61,040 ..." / "Grupo Bimbo ..."
+      # Anchored to the standalone NET SALES section heading (OCR-spaced "N ET
+      # S A LES", optional "(MILLIONS ...)" tail) — 3Q24 braids the net-sales
+      # consolidated row with a footnote line, and unanchored the first surviving
+      # "Grupo Bimbo <n> <n>" row was the GROSS PROFIT one (56,291 ≠ revenue).
+      - regex: '(?im)^[ \t]*N\s?E\s?T[ \t]+S\s?A\s?L\s?E\s?S[ \t]*(?:\([^\n]*)?$[\s\S]{0,1200}?^\s*(?:Consolidated|Grupo\s*Bimbo)\s+([\d,]{4,})\s+([\d,]{4,})'
+        source: table
+      # Layout B (numbers-first, label mid-line): "75,457 76,591 (1.5) Grupo Bimbo ..."
+      - regex: '^\s*([\d,]{4,})\s+\(?([\d,]{4,})\)?\s+[-(]?[\d.]+\)?\s+(?:Consolidated|Grupo\s*Bimbo)\b'
+        source: table
+      # 2021 layout: "79,136 Grupo Bimbo 74,250 6.6 69,523 13.8"
+      - regex: '^\s*([\d,]{4,})\s+Grupo\s*Bimbo\s+\(?([\d,]{4,})\)?\s'
+        source: table
+      # Fallback (2018+ summary with no consolidated segment row nearby); kept last so
+      # the FY-summary "Net Sales" line can no longer win over the quarter.
+      - regex: '^\s*Net\s+Sales\s+([\d,]{4,})\s+([\d,]{4,})'
+        source: table
+  gross_profit:
+    patterns:
+      # 2018+ summary table: "Gross Profit 48,488 50,684 ..."
+      - regex: '(?i)^\s*Gross\s+Profit\s+([\d,]{4,})\s+([\d,]{4,})'
+        source: table
+      # 2016-2017: consolidated row inside the GROSS PROFIT section, both layouts
+      # (numbers-first "30,278 26,234 15.4 Consolidated ..." and label-first).
+      - regex: '(?ims)^\s*Gross\s+Profit\s*$[\s\S]{0,800}?^\s*([\d,]{3,})\s+\(?([\d,]{3,})\)?\s+[-(]?[\d.]+\)?\s+(?:Consolidated|Grupo\s*Bimbo)\b'
+        source: table
+      - regex: '(?ims)^\s*Gross\s+Profit\s*$[\s\S]{0,800}?^\s*(?:Consolidated|Grupo\s*Bimbo)\s+([\d,]{4,})\s+([\d,]{4,})'
+        source: table
+  operating_income:
+    patterns:
+      - regex: '(?i)^\s*Operating\s+Income\s+([\d,]{4,})\s+([\d,]{4,})'
+        source: table
+      # The consolidated operating-income row is inside the OPERATING INCOME section
+      # (standalone heading). Anchoring to the standalone heading (\s*$) avoids the
+      # FINANCIAL-SUMMARY inline "Operating income" and the net-sales Consolidated row.
+      # Numbers-first layout: "4,589 4,853 (5.4) Consolidated 8,175 ..." (2016-2017).
+      - regex: '(?ims)^\s*Operating\s+Income\s*$[\s\S]{0,800}?^\s*([\d,]{3,})\s+\(?([\d,]{3,})\)?\s+[-(]?[\d.]+\)?\s+(?:Consolidated|Grupo\s*Bimbo)\b'
+        source: table
+      # Label-first layout: "Consolidated 7,057 6,608 ..." within the section.
+      - regex: '(?ims)^\s*Operating\s+Income\s*$[\s\S]{0,800}?^\s*(?:Consolidated|Grupo\s*Bimbo)\s+([\d,]{3,})\s+([\d,]{3,})'
+        source: table
+  gross_margin:
+    patterns:
+      # 2024+ Gross-Profit section consolidated row carries printed margins:
+      # "Grupo Bimbo 56,725 51,975 9.1 0.8 52.8 52.9 (0.1)" → (margin_cur,
+      # margin_prior). The prior margin is the RESTATED comparative that GT
+      # tracks (see restated_prior).
+      # Column count varies by era (2020 rows carry one delta column, 2024+ two),
+      # so anchor on the SHAPE of the margins instead: the first pair of
+      # consecutive 4x-6x.x values on the consolidated row.
+      # The 2024+ heading OCRs with intra-word spaces ("GR OSS   PR OFI T").
+      - regex: '(?ims)^\s*G\s?R\s?O\s?S\s?S\s+P\s?R\s?O\s?F\s?I\s?T\b[\s\S]{0,800}?^\s*(?:Consolidated|Grupo\s*Bimbo)[^\n]*?\s([4-6]\d\.\d)\s+([4-6]\d\.\d)\b'
+        source: table
+  ebitda:
+    patterns:
+      # Section-anchored consolidated Adj. EBITDA row FIRST, so the Q4 FINANCIAL-SUMMARY
+      # "Adj. EBITDA 33,426 ..." (FULL YEAR, which made 4Q19 wrong) can no longer win.
+      - regex: '(?ims)^\s*Adj(?:usted|\.)?\s*EBITDA\s*$[\s\S]{0,800}?^\s*([\d,]{3,})\s+\(?([\d,]{3,})\)?\s+[-(]?[\d.]+\)?\s+(?:Consolidated|Grupo\s*Bimbo)\b'
+        source: table
+      - regex: '(?ims)^\s*Adj(?:usted|\.)?\s*EBITDA\s*$[\s\S]{0,800}?^\s*(?:Consolidated|Grupo\s*Bimbo)\s+([\d,]{3,})\s+([\d,]{3,})'
+        source: table
+      # Inline summary line (2018+ non-Q4): "Adjusted EBITDA 12,056 11,549 ..." — kept last.
+      - regex: '(?i)^\s*Adj(?:usted|\.)?\s+EBITDA\s+([\d,]{3,})\s+([\d,]{3,})'
+        source: table
+
+sections: []
+
+# Corpus defect (proof-cited parse_gap): data/reports/bimbo/2016-2T.md is a DUPLICATE of
+# the 1Q16 press release (line 10 "reported its first quarter 2016 results", line 51
+# "Net Sales 1Q16 1Q15") — the true 2Q16 report was never downloaded. Every 2Q16 cell
+# therefore scores against 1Q16 data, so all 2Q16 Bimbo cells are excluded until the
+# correct 2Q16 PDF is fetched (re-download is out of the current offline scope).
+unavailable:
+  revenue:            { periods: [2Q16A], parse_gap: true, reason: "2016-2T.md is a duplicate of the 1Q16 report", proof: "data/reports/bimbo/2016-2T.md:10 'first quarter 2016 results'; :51 'Net Sales 1Q16 1Q15'" }
+  revenue_na:         { periods: [2Q16A], parse_gap: true, reason: "2016-2T.md duplicate of 1Q16", proof: "data/reports/bimbo/2016-2T.md:10,51" }
+  revenue_mexico:     { periods: [2Q16A], parse_gap: true, reason: "2016-2T.md duplicate of 1Q16", proof: "data/reports/bimbo/2016-2T.md:10,51" }
+  revenue_eaa:        { periods: [2Q16A], parse_gap: true, reason: "2016-2T.md duplicate of 1Q16", proof: "data/reports/bimbo/2016-2T.md:10,51" }
+  revenue_latam:      { periods: [2Q16A], parse_gap: true, reason: "2016-2T.md duplicate of 1Q16", proof: "data/reports/bimbo/2016-2T.md:10,51" }
+  gross_profit:       { periods: [2Q16A], parse_gap: true, reason: "2016-2T.md duplicate of 1Q16", proof: "data/reports/bimbo/2016-2T.md:10,51" }
+  gross_margin:       { periods: [2Q16A], parse_gap: true, reason: "2016-2T.md duplicate of 1Q16", proof: "data/reports/bimbo/2016-2T.md:10,51" }
+  operating_income:   { periods: [2Q16A, 3Q16A, 4Q16A], reason: "2Q16: 2016-2T.md duplicate of 1Q16; 3Q16/4Q16: GT EBIT is a model error — GT 3Q16 (8,014) equals GT EBITDA and GT 4Q16 (5,837) equals the RESTATED 3Q16 EBIT (2017-3T prior col), while the 4Q17 filing prints 4Q16 = 3,509", proof: "data/reports/bimbo/2016-2T.md:10,51; 2017-3T.md OPERATING INCOME section prior col = 5,837; 2017-4T.md prior col = 3,509" }
+  operating_margin:   { periods: [2Q16A, 3Q16A, 4Q16A], reason: "follows the operating_income 3Q16/4Q16 GT model error (GT margin 12.3 duplicates the EBITDA margin)", proof: "GT operating_margin 3Q16 = ebitda_margin 3Q16 = 12.3" }
+  ebitda:             { periods: [2Q16A], parse_gap: true, reason: "2016-2T.md duplicate of 1Q16", proof: "data/reports/bimbo/2016-2T.md:10,51" }
+  ebitda_margin:      { periods: [2Q16A], parse_gap: true, reason: "2016-2T.md duplicate of 1Q16", proof: "data/reports/bimbo/2016-2T.md:10,51" }
+
+custom_metrics:
+  # Regional net sales — 2016-era segment table (current = first number).
+  - key: revenue_na
+    label: "Net Sales North America"
+    section: income
+    unit: currency
+    patterns:
+      # No-space "NorthAmerica" (the parser drops the space in 2018+; the old \s+ form
+      # skipped it and matched the spaced "North America" EBITDA row → 2Q18 = 1,081).
+      - regex: '(?i)^\s*North\s*America\s+([\d,]{4,})\s+([\d,]{4,})'
+        source: table
+      # Numbers-first layout (2016-2017/2019): "34,204 33,613 1.8 North America ..."
+      - regex: '(?i)^\s*([\d,]{4,})\s+\(?([\d,]{3,})\)?\s+[-(]?[\d.]+\)?\s+North\s*America\b'
+        source: table
+      # 2021 layout (label mid-line): "38,963 North America 36,052 8.1 32,830 18.7"
+      - regex: '(?i)^\s*([\d,]{4,})\s+North\s*America\s+\(?([\d,]{3,})\)?\s'
+        source: table
+  - key: revenue_mexico
+    label: "Net Sales Mexico"
+    section: income
+    unit: currency
+    patterns:
+      - regex: '(?i)^\s*Mexico\s+([\d,]{4,})\s+([\d,]{4,})\s+[-(]?[\d.]'
+        source: table
+      - regex: '(?i)^\s*([\d,]{4,})\s+\(?([\d,]{3,})\)?\s+[-(]?[\d.]+\)?\s+Mexico\b'
+        source: table
+      # 2021 layout: "27,661 Mexico 27,216 1.6 25,619 8.0"
+      - regex: '(?i)^\s*([\d,]{4,})\s+Mexico\s+\(?([\d,]{3,})\)?\s'
+        source: table
+  - key: revenue_eaa
+    label: "Net Sales EAA / Europe"
+    section: income
+    unit: currency
+    patterns:
+      - regex: '(?i)^\s*(?:EAA|Europe|europe)\s+([\d,]{3,})\s+([\d,]{3,})'
+        source: table
+      - regex: '(?i)^\s*([\d,]{3,})\s+\(?([\d,]{3,})\)?\s+[-(]?[\d.]+\)?\s+(?:EAA|Europe)\b'
+        source: table
+      # 2021 layout: "7,843 EAA 6,587 19.1 6,468 21.3"
+      - regex: '(?i)^\s*([\d,]{3,})\s+EAA\s+\(?([\d,]{3,})\)?\s'
+        source: table
+  - key: revenue_latam
+    label: "Net Sales LatAm"
+    section: income
+    unit: currency
+    patterns:
+      # "Latin America" (2018+), "latin America" (2016-17), "LatinAmerica" no-space (2019)
+      - regex: '(?i)^\s*(?:Latin\s*America|LatAm)\s+([\d,]{3,})\s+([\d,]{3,})'
+        source: table
+      - regex: '(?i)^\s*([\d,]{3,})\s+\(?([\d,]{3,})\)?\s+[-(]?[\d.]+\)?\s+(?:Latin\s*America|LatAm)\b'
+        source: table
+      # 2021 layout: "7,224 Latin America 6,776 6.6 6,680 8.1"
+      - regex: '(?i)^\s*([\d,]{3,})\s+Latin\s*America\s+\(?([\d,]{3,})\)?\s'
+        source: table
+
+ir_website:
+  url: https://www.grupobimbo.com/en/investors/reports/quarterly-reports
+  pdf_link_pattern: '(?i)bimbo.*results.*\.pdf'
+  xbrl_ticker: BIMBOA

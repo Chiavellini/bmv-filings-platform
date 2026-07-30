@@ -1,0 +1,116 @@
+# Soft Coverage Engine — engine-level config.
+#
+# Per-company extraction configs are the VENDORED configs/<slug>.yaml (e.g. walmex.yaml);
+# this file holds only engine-wide settings and pilot selection.
+
+engine:
+  pilot: walmex
+  # Where the filled Bloomberg pack is read from (per company):
+  bloomberg_dir: data/bloomberg
+  # Currency/units are read from each coverage spec; these are just fallbacks.
+  default_currency: MXN
+  default_units: millions
+
+# Native price source (Yahoo Finance; free, no key). Per-name Yahoo symbol overrides go here when
+# the automatic series-suffix resolution picks the wrong symbol.
+prices:
+  provider: yahoo
+  symbol_overrides: {}   # slug: SYMBOL.MX
+
+# Native macro series (Banxico SIE + INEGI). Tokens via env BANXICO_SIE_TOKEN / INEGI_TOKEN.
+macro_sources:
+  policy_rate:  {provider: banxico, id: SF61745}    # Tasa objetivo
+  usdmxn:       {provider: banxico, id: SF43718}    # USDMXN FIX
+  inflation:    {provider: banxico, id: SP74665}    # INPC variación anual
+  gdp_growth:   {provider: inegi,   id: "472079"}   # PIB variación anual real (BIE)
+
+# Which fundamentals the coverage engine asks the vendored cascade to extract for the SUBJECT
+# company (the [filing] side). Keys must exist in the base MetricDef registry or the company's
+# custom_metrics. `build_coverage.py` picks the list by the spec's `template`; a company config
+# may add segment/KPI keys (e.g. WALMEX's ebitda_mexico, sales_floor_mexico) via `extra_fundamentals`.
+
+# Retail pilot (WALMEX) keeps its rich segment/KPI set:
+subject_fundamentals:
+  - revenue
+  - gross_profit
+  - operating_income
+  - ebitda
+  - net_income
+  - total_equity
+  - total_assets
+  - cash
+  - inventory
+  - current_assets       # liquidity block: current/quick ratio, working capital
+  - current_liabilities
+  - accounts_receivable  # cash conversion cycle (DSO)
+  - accounts_payable     # cash conversion cycle (DPO)
+  - cfo
+  - capex
+  - ebitda_mexico
+  - ebitda_cam
+  - sales_floor_mexico
+  - sales_floor_cam
+  - total_stores
+
+# Generic industrial names — XBRL-sourced. EBITDA/tangible-book/shares/FCF are DERIVED natively
+# from the XBRL inputs below (see fundamentals._derive_native); Bloomberg only fills residual gaps.
+industrial_fundamentals:
+  - revenue
+  - gross_profit      # profitability trend + inventory-turns (COGS = revenue − gross_profit)
+  - operating_income
+  - depreciation      # → ebitda = operating_income + depreciation
+  - ebitda
+  - net_income
+  - eps               # → shares_out = net_income / eps
+  - equity
+  - total_equity
+  - intangibles       # → tangible_book = equity - intangibles - goodwill
+  - goodwill
+  - minority_interest # ifrs-full_NoncontrollingInterests → EV bridge (native, not Bloomberg)
+  - total_assets
+  - cash
+  - inventory            # liquidity: quick ratio, inventory turns/days
+  - current_assets       # liquidity: current/quick ratio, working capital
+  - current_liabilities
+  - accounts_receivable  # cash conversion cycle (DSO)
+  - accounts_payable     # cash conversion cycle (DPO)
+  - interest_expense
+  - cfo
+  - capex             # → fcf = cfo - capex
+
+# Banks (annual XBRL only): equity/NI/assets from XBRL feed the P/BV band + annual ROE;
+# ratios (NIM/CET1/ROTE/efficiency/cost of risk) come from Bloomberg.
+financials_fundamentals:
+  - revenue
+  - interest_income
+  - interest_expense
+  - net_income
+  - eps               # → shares_out = net_income / eps (banks tag EPS in XBRL)
+  - equity
+  - total_equity
+  - intangibles
+  - goodwill
+  - total_assets
+
+# REITs / FIBRAs: revenue/NI/equity/assets from XBRL feed NOI margin + the P/E history fallback;
+# FFO/AFFO/NAV/distribution/occupancy/LTV/cap-rate come from Bloomberg.
+reit_fundamentals:
+  - revenue
+  - operating_income
+  - depreciation
+  - ebitda
+  - net_income
+  - eps
+  - equity
+  - total_equity
+  - minority_interest # ifrs-full_NoncontrollingInterests → EV bridge (native, not Bloomberg)
+  - total_assets
+  - current_assets       # → Current ratio (liquidity) in the shared analytical stack
+  - current_liabilities
+  - cash
+  - cfo
+  - capex
+
+# Per-slug override of the fundamentals list (wins over the template default).
+fundamentals_by_slug:
+  walmex: subject_fundamentals

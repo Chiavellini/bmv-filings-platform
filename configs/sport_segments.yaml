@@ -1,0 +1,67 @@
+# Segments-sheet outline spec for SPORT (Grupo Sports World).
+#
+# Mirrors data/ground_truth/sports-pream.csv. NOTE: the SPORT extractor returns
+# values in miles_mxn (thousands); the generation driver scales currency rows by
+# 0.001 so the workbook is denominated in P$mn (matching the house format and
+# the ground-truth model). KPI rows (clients, clubs, churn, visits) are unscaled.
+
+title: "SPORT: Grupo Sports World"
+units: "P$mn"
+
+sections:
+  - Revenues
+  - Consolidated Income Statement
+  - Sports and Other Revenue
+  - Other Income
+  - Operating Metrics
+  - Profitability
+
+mapping:
+  "Total Revenue": revenue
+  "Maintenance Fees and Membership Revenue": revenue_memberships
+  "Sports Revenue and Other Business Revenue": revenue_sports
+  "Sponsorship and Other Activities Revenue": revenue_sponsorships
+  "Total Active Clients": clientes_activos
+  "Clubs in Operation": clubs_count
+  "Average Net Churn": net_churn
+  "Average Gross Churn": gross_churn
+  "Monthly Visits Per Client": visits_per_member
+  "EBITDA (IFRS 16)": ebitda
+
+outline: |
+  Revenues
+
+  Total Revenue
+  YoY
+
+  Consolidated Income Statement
+
+  Maintenance Fees and Membership Revenue
+  YoY
+  As % of Consolidated
+
+  Sports and Other Revenue
+
+  Sports Revenue and Other Business Revenue
+  YoY
+  As % of Consolidated
+
+  Other Income
+
+  Sponsorship and Other Activities Revenue
+  YoY
+  As % of Consolidated
+
+  Operating Metrics
+
+  Total Active Clients
+  YoY
+  Clubs in Operation
+  Average Net Churn
+  Average Gross Churn
+  Monthly Visits Per Client
+
+  Profitability
+
+  EBITDA (IFRS 16)
+  YoY

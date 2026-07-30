@@ -1,0 +1,348 @@
+company:
+  name: Arca Continental
+  ticker: AC
+  exchange: BMV
+  language: en          # AC publishes an English earnings release
+  currency: MXN
+  unit: millions        # GT model is in P$mn
+
+# AC states the standalone-quarter consolidated figures in the highlights prose
+# ("In 3Q24, consolidated operating income reached Ps. 10,266 million") and in the
+# consolidated income-statement table ("Operating Income 9,319 8,411 ..."). The
+# generic cascade was instead grabbing the cumulative (YTD) EBITDA headline for
+# operating_income and a segment EBITDA row for ebitda. These quarter-anchored
+# overrides pin the right figure. Values are already in P$ millions → no multiplier.
+metric_overrides:
+  operating_income:
+    patterns:
+      # "In 3Q24, consolidated operating income reached Ps. 10,266 million"
+      # ([^\n]*? — NOT [^\n.] — so it can cross decimals like "increased 1.0%".)
+      - regex: '[1-4]Q\d{2},?\s+consolidated operating income[^\n]*?Ps\.?\s*([\d,]+)'
+        source: prose
+      # "Information by Segments 4Q25 … Operating Income 5,210 3,273 … 0 10,347":
+      # the quarterly segment matrix's Total column (LAST value on the row) is the
+      # GT's Total EBIT. The quarter anchor (\dQ\d{2}) excludes the Jan-Dec twin.
+      - regex: '(?m)Information\s+by\s+Segments\s+\dQ\d{2}[\s\S]{0,900}?^\s*Operating\s+Income[^\n]*[ \t](-?[\d,]+)[ \t]*$'
+        source: table
+      # Spanish SIFIC-bundle era (2016-2018, 2026+): the same matrix is
+      # "Información por segmentos 1T26 … Utilidad de operación … 0 7,891".
+      - regex: '(?m)Informaci[oó]n\s+por\s+segmentos\s+\dT\d{2}[\s\S]{0,1500}?^\s*Utilidad\s+de\s+operaci[oó]n[^\n]*[ \t](-?[\d,]+)[ \t]*$'
+        source: table
+      # "Consolidated operating income for 3Q20 reached Ps. 6,045 million"
+      - regex: 'consolidated operating income\s+(?:for|in)\s+[1-4]Q\d{2}[^\n]*?Ps\.?\s*([\d,]+)'
+        source: prose
+      # 2016-2018 Spanish prose: "la utilidad de operación consolidada alcanzó
+      # los Ps. 5,285 millones" / "aumentó 14.5% … y alcanzó los Ps. 4,018 millones"
+      - regex: 'utilidad\s+de\s+operaci[oó]n\s+consolidad[ao][^\n]*?alcanz(?:[oó]|ando)(?:\s+los)?\s+Ps\.?\s*([\d,]+)\s+millones'
+        source: prose
+      # Consolidated income-statement row "Operating Income 9,319 8,411 908 10.8".
+      # First match wins → the consolidated row, which precedes the segment appendix;
+      # the digit after the label excludes "Operating Income before other income".
+      - regex: '(?m)^\s*Operating Income\s+([\d,]+)\s+[\d,]+\s'
+        source: table
+  ebitda:
+    # Pattern ORDER matters (regex engine: first match wins per metric): the
+    # quarter-anchored prose is the most reliable consolidated figure; the
+    # Table-1 row is the fallback for releases without that phrasing. Ranked
+    # the other way, the row pattern grabs a REGION block's EBITDA in releases
+    # whose Table 1 is a bullet list (e.g. 2Q24).
+    patterns:
+      # TIGHT: "Consolidated EBITDA in 3Q23 increased 7.8% … to Ps. 11,509 million".
+      # Requires the current-quarter anchor + "to Ps." so it never grabs a
+      # prior-year comparison value ("vs Ps. 7,681 in 1Q21").
+      - regex: 'consolidated EBITDA\s+(?:in|for)\s+[1-4]Q\d{2}[^\n]*?to Ps\.?\s*([\d,]+)'
+        source: prose
+      # HIGHLIGHTS bullet: "• EBITDA grew 7.5% to Ps.12,167 million with a margin"
+      - regex: 'Q\d{2}\s+HIGHLIGHTS[\s\S]{0,400}?EBITDA\s+(?:grew|increased|declined|decreased|reached|totaled)[^\n]*?\s+Ps\.?\s*([\d,]+)\s+million'
+        source: prose
+      # "During 3Q18, consolidated EBITDA increased 5.8% to Ps. 7,203 million"
+      # (quarter anchor BEFORE the subject — the 2018 releases' word order).
+      - regex: '[1-4]Q\d{2},?\s+consolidated EBITDA[^\n]*?to\s+Ps\.?\s*([\d,]+)'
+        source: prose
+      # Table 1 "Financial Highlights": "Net Sales 64,540 64,947 -0.6 …" followed by
+      # "EBITDA 13,547 14,181 -4.5 …" — the quarter is the FIRST value pair. The
+      # Net-Sales-line anchor keeps this off segment/margin EBITDA rows.
+      # 2018-era Table 1 titles the row "Total Revenues" instead of "Net Sales".
+      - regex: '(?:Net\s+Sales|Total\s+Revenues)(?:\(\s*\))?\s+[\d,]+\s+[\d,]+[^\n]*\n\s*EBITDA\s+([\d,]+)\s+([\d,]+)'
+        source: table
+      # Spanish releases: "CIFRAS CONSOLIDADAS … Ventas Netas … EBITDA 13,155 12,167"
+      # (region tables print the same rows, so the consolidated header anchors it).
+      - regex: 'CIFRAS\s+CONSOLIDADAS[\s\S]{0,500}?EBITDA\s+([\d,]+)\s+([\d,]+)'
+        source: table
+      # Spanish SIFIC-bundle era: matrix "Flujo Operativo … 0 10,630" Total column
+      # (the "Flujo Operativo / Ingresos" margin row that follows carries %s, so
+      # the last-number capture on the FIRST match is the peso total).
+      - regex: '(?m)Informaci[oó]n\s+por\s+segmentos\s+\dT\d{2}[\s\S]{0,1800}?^\s*Flujo\s+Operativo[^\n]*[ \t](-?[\d,]+)[ \t]*$'
+        source: table
+      # 2016-2018 Spanish prose: "el flujo de caja operativo ("EBITDA") consolidado
+      # creció 23.6% a Ps. 5,317 millones"
+      - regex: 'flujo\s+(?:de\s+caja\s+)?operativo\s*\(?["“]?EBITDA["”]?\)?\s+consolidado[^\n]*?\sPs\.?\s*([\d,]+)\s+millones'
+        source: prose
+  revenue:
+    patterns:
+      # Spanish SIFIC-bundle era: matrix "Ingresos del Segmento … -612 57,128"
+      # Total column (GT "Total sales" = matrix total in that era).
+      - regex: '(?m)Informaci[oó]n\s+por\s+segmentos\s+\dT\d{2}[\s\S]{0,600}?Ingresos\s+del\s+(?:Segmento\s+)?[\d,][^\n]*[ \t](-?[\d,]+)[ \t]*$'
+        source: table
+      # Spanish releases: consolidated summary table quarter column.
+      - regex: 'CIFRAS\s+CONSOLIDADAS[\s\S]{0,400}?Ventas\s+Netas\s+([\d,]+)\s+([\d,]+)'
+        source: table
+      # "decreased 5.0% when compared to 4Q22, to Ps. 49,986" / "compared to 1Q19
+      # to Ps. 38,893" (comma optional) / "remained stable when compared to 1Q23, to …".
+      - regex: 'net sales\s+[^\n]*?compared to\s+[1-4]Q\d{2},?\s+to\s+Ps\.?\s*([\d,]+)'
+        source: prose
+      # COVID-era phrasing: "Net Sales reached Ps. 42,945 million, up 2.3% when
+      # compared to 2Q19." (value precedes the comparison clause).
+      - regex: 'net sales\s+(?:reached|of|was)\s+Ps\.?\s*([\d,]+)[^\n]*?compared to\s+[1-4]Q\d{2}'
+        source: prose
+      # "Consolidated net sales in 3Q23 increased 2.1% ... to Ps. 56,911 million"
+      - regex: 'consolidated net sales\s+(?:in|for)\s+[1-4]Q\d{2}[^\n]*?Ps\.?\s*([\d,]+)'
+        source: prose
+
+# operating_income: allow the consolidated income-statement table row (regex_table)
+# to win over the generic text-search pick (which grabbed the cumulative EBITDA
+# headline) when the prose override doesn't fire (pre-2019 reports).
+# The code default ranks `search` ABOVE `prose`, so these quarter-anchored prose
+# overrides only win when prose is promoted ahead of search per-metric.
+tier_precedence:
+  operating_income: [xbrl, bmv, statement, prose, regex_table, table, search, calc]
+  ebitda: [xbrl, bmv, statement, prose, regex_table, table, search, calc]
+  revenue: [xbrl, bmv, statement, prose, search, regex_table, table, calc]
+  revenue_beverages: [calc, regex_table, prose, search, table]
+
+# Segment metrics. Modern era (2019+, except the 2020 COVID prose-only releases):
+# "Table N: <Region> Data" blocks carry an "Income Statement (MM MXP)" section
+# whose "Net Sales <cur> <prior>" row is the regional total, and the quarterly
+# "Information by Segments NQ YY" matrix carries the by-column split
+# [Mexico, USA, Peru, Argentina, Ecuador, Other Businesses, Eliminations, Total].
+# 2020-era releases state the same figures in prose ("Net sales for Mexico
+# reached Ps. 17,938 million during 2Q20").
+custom_metrics:
+  - key: revenue_mexico
+    label: "Net Sales Mexico"
+    label_es: "Ventas netas México"
+    section: segment
+    unit: currency
+    patterns:
+      # "(?:\*+|\(\s*\))?" tolerates footnote markers: "Net Sales*** 13,180" (2019)
+      # and the OCR'd "Ventas Netas() 23,885" (2025 Spanish releases).
+      - regex: 'Table\s+\d+:\s+Mexico\s+Data[\s\S]{0,1800}?Net\s+Sales(?:\*+|\(\s*\))?\s+([\d,]+)\s+([\d,]+)'
+        source: table
+      # 3Q25 layout splits the row: "Net Sales   2.8   0.9" (variations) with the
+      # peso values on the NEXT line ("30,164  29,355   82,915  82,178").
+      - regex: 'Table\s+\d+:\s+Mexico\s+Data[\s\S]{0,1800}?Net\s+Sales[^\n]*\n\s*([\d,]{5,})\s+([\d,]{5,})'
+        source: table
+      # 2025+ Spanish releases: "Tabla 3: Cifras para México … Ventas Netas 29,422 29,510"
+      - regex: 'Tabla\s+\d+:\s+Cifras\s+para\s+M[eé]xico[\s\S]{0,1800}?Ventas\s+Netas(?:\*+|\(\s*\))?\s+([\d,]+)\s+([\d,]+)'
+        source: table
+      - regex: 'Net\s+[Ss]ales\s+(?:for|in)\s+Mexico\s+reached\s+Ps\.?\s*([\d,]+)\s+million\s+(?:during|in)\s+[1-4]Q\d{2}'
+        source: prose
+      - regex: 'Net\s+[Ss]ales\s+(?:for|in)\s+Mexico[^\n]*?[1-4]Q\d{2}[^\n]*?(?:reaching|to)\s+Ps\.?\s*([\d,]+)'
+        source: prose
+      - regex: 'Net\s+[Ss]ales\s+(?:for|in)\s+Mexico[^\n]*?(?:reaching|reached|to)\s+Ps\.?\s*([\d,]+)\s+million'
+        source: prose
+      # 2017-2018 Spanish prose: "Las ventas netas para la región de México
+      # alcanzaron Ps. 13,369 millones durante el 1T18". 2017 releases drop the
+      # "de" ("para la región México alcanzaron Ps. 15,717 millones", 2017-2T:350).
+      - regex: 'ventas\s+netas\s+para\s+la\s+regi[oó]n\s+(?:de\s+)?M[eé]xico\s+alcanzaron\s+(?:los\s+)?Ps\.?\s*([\d,]+)\s+millones'
+        source: prose
+      # 2016 era reported the region as Norteamérica (pre-CCSWB, Mexico-only)
+      - regex: 'ventas\s+netas\s+(?:de|para)\s+(?:la\s+regi[oó]n\s+(?:de\s+)?)?Norteam[eé]rica[^\n]*?Ps\.?\s*([\d,]+)\s+millones'
+        source: prose
+  - key: revenue_us
+    label: "Net Sales United States"
+    label_es: "Ventas netas Estados Unidos"
+    section: segment
+    unit: currency
+    patterns:
+      - regex: 'Table\s+\d+:\s+United\s+States\s+Data[\s\S]{0,1800}?Net\s+Sales(?:\*+|\(\s*\))?\s+([\d,]+)\s+([\d,]+)'
+        source: table
+      # 2025+ Spanish releases: "Tabla 4: Cifras para Estados Unidos … Ventas Netas() 23,885 20,139"
+      - regex: 'Tabla\s+\d+:\s+Cifras\s+para\s+Estados\s+Unidos[\s\S]{0,1800}?Ventas\s+Netas(?:\*+|\(\s*\))?\s+([\d,]+)\s+([\d,]+)'
+        source: table
+      - regex: 'Net\s+[Ss]ales\s+(?:for|in)\s+the\s+(?:U\.?S\.?|United\s+States)[^\n]*?[1-4]Q\d{2}[^\n]*?(?:reaching|to)\s+Ps\.?\s*([\d,]+)'
+        source: prose
+      - regex: 'Net\s+[Ss]ales\s+(?:for|in)\s+the\s+(?:U\.?S\.?|United\s+States)[^\n]*?(?:reaching|reached|to)\s+Ps\.?\s*([\d,]+)\s+million'
+        source: prose
+      # COVID-era: "During 2Q20, total revenues for the U.S. increased 18.9% to
+      # Ps. 18,142 million" (2020-2T:179).
+      - regex: 'total\s+revenues\s+(?:for|in)\s+the\s+U\.?S\.?[^\n]*?to\s+Ps\.?\s*([\d,]+)\s+million'
+        source: prose
+      # SIFIC [800005] product-distribution note (2018): the US business line
+      # "Refrescos y Botanas Coca Cola, Topo Chico y Wise … 12,638,825,000" is the
+      # GT US revenue in full pesos (YTD in 2Q+ filings → differenced via
+      # ytd_quarterly_periods below).
+      - regex: 'Topo\s+Chico\s+y\s+Wise[^\n]*?([\d,]{10,})[ \t]*$'
+        source: table
+        multiplier: 0.000001
+  - key: revenue_south_america
+    label: "Net Sales South America"
+    label_es: "Ventas netas Sudamérica"
+    section: segment
+    unit: currency
+    patterns:
+      - regex: 'Table\s+\d+:\s+South\s+America\s+Data[\s\S]{0,1800}?Net\s+Sales(?:\*+|\(\s*\))?\s+([\d,]+)\s+([\d,]+)'
+        source: table
+      # 2025+ Spanish releases: "Tabla 5: Cifras para Sudamérica … Ventas Netas 10,120 9,053"
+      - regex: 'Tabla\s+\d+:\s+Cifras\s+para\s+Sudam[eé]rica[\s\S]{0,1800}?Ventas\s+Netas(?:\*+|\(\s*\))?\s+([\d,]+)\s+([\d,]+)'
+        source: table
+      - regex: 'Net\s+[Ss]ales\s+(?:for|in)\s+South\s+America[^\n]*?[1-4]Q\d{2}[^\n]*?(?:reaching|to)\s+Ps\.?\s*([\d,]+)'
+        source: prose
+      - regex: 'Net\s+[Ss]ales\s+(?:for|in)\s+South\s+America[^\n]*?(?:reaching|reached|to)\s+Ps\.?\s*([\d,]+)\s+million'
+        source: prose
+      # 2016-2018 Spanish prose: "La división Sudamérica presentó una disminución
+      # en ventas netas de 7.5%, a Ps. 10,110 millones en el 1T18"
+      - regex: 'Sudam[eé]rica[^\n]*?ventas\s+netas[^\n]*?\sPs\.?\s*([\d,]+)\s+millones'
+        source: prose
+      - regex: 'ventas\s+netas\s+(?:de|para)\s+(?:la\s+(?:divisi[oó]n|regi[oó]n)\s+(?:de\s+)?)?Sudam[eé]rica[^\n]*?Ps\.?\s*([\d,]+)\s+millones'
+        source: prose
+      # 4T16 wording (missing "de"/"netas"): "Las ventas la División Sudamérica
+      # alcanzaron, en el 4T16, los Ps. 10,589 millones" (2016-4T:387).
+      - regex: 'ventas\s+(?:de\s+)?la\s+Divisi[oó]n\s+Sudam[eé]rica\s+alcanzaron[^\n]*?Ps\.?\s*([\d,]+)\s+millones'
+        source: prose
+      # COVID-era: "The South American region posted a 20.8% decline in net sales
+      # to reach Ps. 6,865 million in 2Q20" (2020-2T:233, 2020-3T:268).
+      - regex: 'South\s+American?\s+region[^\n]*?net\s+sales\s+to\s+reach\s+Ps\.?\s*([\d,]+)\s+million'
+        source: prose
+  # Column reads off the quarterly segment matrix "Sales by Segment" row:
+  # [Mexico, USA, Peru, Argentina, Ecuador, Other(6th), Eliminations(7th), Total(last)].
+  - key: revenue_food_snacks
+    label: "Sales Other Businesses (Food & Snacks, Vending)"
+    label_es: "Ventas Otros Negocios"
+    section: segment
+    unit: currency
+    patterns:
+      # GT tracks the NET-of-intersegment Others column (6th value of the
+      # "Net Sales from intersegments" row), not the gross Sales-by-Segment one.
+      - regex: 'Information\s+by\s+Segments\s+\dQ\d{2}[\s\S]{0,700}?Net\s+Sales\s+from\s+intersegments\s+(?:\(?-?[\d,.]+\)?\s+){5}\(?(-?[\d,]+)\)?'
+        source: table
+      # Spanish era: gross Others column of "Ingresos del Segmento" (matches GT
+      # for the SIFIC-bundle quarters, e.g. 1T26 = 4,794).
+      - regex: 'Informaci[oó]n\s+por\s+segmentos\s+\dT\d{2}[\s\S]{0,600}?Ingresos\s+del\s+(?:Segmento\s+)?(?:\(?-?[\d,.]+\)?\s+){5}\(?(-?[\d,]+)\)?'
+        source: table
+      # 2016/1Q17 SIFIC "Nota 8" geographic matrix: the 5th value of "Ventas por
+      # segmento" is the Otros (México y otros) column, in THOUSANDS of pesos.
+      # YTD in 2Q-4Q filings → differenced via ytd_quarterly_periods below.
+      # Anchored to the 7-column era only (2016 + 1T17); the 2017-2T+ matrices add
+      # a US column so the 5th value would be wrong there (those cells are GT
+      # constructs and excluded anyway).
+      - regex: 'Cifras\s+al\s+3[01]\s+de\s+(?:(?:marzo|junio|septiembre|diciembre)\s+de\s+2016|marzo\s+de\s+2017):[\s\S]{0,300}?Ventas\s+por\s+segmento\s+(?:\$?\s*\(?-?[\d,]+\)?\s+){4}\$?\s*\(?(-?[\d,]+)\)?'
+        source: table
+        multiplier: 0.001
+  - key: ac_seg_sales_elim
+    label: "Sales by Segment — Eliminations (component)"
+    label_es: "Eliminaciones (componente)"
+    section: segment
+    unit: currency
+    patterns:
+      - regex: 'Information\s+by\s+Segments\s+\dQ\d{2}[\s\S]{0,500}?Sales\s+by\s+Segment\s+(?:\(?-?[\d,.]+\)?\s+){6}\(?(-?[\d,]+)\)?'
+        source: table
+      # 2025+ Spanish matrix: 7th value of "Ingresos del [Segmento]" = Eliminaciones
+      # ("27,841 22,509 4,655 1,768 3,128 4,159 -634 63,427", 2025-2T:2290).
+      - regex: 'Informaci[oó]n\s+por\s+segmentos\s+\dT\d{2}[\s\S]{0,600}?Ingresos\s+del\s+(?:Segmento\s+)?(?:\(?-?[\d,.]+\)?\s+){6}\(?(-?[\d,]+)\)?'
+        source: table
+  - key: ac_seg_sales_total
+    label: "Sales by Segment — Total (component)"
+    label_es: "Ventas por segmento total (componente)"
+    section: segment
+    unit: currency
+    patterns:
+      - regex: '(?m)Information\s+by\s+Segments\s+\dQ\d{2}[\s\S]{0,500}?^\s*Sales\s+by\s+Segment[^\n]*[ \t](-?[\d,]+)[ \t]*$'
+        source: table
+      # 2025+ Spanish matrix: last value of the "Ingresos del [Segmento]" row is
+      # the Total column (= the beverages-calc minuend).
+      - regex: '(?m)Informaci[oó]n\s+por\s+segmentos\s+\dT\d{2}[\s\S]{0,600}?Ingresos\s+del\s+(?:Segmento\s+)?[-\d(][^\n]*[ \t](-?[\d,]+)[ \t]*$'
+        source: table
+  # GT "Beverages" = the five beverage-segment columns = matrix Total minus the
+  # Other-Businesses column minus Eliminations (eliminations print negative).
+  - key: revenue_beverages
+    label: "Net Sales Beverage Segments"
+    label_es: "Ventas netas segmentos de bebidas"
+    section: segment
+    unit: currency
+    calc: "ac_seg_sales_total - revenue_food_snacks - ac_seg_sales_elim"
+    patterns: []
+
+# ---------------------------------------------------------------------------
+# Documented GT-model constructs (proof-cited; excluded from the accuracy
+# denominator). The analyst model derives every Q4 column as FY minus 9M on a
+# basis that includes US outside-territory revenue, so its Q4 "Total sales"
+# matches NO figure the Q4 release prints (as-reported consolidated Net Sales
+# and the segment-matrix Total both differ). Others (Food & Snacks) flips
+# between the gross "Sales by Segment" and net "Net Sales from intersegments"
+# bases across years; both are printed, the extractor tracks one.
+# ---------------------------------------------------------------------------
+# YTD-printed sources differenced to quarters by the evaluator: the 2016 Nota-8
+# Otros column and the 2018 [800005] US line print accumulated figures in 2Q+
+# filings (each verified: 6M16 4,457,531 − 3M16 2,107,386 = 2,350,145 = GT 2Q16;
+# 6M18 US 27,316,438 − 1Q 12,638,825 = 14,677,613 = GT 2Q18).
+ytd_quarterly_periods:
+  revenue_food_snacks: [2Q16A, 3Q16A, 4Q16A]
+  revenue_us: [2Q18A]
+
+unavailable:
+  revenue:
+    # 2Q17/3Q17: extraction is faithful to print (release prose AND the BMV
+    # statement both give 38,445 / 35,830) while GT records restated 37,433.7 /
+    # 36,619.2 — post-CCSWB restated comparatives that appear in no 2017 filing.
+    periods: ["2Q17A", "3Q17A", "4Q17A", "4Q19A", "4Q20A", "4Q21A", "4Q22A", "4Q23A", "4Q24A", "4Q25A"]
+    reason: "GT Q4 = FY−9M model derivation on an OT-inclusive basis; 2Q17/3Q17 GT = restated comparatives contradicting the printed 38,445 / 35,830"
+    proof: "data/reports/ac/2025-4T.md:49-50 — 'Net Sales 64,540 64,947'; 2017-2T.md:289 — 'ventas netas consolidadas del 2T17 … alcanzando los Ps. 38,445' vs GT 37,433.7"
+  operating_income:
+    periods: ["2Q20A", "4Q17A"]
+    reason: "2Q20: the release prints no quarterly operating income (prose gives the YTD 9,421 and a % change only); 4Q17: GT Q4 = FY−9M model derivation (as-reported SIFIC quarter = 4,032)"
+    proof: "data/reports/ac/2020-2T.md:71-76 — 'consolidated operating income declined 3.9%' (no quarterly peso figure); 2017-4T SIFIC [310000] quarter column 4,032 vs GT 4,863"
+  ebitda:
+    periods: ["4Q17A"]
+    reason: "GT Q4 = FY−9M model derivation on the restated basis; GT 6,792 matches no printed figure in the 4T17 SIFIC-only filing (no regional/consolidated EBITDA prose)"
+    proof: "data/reports/ac/2017-4T.md — grep '6,792' = 0 hits; only 'ventas netas consolidadas del 4T17 alcanzaron Ps. 34,385' prose exists (:447)"
+  revenue_mexico:
+    # 2016: the releases report the Norteamérica structure (Mexico bev + US
+    # snacks); a Mexico-region total is never printed (2Q16 prints only 'Bebidas
+    # México … Ps. 13,637' vs GT 14,074) and the Nota-8 matrix has no MX-geography
+    # total either (bev-MX 10,422 + Otros-MX-y-otros 2,107.4 = 12,529.4 vs GT
+    # 12,133). 1Q17: same structure (GT 12,820 unprintable). 4Q17: the 4T17
+    # SIFIC-only filing carries no regional sections at all.
+    periods: ["1Q16A", "2Q16A", "3Q16A", "4Q16A", "1Q17A", "4Q17A"]
+    reason: "Mexico-region quarterly total not printed (2016/1Q17 Norteamérica-structure releases; 4T17 has no regional sections)"
+    proof: "data/reports/ac/2016-2T.md:307 — 'ventas netas para Bebidas México alcanzaron Ps. 13,637' (GT 14,074 matches nothing); 2017-4T.md — no 'región' results sections"
+  revenue_us:
+    # 2Q17/3Q17: printed as-reported values (12,791 / 11,939) contradict GT's
+    # restated 13,580 / 12,667; 4Q17: no regional sections; 3Q18/4Q18: release-only
+    # filings without the [800005] product note (GT 14,267.6 / 14,425.3 unprintable).
+    periods: ["4Q25A", "2Q17A", "3Q17A", "4Q17A", "3Q18A", "4Q18A"]
+    reason: "GT Q4 derived / restated-basis GT contradicting the printed regional figures / [800005] note absent"
+    proof: "data/reports/ac/2025-4T.md — Table 4 Net Sales 23,843 vs matrix 21,666; 2017-2T.md:423 — 'región Estados Unidos alcanzaron Ps. 12,791' vs GT 13,580; 2018-3T.md — no [800005] note (grep 'Topo Chico y Wise' table row = 0)"
+  revenue_south_america:
+    periods: ["4Q17A"]
+    reason: "the 4T17 SIFIC-only filing carries no regional sections; GT 10,648 matches no printed figure"
+    proof: "data/reports/ac/2017-4T.md — only consolidated prose (:447); no 'Sudamérica' results section"
+  revenue_beverages:
+    # GT is an analyst residual whose basis shifts: 1Q16 = externos-row sum
+    # (19,363.4) but 2Q16 = (Total−Otros H1) minus that mixed Q1 (20,524.0 —
+    # matches NO single-basis in-file difference); 1Q17 = gross por-segmento sum;
+    # 2Q17+ = restated CCSWB-era; 2018 reallocates 77.8M between beverages and
+    # others vs every printed matrix row (externos sum 33,918.1 vs GT 33,840.3);
+    # 2Q20 has no matrix at all. Modern (2019+ EN, 2025+ ES) quarters match the
+    # segment-matrix calc and stay extractable.
+    periods: ["1Q16A", "2Q16A", "3Q16A", "4Q16A", "1Q17A", "2Q17A", "3Q17A", "4Q17A",
+              "1Q18A", "2Q18A", "3Q18A", "4Q18A", "2Q20A"]
+    reason: "GT beverages is a mixed-basis analyst residual in 2016-2018 (basis flips between externos-sum, gross-sum and restated); no printed figure or single-basis difference matches"
+    proof: "2016-2T.md:4723-4726 — externos 1Q sum 19,363.439 = GT 1Q16, but H1−Q1 on ANY single row ≠ GT 2Q16 20,523.976; 2018-1T.md:9429-9431 — externos sum 33,918.057 vs GT 33,840.263"
+  revenue_food_snacks:
+    # 2017 post-1Q + 2018: GT ≠ the printed Otros column on either basis (2Q17 GT
+    # 2,529.4 vs printed 6M−1Q diff 2,287.3; 1Q18 GT 2,278.06 vs printed net
+    # 2,200.27 / gross 2,820.76); 2Q20: no matrix printed. 2016 + 1Q17 cells match
+    # the Nota-8 Otros column exactly and stay extractable.
+    periods: ["1Q16A", "2Q16A", "2Q17A", "3Q17A", "4Q17A", "1Q18A", "2Q18A", "3Q18A", "4Q18A",
+              "2Q20A", "3Q24A", "4Q24A", "1Q25A", "3Q25A", "4Q25A"]
+    reason: "GT others-column basis diverges from every printed matrix figure in 2Q17-2018 (CCSWB-era reallocation); 2Q20 prints no segment matrix; 1Q16 Nota-8 matrix is an IMAGE in the PDF (page 79 parses to 321 chars of footnotes only) and 2Q16 is only derivable by differencing against that unparseable Q1 figure"
+    proof: "2017-2T.md:7314-7317 — 6M Otros 4,740.169 − 1Q 2,452.865 = 2,287.304 vs GT 2,529.439; 2018-1T.md:9429-9431 — net 2,200.270 / gross 2,820.757 vs GT 2,278.064; 2016-1T.pdf p.79 — matrix rendered as image (pdfplumber: 321 chars)"
+
+ir_website:
+  url: http://arcacontal.com/en/investors/financial-reports
+  pdf_link_pattern: '(?i)\.pdf'
+  use_playwright: true
+  max_reports: 120
+  delay_ms: 500
+  xbrl_ticker: AC

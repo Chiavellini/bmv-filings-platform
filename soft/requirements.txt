@@ -1,0 +1,27 @@
+# soft — self-contained dependencies.
+#
+# Pinned to the set the scheduled daily refresh actually runs on. Until this
+# file was pinned, `soft` had no declared environment at all: its README said
+# `python3 ...` (system Python) while soft/deploy/com.soft.refresh.plist ran it
+# under ~/.venvs/alpha-go — a personal virtualenv outside the repository. Those
+# are different interpreters with different versions, and neither was recorded.
+#
+# Certified interpreter: Python 3.11.13. See soft/README.md for building a
+# repo-local soft/.venv, which is the supported way to run this subproject.
+
+# Core (inherited from the vendored parent infra):
+openpyxl==3.1.5        # Excel workbook generation
+pandas==3.0.3          # tidy frames for fundamentals + peers
+pyyaml==6.0.3          # configs
+numpy==2.4.6           # historical multiples stats (mean, sigma, percentile)
+pdfplumber==0.11.10    # table extraction (Tier 2 of the vendored cascade)
+requests==2.34.2       # download layer (only needed when refreshing the filings cache)
+beautifulsoup4==4.15.0 # IR page parsing (download layer)
+
+# Test runner. Previously undeclared even though soft/README.md documents
+# `python3 -m pytest -m "not network and not model"` as the way to test.
+pytest==9.1.1
+
+# Optional (off by default; not needed for the WALMEX pilot which reuses cached filings):
+# playwright>=1.45   # JS-rendered IR sites (download fallback)
+# anthropic>=0.40    # LLM tier (opt-in via use_llm=True)

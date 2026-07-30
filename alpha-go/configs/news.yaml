@@ -1,0 +1,30 @@
+# Alpha Go external-news corpus.  Keep source entitlement explicit: by default this corpus stores
+# only a provider-approved headline/summary and canonical link.  Do not add a full publisher body
+# unless its licence permits local storage and search.
+companies: []  # populated at runtime from bmv_corpus.yaml by the dashboard/sync entrypoint
+news:
+  corpus_dir: data/news/corpus
+  catalog_path: data/news/catalog.db
+  # No-key discovery pilot: GDELT verifies this exact company name in its source-side article
+  # search. Alpha Go stores only title, date, publisher domain and link (never article bodies).
+  gdelt:
+    enabled: true
+    timespan: 14d
+    max_records: 25
+  # Metadata/link fallback for the GDELT public endpoint.  Every request is one exact reviewed
+  # company-name phrase and retains no publisher body.  The two locales are intentionally kept
+  # separate to surface Spanish and English coverage; canonical URLs are de-duplicated locally.
+  google_news:
+    enabled: true
+    max_records_per_alias: 100
+    locales:
+      - {language: es, hl: es-419, gl: MX, ceid: "MX:es-419"}
+      - {language: en, hl: en-US, gl: US, ceid: "US:en"}
+  # Add only approved RSS or licensed-provider adapters. Example:
+  # sources:
+  #   - {name: issuer_feed, url: https://example.com/rss.xml, publisher: Example,
+  #      language: en, content_mode: metadata_link}
+  sources: []
+  # Reviewed aliases supplement conservative legal-name/ticker matching.  Short ambiguous BMV
+  # tickers are intentionally not enabled by default.
+  manual_aliases: []

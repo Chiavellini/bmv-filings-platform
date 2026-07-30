@@ -1,0 +1,19 @@
+# generic.yaml — Universal configuration (English-language, generic company)
+# Use this when no company-specific config is available.
+
+company:
+  name: "Unknown Company"
+  ticker: ""
+  exchange: ""
+  language: "en"
+  currency: "USD"
+  unit: "thousands"      # default: values in thousands of currency units
+
+ir_website:
+  url: ""
+  pdf_link_pattern: "(?:annual|quarterly|report|results|earnings|10-[kqKQ]).*\\.pdf"
+  max_reports: 20
+  delay_ms: 500
+
+metric_overrides: {}
+custom_metrics: []

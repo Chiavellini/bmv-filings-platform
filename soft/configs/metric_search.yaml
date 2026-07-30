@@ -1,0 +1,215 @@
+# metric_search.yaml — deterministic semantic dictionary for extraction search.
+#
+# This is not a vector store. It is a reviewable synonym/concept registry used
+# by Tier 2 table matching and evidence-backed extraction before any future
+# embedding provider is introduced.
+
+version: 1
+
+negative_labels:
+  - yoy
+  - year over year
+  - variacion
+  - variacion %
+  - variacion porcentual
+  - margen
+  - margin
+  - as %
+  - as % of
+  - as % of total
+  - as % of consolidated
+  - como %
+  - como % del total
+  - check
+  - comprobacion
+  - bps
+  - bps change
+  - cambio bps
+  - average price
+  - precio promedio
+
+concepts:
+  revenue:
+    metric_keys: [revenue, net_sales]
+    aliases:
+      - total revenues
+      - total revenue
+      - revenue
+      - revenues
+      - net revenue
+      - net sales
+      - total sales
+      - ventas netas
+      - ventas totales
+      - ingresos netos
+      - ingresos totales
+      - total de ingresos
+      - total ingresos
+      - ventas consolidadas
+      - ingresos consolidados
+
+  # SPORT revenue segments. These rows MISS in Tier 2 today because the metric's
+  # label_es ("Membresías y Mantenimiento") does not match the actual table-row
+  # label ("Ingresos por cuotas de mantenimiento y membresías"). Listing the real
+  # row labels here lets the table matcher gap-fill the reported quarters.
+  memberships:
+    metric_keys: [revenue_memberships]
+    aliases:
+      - ingresos por cuotas de mantenimiento y membresias
+      - ingresos por membresias y mantenimiento
+      - membresias y mantenimiento
+      - membership and maintenance revenue
+
+  sports_revenue:
+    metric_keys: [revenue_sports]
+    aliases:
+      - ingresos deportivos y otros ingresos del negocio
+      - ingresos deportivos y otros ingresos
+      - ingresos deportivos y otros
+      - sports and other business revenue
+
+  # NOTE: a `sponsorships` concept (revenue_sponsorships) was intentionally NOT added.
+  # revenue_sponsorships already shows accuracy FAILs in the cascade (wrong cell on the
+  # patrocinios row), and a deterministic Tier-2 alias could not be verified as safe for
+  # it. Treat it as a Tier-3 cell/column fix, not a dictionary alias. See
+  # tests/test_metric_search_concepts.py and the project memory.
+
+  cogs:
+    metric_keys: [cogs]
+    aliases:
+      - cost of sales
+      - cost of revenue
+      - costo de ventas
+      - costo de ingresos
+
+  gross_profit:
+    metric_keys: [gross_profit]
+    aliases:
+      - gross profit
+      - gross income
+      - utilidad bruta
+      - resultado bruto
+      - contribucion bruta
+
+  operating_income:
+    metric_keys: [operating_income, operating_profit_con_ifrs, operating_profit_sin_ifrs]
+    aliases:
+      - operating income
+      - operating profit
+      - operating earnings
+      - ebit
+      - utilidad de operacion
+      - utilidad operativa
+      - resultado de operacion
+      - resultado operativo
+      - uafir
+
+  ebitda:
+    metric_keys: [ebitda, ebitda_sin_ifrs]
+    aliases:
+      - ebitda
+      - adjusted ebitda
+      - uafida
+      - uafirda
+      - flujo operativo
+
+  net_income:
+    metric_keys: [net_income]
+    aliases:
+      - net income
+      - net profit
+      - net earnings
+      - utilidad neta
+      - resultado neto
+      - ganancia neta
+
+  cash:
+    metric_keys: [cash]
+    aliases:
+      - cash and cash equivalents
+      - cash equivalents
+      - efectivo
+      - efectivo y equivalentes
+      - efectivo y equivalentes de efectivo
+
+  assets:
+    metric_keys: [total_assets, current_assets, non_current_assets]
+    aliases:
+      - total assets
+      - assets
+      - activo total
+      - activos totales
+      - total de activos
+      - suma del activo
+
+  liabilities:
+    metric_keys: [total_liabilities, current_liabilities, non_current_liabilities]
+    aliases:
+      - total liabilities
+      - liabilities
+      - pasivos totales
+      - total de pasivos
+      - pasivo total
+
+  equity:
+    metric_keys: [equity]
+    aliases:
+      - total equity
+      - equity
+      - shareholders equity
+      - stockholders equity
+      - capital contable
+      - total de capital contable
+
+  stores:
+    metric_keys: [total_stores, total_stores_mexico, total_stores_cam]
+    aliases:
+      - total stores
+      - stores
+      - unidades
+      - tiendas
+      - total tiendas
+      - tiendas totales
+      - numero de tiendas
+
+  clients:
+    metric_keys: [clientes_activos]
+    aliases:
+      - active clients
+      - total active clients
+      - active members
+      - clientes activos
+      - clientes activos totales
+      - usuarios activos
+      - socios activos
+
+  churn:
+    metric_keys: [net_churn, gross_churn]
+    aliases:
+      - churn
+      - net churn
+      - gross churn
+      - desercion
+      - desercion neta
+      - desercion bruta
+      - desercion neta promedio
+      - desercion bruta promedio
+
+  volume:
+    metric_keys: [volume]
+    aliases:
+      - volume
+      - sales volume
+      - volumen
+      - volumen vendido
+      - toneladas
+      - tons
+
+  capex:
+    metric_keys: [capex]
+    aliases:
+      - capex
+      - capital expenditures
+      - purchase of property plant and equipment
+      - inversiones en activo fijo
+      - adquisicion de inmuebles mobiliario y equipo

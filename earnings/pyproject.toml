@@ -1,0 +1,13 @@
+# earnings is run-by-path, not installed. This file exists so the subproject
+# carries its own pytest configuration instead of silently inheriting the root
+# project's [tool.pytest.ini_options] — which previously made `rootdir` resolve
+# to the parent checkout and left earnings' own markers unavailable.
+
+[tool.pytest.ini_options]
+# Project root on sys.path so `import earnlib.*` and `from tests...` resolve.
+pythonpath = ["."]
+testpaths = ["tests"]
+markers = [
+    "network: tests that hit the real network",
+    "model: tests that require a downloaded model",
+]

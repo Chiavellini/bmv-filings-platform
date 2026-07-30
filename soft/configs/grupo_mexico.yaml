@@ -1,0 +1,98 @@
+# Grupo México (GMEXICOB) — USD reporter, Spanish BMV reporte trimestral.
+# Structure study: docs/GMEXICO_STRUCTURE_STUDY.md. All figures USD; tables print
+# USD thousands. Repeated 5-row financial block at the CONSOLIDATED level and again
+# for each of three divisions: Minera (AMC/Southern Copper), Transportes (GMXT),
+# Infraestructura. Column order is PRIOR-quarter first, CURRENT second, then Δ/Δ%,
+# then accumulated (FY in Q4) — the custom extractor orients via the Δ% test and
+# anchors on the quarterly block (Soriana/LAB style). Production volumes (copper/
+# moly/zinc/silver) are in prose, in tonnes.
+company:
+  name: Grupo México
+  ticker: GMEXICOB
+  exchange: BMV
+  language: es
+  currency: USD             # activates the xbrl USD unit filter + US$mn workbook units
+  unit: millions            # workbook reports US$ millions
+
+custom_extractor: gmexico   # consolidated + per-division blocks → [statement]
+
+# XBRL (IFRS, 2021-2T+) is authoritative for the pure consolidated lines it tags and
+# agrees with the printed US-GAAP statement where both answer; it does NOT tag EBITDA
+# or per-division splits (custom extractor only). net_income is the MAJORITY line
+# (GMEXICO's headline "Utilidad Neta Controladora") — XBRL's ProfitLoss is the group
+# TOTAL, so it is kept off net_income.
+# GMEXICO reports US GAAP; the printed statement is the model basis. XBRL is IFRS
+# and diverges for cogs / operating_income (D&A and exploration are classified
+# differently), so the custom [statement] extractor leads every P&L line and XBRL
+# is only a backstop. revenue agrees across bases; net_income/ebitda are statement-only.
+tier_precedence:
+  default: [statement, xbrl, bmv, note, search, prose, regex_table, table, calc]
+  net_income: [statement, bmv, prose]
+  ebitda: [statement, prose]
+
+# Generic PDF table cells only add noise here (the report is full of division and
+# per-mine sub-tables in "$US MM" and the balance-sheet/cash-flow statements); the
+# custom extractor + XBRL cover the map. Tables print USD thousands, so if the
+# generic table tier is ever re-enabled it must scale by 0.001.
+table_extract:
+  disabled: true
+table_scale: 0.001
+
+# Skip identities that GMEXICO's reporting breaks by construction:
+#   net_income_identity: net_income is MAJORITY; ebt−tax−minority is the group total
+#   fcf_derivation / net_debt_identity: cash-flow & leverage lines come from XBRL only
+#     (2021+); pre-2021 they are prose/absent, so the identities can't hold to 0.5%
+validator:
+  # GMEXICO's US-GAAP statement puts exploration/administration lines BETWEEN the
+  # identity operands, so these never hold to 0.5% (not extraction errors):
+  #   gross_profit_identity: revenue − cogs ≠ Utilidad bruta (Gastos de exploración)
+  #   ebitda_derivation:     EBITDA ≠ operating_income + D&A (exploration + defn)
+  #   margin_consistency:    printed EBITDA margin rounds to whole %
+  #   net_income_identity:   net_income is MAJORITY, not group total ebt−tax−mi
+  #   fcf_derivation / net_debt_identity: leverage lines are XBRL-only (2021+)
+  skip_rules: [gross_profit_identity, ebitda_derivation, margin_consistency,
+               net_income_identity, fcf_derivation, net_debt_identity]
+
+ir_website:
+  # Index page 403s to plain + curl_cffi requests (verified 2026-07-03). Document
+  # URLs are open and deterministically templated — fetched via direct_url_templates.
+  url: https://www.gmexico.com/Pages/reportes-financieros.aspx
+  direct_url_templates:
+    - "https://gmexico.com/GMDocs/ReportesFinancieros/Esp/{year}/RF_ES_{year}_{quarter}T.pdf"
+  xbrl_ticker: GMEXICO
+  delay_ms: 400
+
+# Per-division net sales + EBITDA (Minera / Transportes / Infraestructura). The
+# consolidated P&L (revenue, cogs, operating_income, ebitda, net_income) and the
+# balance-sheet cash/debt lines come from the custom extractor ([statement]) with
+# XBRL as backstop for the pure IFRS lines it tags (2021+).
+custom_metrics:
+  - {key: ns_minera,            label: "Minera — Net Sales",          label_es: "Minera Ventas",          section: income, unit: currency}
+  - {key: ns_transportes,       label: "Transportes — Net Sales",     label_es: "Transportes Ventas",     section: income, unit: currency}
+  - {key: ns_infraestructura,   label: "Infraestructura — Net Sales", label_es: "Infraestructura Ventas", section: income, unit: currency}
+  - {key: ebitda_minera,          label: "Minera — EBITDA",          label_es: "Minera EBITDA",          section: income, unit: currency}
+  - {key: ebitda_transportes,     label: "Transportes — EBITDA",     label_es: "Transportes EBITDA",     section: income, unit: currency}
+  - {key: ebitda_infraestructura, label: "Infraestructura — EBITDA", label_es: "Infraestructura EBITDA", section: income, unit: currency}
+
+# net_income is majority (can swing); net_debt goes NEGATIVE when GMEXICO is net-cash
+# (recent quarters — cash exceeds gross debt after deleveraging).
+metric_expectations:
+  net_income: {sign: any}
+  net_debt: {sign: any}
+
+# Documented gaps (verified against the corpus — not extraction errors, so the
+# fallback tiers' noisy guesses are blanked instead of shipped):
+#   4Q19A consolidated P&L — the 2019-4T report prints only subsidiary statements
+#     (no "(GM)" income statement) and no page-2 year-comparison table; pre-2021 so
+#     no XBRL. Only full-year prose exists ("EBITDA del 2019 fue de US$4,948 M").
+#   3Q19A cash — same report family: no "(GM)" balance sheet, pre-XBRL.
+#   2018-2T (2Q18A) Transportes has no division year-comparison table (prose only).
+unavailable:
+  revenue:          {periods: [4Q19A], parse_gap: true, reason: "2019-4T prints only subsidiary statements + division tables; no consolidated (GM) income statement or page-2 year-comparison table, pre-XBRL", proof: "data/reports/grupo_mexico/2019-4T.md — grep '(GM)' → 0 hits; only FY prose ':29 EBITDA del 2019 fue de US$4,948 millones'"}
+  cogs:             {periods: [4Q19A], parse_gap: true, reason: "see revenue 4Q19A", proof: "data/reports/grupo_mexico/2019-4T.md"}
+  operating_income: {periods: [4Q19A], parse_gap: true, reason: "see revenue 4Q19A", proof: "data/reports/grupo_mexico/2019-4T.md"}
+  ebitda:           {periods: [4Q19A], parse_gap: true, reason: "see revenue 4Q19A", proof: "data/reports/grupo_mexico/2019-4T.md"}
+  net_income:       {periods: [4Q19A], parse_gap: true, reason: "see revenue 4Q19A", proof: "data/reports/grupo_mexico/2019-4T.md"}
+  cash:             {periods: [3Q19A], parse_gap: true, reason: "2019-3T prints only subsidiary statements; no consolidated (GM) balance sheet, pre-XBRL", proof: "data/reports/grupo_mexico/2019-3T.md — grep '(GM)' → subsidiary GMXT only"}
+  ns_transportes:      {periods: [2Q18A], parse_gap: true, reason: "2018-2T has no Transportes division year-comparison table (prose only)", proof: "data/reports/grupo_mexico/2018-2T.md"}
+  ebitda_transportes:  {periods: [2Q18A], parse_gap: true, reason: "see ns_transportes 2Q18A", proof: "data/reports/grupo_mexico/2018-2T.md"}

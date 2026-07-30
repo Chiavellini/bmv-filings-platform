@@ -1,0 +1,11 @@
+company:
+  currency: MXN
+  exchange: ''
+  language: es
+  name: Her
+  ticker: ''
+  unit: thousands
+custom_metrics: []
+ir_website:
+  url: https://grupoherdez.com.mx/investors-financial-information#reports
+metric_overrides: {}

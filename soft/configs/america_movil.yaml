@@ -1,0 +1,13 @@
+# America Movil — minimal coverage config (XBRL-sourced fundamentals; no custom extractor).
+company:
+  name: America Movil
+  ticker: "AMX MM"
+  currency: MXN
+  exchange: BMV
+  unit: millions
+
+tier_precedence:
+  default: [xbrl, bmv, prose, search, table, calc]
+
+ir_website:
+  xbrl_ticker: "AMX"

@@ -1,0 +1,103 @@
+# Golden reference ranges for the reconciliation workflow (src/coverage/reconcile.py).
+#
+# Hand-set APPROXIMATE public ranges for large, liquid BMV names. Purpose: a deterministic,
+# network-free backstop that catches GROSS calculation errors (2x / 10x / currency / scale) — NOT a
+# precision audit. Ranges are deliberately WIDE so a genuinely-correct value never false-flags; the
+# live Yahoo oracle (Layer 2) does the tight per-name cross-check. Keyed by the master's Company
+# name (== outputs/<Name>/ folder). shares_out in millions; pe is a multiple; net_margin/roe in %.
+# Omit a field (leave it out) when the metric is structurally volatile for that name.
+
+Walmex:
+  clave: WALMEX
+  shares_out_mn: [16000, 18500]
+  pe: [15, 34]
+  net_margin: [3.5, 8]
+  roe: [15, 35]
+
+Grupo Mexico:
+  clave: GMEXICO
+  shares_out_mn: [7000, 9200]
+  pe: [7, 24]
+  net_margin: [15, 40]
+  roe: [12, 34]
+
+America Movil:
+  clave: AMX
+  shares_out_mn: [55000, 66000]
+  pe: [8, 28]
+  net_margin: [3, 18]
+  roe: [12, 45]
+
+Bimbo:
+  clave: BIMBO
+  shares_out_mn: [4000, 4600]
+  pe: [11, 42]
+  net_margin: [1.5, 7]
+  roe: [7, 22]
+
+GFNorte:
+  clave: GFNORTE
+  shares_out_mn: [2700, 3000]
+  pe: [6, 15]
+  roe: [14, 30]
+
+KOF:
+  clave: KOF
+  shares_out_mn: [1900, 2200]
+  pe: [11, 26]
+  net_margin: [5, 13]
+  roe: [10, 24]
+
+Cemex:
+  clave: CEMEX
+  shares_out_mn: [13500, 15500]
+  pe: [4, 45]
+  net_margin: [1, 14]
+  roe: [2, 18]
+
+GAP:
+  clave: GAP
+  shares_out_mn: [500, 600]
+  pe: [11, 30]
+  net_margin: [18, 45]
+  roe: [18, 60]
+
+ASUR:
+  clave: ASUR
+  shares_out_mn: [280, 320]
+  pe: [11, 30]
+  net_margin: [22, 48]
+  roe: [10, 28]
+
+Alsea:
+  clave: ALSEA
+  shares_out_mn: [790, 870]
+  pe: [9, 40]
+  net_margin: [0.5, 7]
+
+Kimber:
+  clave: KIMBER
+  shares_out_mn: [2900, 3200]
+  pe: [11, 26]
+  net_margin: [7, 17]
+  # roe omitted: Kimber's equity is structurally tiny (buybacks) → ROE is genuinely huge/volatile.
+
+Liverpool:
+  clave: LIVERPOL
+  shares_out_mn: [1250, 1420]
+  pe: [5, 16]
+  net_margin: [5, 13]
+  roe: [7, 18]
+
+Chedraui:
+  clave: CHDRAUI
+  shares_out_mn: [900, 1000]
+  pe: [7, 19]
+  net_margin: [1, 4.5]
+  roe: [7, 20]
+
+Orbia:
+  clave: ORBIA
+  shares_out_mn: [1900, 2200]
+  # pe/net_margin/roe omitted: USD reporter with recent losses → structurally volatile; the
+  # structural + oracle layers cover it. shares_out is the stable golden check.

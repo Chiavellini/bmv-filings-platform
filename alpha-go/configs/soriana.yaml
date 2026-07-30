@@ -1,0 +1,216 @@
+company:
+  currency: MXN
+  exchange: BMV
+  language: en
+  name: Organizacion Soriana
+  ticker: SORIANA
+  unit: millions
+# The income-statement table parses char-spaced (one char per token) with the
+# numbers in a fixed-order column block. src/extract/soriana.py recovers the
+# full quarterly P&L deterministically from that block (and picks the quarterly
+# column over the FY one in Q4 reports). Tagged source "[statement]".
+custom_extractor: soriana
+# Keys produced by src/extract/soriana.py beyond the 11 core P&L lines. No patterns
+# here — the deterministic custom extractor supplies them ("[statement]"/"[search]").
+custom_metrics:
+  # ── extended income-statement lines (char-spaced block era, ~2023+) ──
+  - {key: income_before_other,  label: "Income before other expenses", section: income, unit: currency}
+  - {key: other_income_expense, label: "Other Income / Expenses, Net",  section: income, unit: currency}
+  - {key: interest_income_net,  label: "Interest Income (Expenses), Net", section: income, unit: currency}
+  - {key: fx_gain_loss,         label: "Foreign Exchange Gain (Losses)", section: income, unit: currency}
+  - {key: minority_interest,    label: "Minority Interest (P&L)",       section: income, unit: currency}
+  - {key: controlling_interest, label: "Controlling Interest",          section: income, unit: currency}
+  - {key: noncontrolling_interest, label: "Non-controlling Interest",   section: income, unit: currency}
+  - {key: cash_net_profit,      label: "Cash Net Profit",               section: income, unit: currency}
+  # ── operational KPIs by store format (units & sales-floor m²) ──
+  - {key: units_hiper,    label: "Hiper — Units",        section: kpi, unit: count}
+  - {key: area_hiper,     label: "Hiper — Sales Floor m²", section: kpi, unit: count}
+  - {key: units_super,    label: "Super — Units",        section: kpi, unit: count}
+  - {key: area_super,     label: "Super — Sales Floor m²", section: kpi, unit: count}
+  - {key: units_mercado,  label: "Mercado — Units",      section: kpi, unit: count}
+  - {key: area_mercado,   label: "Mercado — Sales Floor m²", section: kpi, unit: count}
+  - {key: units_express,  label: "Express — Units",      section: kpi, unit: count}
+  - {key: area_express,   label: "Express — Sales Floor m²", section: kpi, unit: count}
+  - {key: units_cityclub, label: "City Club — Units",    section: kpi, unit: count}
+  - {key: area_cityclub,  label: "City Club — Sales Floor m²", section: kpi, unit: count}
+  - {key: total_units,        label: "Total Units",            section: kpi, unit: count}
+  - {key: total_sales_floor,  label: "Total Sales Floor m²",   section: kpi, unit: count}
+  - {key: sodimac_units,  label: "Sodimac — Units",      section: kpi, unit: count}
+  - {key: sodimac_area,   label: "Sodimac — Sales Floor m²", section: kpi, unit: count}
+  # ── same-store sales (prose) + store movement (prose, sparse) ──
+  - {key: sss,            label: "Same-Store Sales YoY",  section: kpi, unit: pct}
+  - {key: net_new_stores, label: "Net New Stores",        section: kpi, unit: count}
+  - {key: stores_closed,  label: "Stores Closed",         section: kpi, unit: count}
+  # Annual/cumulative capex headline (Q4 reports) — kept OFF the quarterly capex row.
+  - key: capex_annual
+    label: "Annual Capex"
+    section: kpi
+    unit: currency
+    patterns:
+      - regex: 'Annual\s+Capex\s+of\s+\$?\s*([\d.,]+)\s+billion'
+        source: prose
+        multiplier: 1000.0
+      - regex: 'total\s+investments?\s+during\s+\d{4}\s+reached\s+\$?\s*([\d.,]+)\s+billion'
+        source: prose
+        multiplier: 1000.0
+      - regex: 'total\s+investment\s+of\s+\$?\s*([\d.,]+)\s+billion\s+pesos[^.]*(?:year|annual|during)'
+        source: prose
+        multiplier: 1000.0
+ir_website:
+  url: https://www.organizacionsoriana.com/principales_reportes_en.html
+  # organizacionsoriana.com sits behind a Cloudflare TLS-fingerprint bot wall that
+  # 403s plain HTTP clients (requests/curl) regardless of User-Agent. The page itself
+  # is trivial static HTML with plain <a href="...pdf"> links, so no browser/Playwright
+  # is needed — only a real browser TLS fingerprint, which curl_cffi replays.
+  impersonate: chrome
+  xbrl_ticker: SORIANA
+  max_reports: 120
+  delay_ms: 500
+# Soriana's consolidated income-statement TABLE OCR-parses to garbage (vertically
+# char-spaced), and Q4 reports carry a second accumulated/FY table that the generic
+# table regex grabs by mistake. So extraction is PROSE-FIRST: the headline figures
+# are stated cleanly in prose every quarter. English reports phrase large lines as
+# "$X.XXX billion" (→ ×1000 to reach millions) and small lines as "$XXX million"
+# (→ ×1); Spanish reports use "$X,XXX millones" (→ ×1). Patterns are anchored to the
+# QUARTER sentence ("reached" / "closed the Q4 in" / "del trimestre") to avoid the
+# annual/accumulated figure stated in the same paragraph.
+# Cross-period derivations computed by pipeline.run on the sorted wide frame.
+# Net new stores = period-over-period change in the (reliable) total store count.
+delta_metrics:
+  net_new_stores: total_units
+
+# Verification-gate expectations (see docs/VERIFICATION.md). Declare disclosure
+# windows / sparsity / sign so the gate doesn't chase genuinely-undisclosed cells.
+metric_expectations:
+  capex:         {sparse: true}                 # quarterly capex disclosed irregularly
+  capex_annual:  {sparse: true}                 # only the Q4 annual headline
+  sss:           {sparse: true, sign: any}      # prose, not every quarter
+  sodimac_units: {window: "2021-4T:"}           # in the store table from 2021-4T
+  sodimac_area:  {window: "2021-4T:"}
+  stores_closed: {expected_empty: true}         # prose-vague; rarely disclosed
+
+tier_precedence:
+  # `statement` (the deterministic income-statement recovery) outranks everything
+  # but XBRL/BMV. The secondary lines exclude regex_table/table entirely so a Q4
+  # FY-table grab can never win; they fall back to prose then calc (identities).
+  default: [xbrl, bmv, statement, prose, search, regex_table, table, calc]
+  depreciation: [xbrl, bmv, statement, prose, calc]
+  operating_income: [xbrl, bmv, statement, prose, calc]
+  ebt: [xbrl, bmv, statement, prose, calc]
+  tax_expense: [xbrl, bmv, statement, prose, calc]
+  cogs: [xbrl, bmv, statement, prose, calc]
+  # Capex: prefer the custom extractor's quarterly-prose value (unique tag
+  # [qcapex]) over every other tier. Where it's absent, the BMV cash-flow tier
+  # leaves a negative cumulative outflow as the only candidate — `reject_negative`
+  # below drops it, so the cell goes blank (red) instead of showing a wrong number.
+  capex: [qcapex]
+  capex_annual: [prose]
+
+# Drop physically-impossible values that a fallback tier may leave as the sole
+# candidate (capex is a positive quarterly magnitude; a negative is the cumulative
+# cash-flow outflow, wrong period AND wrong sign).
+reject_negative: [capex]
+
+metric_overrides:
+  revenue:
+    patterns:
+      - regex: 'Total\s+Income\s+reached\s+\$?\s*([\d.]+)\s+billion'
+        source: prose
+        multiplier: 1000.0
+      - regex: 'Ingresos\s+Totales[\s\S]{0,40}?ascendieron\s+a\s+\$?\s*([\d.,]+)\s*millones'
+        source: prose
+        multiplier: 1.0
+      - regex: 'Ingresos\s+Totales\s+por\s+\$?\s*([\d.,]+)\s*millones'
+        source: prose
+        multiplier: 1.0
+  gross_profit:
+    patterns:
+      - regex: 'Gross\s+[Pp]rofit\s+reached\s+\$?\s*([\d.]+)\s+billion'
+        source: prose
+        multiplier: 1000.0
+      # "Gross profit for this quarter reached $8.136 billion" (words between
+      # "profit" and "reached"); 2016-3T had no parseable IS table.
+      - regex: 'Gross\s+[Pp]rofit[^$\n]{0,45}?reach\w*\s+\$?\s*([\d.]+)\s+billion'
+        source: prose
+        multiplier: 1000.0
+      - regex: 'utilidad\s+bruta[\s\S]{0,60}?(?:se\s+sit[úu]a\s+en|asciende\s+a|ascendió\s+a|fue\s+de)\s+\$?\s*([\d.,]+)\s*millones'
+        source: prose
+        multiplier: 1.0
+  operating_expense:
+    patterns:
+      - regex: '[Oo]perating\s+[Ee]xpenses[\s\S]{0,90}?reach\w*\s+\$?\s*([\d.]+)\s+billion'
+        source: prose
+        multiplier: 1000.0
+      - regex: 'gasto\s+operativo[\s\S]{0,150}?\$\s*([\d.,]+)\s*millones'
+        source: prose
+        multiplier: 1.0
+  ebitda:
+    patterns:
+      - regex: 'closed\s+with\s+an\s+EBITDA[^$]{0,12}\$?\s*([\d.]+)\s+billion'
+        source: prose
+        multiplier: 1000.0
+      - regex: 'EBITDA[^$]{0,30}?closed\s+the\s+Q\d\s+in\s+\$?\s*([\d.]+)\s+billion'
+        source: prose
+        multiplier: 1000.0
+      - regex: 'EBITDA[^$]{0,16}?\s+de\s+\$?\s*([\d.,]+)\s*millones'
+        source: prose
+        multiplier: 1.0
+  net_income:
+    patterns:
+      # Net income/profit/earnings stated as "$X.XXX billion" with various verbs
+      # ("resulted in", "reached") and words between — the 3-decimal form is the
+      # comma-thousands figure ($1.000 billion = 1,000 mn; $1.155 billion = 1,155).
+      # Anchored to "quarter" so the FY/accumulated figure isn't captured.
+      - regex: '[Nn]et\s+(?:income|profit|earnings)\s+of\s+the\s+quarter[^$\n]{0,40}?\$?\s*(\d+\.\d{3})\s+billion'
+        source: prose
+        multiplier: 1000.0
+      - regex: 'quarterly\s+consolidated\s+net\s+(?:income|profit|earnings)[^$\n]{0,30}?\$?\s*(\d+\.\d{3})\s+billion'
+        source: prose
+        multiplier: 1000.0
+      # Quarterly net income < $1bn is written "$XXX million"; ≥ $1bn as "$X.XXX
+      # billion" (always decimal). A 3-digit integer + "billion" is a known report
+      # typo (e.g. 2Q24 "$725 billion") that means millions.
+      - regex: '[Nn]et\s+[Ii]ncome\s+reached\s+\$?\s*(\d+\.\d+)\s+billion'
+        source: prose
+        multiplier: 1000.0
+      - regex: '[Nn]et\s+[Ii]ncome\s+reached\s+\$?\s*(\d{2,4})\s+billion'
+        source: prose
+        multiplier: 1.0
+      - regex: '[Nn]et\s+[Ii]ncome\s+reached\s+\$?\s*([\d.,]+)\s+million\b'
+        source: prose
+        multiplier: 1.0
+      - regex: 'utilidad\s+neta[\s\S]{0,40}?(?:alcanz[óo](?:\s+los)?|fue\s+de|se\s+ubic[óo]\s+en)\s+\$?\s*([\d.,]+)\s*millones'
+        source: prose
+        multiplier: 1.0
+  interest_expense:
+    patterns:
+      - regex: 'net\s+financial\s+cost\s+of\s+the\s+quarter\s+closed\s+in\s+\$?\s*([\d.,]+)\s+million'
+        source: prose
+        multiplier: 1.0
+      - regex: 'costo\s+financiero\s+neto\s+se\s+situó\s+en\s+\$?\s*([\d.,]+)\s*millones'
+        source: prose
+        multiplier: 1.0
+  # NOTE: quarterly capex is extracted in src/extract/soriana.py (tagged [search])
+  # and pinned via `tier_precedence.capex: [search]` above — no prose patterns here,
+  # so the base cash-flow pattern can never leak a negative cumulative outflow.
+  depreciation:
+    # Cash-flow statement (parses cleanly, quarterly) — Spanish reports only.
+    patterns:
+      - regex: 'Depreciación\s+y\s+amortización\s+([\d.,]+)'
+        source: prose
+        multiplier: 1.0
+  ebt:
+    # Cash-flow statement first line (quarterly) — Spanish reports only.
+    patterns:
+      - regex: 'Utilidad\s+antes\s+de\s+impuestos\s+a\s+la\s+utilidad\s+([\d.,]+)'
+        source: prose
+        multiplier: 1.0
+  # Identity-derived fallbacks: used only when the statement extractor and prose
+  # both miss (older/clean-row periods). Ranked last, so they never override a
+  # recovered or prose value, and the FY regex_table is excluded entirely.
+  cogs:
+    calc: "revenue - gross_profit"
+  operating_income:
+    calc: "ebitda - depreciation"
+  tax_expense:
+    calc: "ebt - net_income"

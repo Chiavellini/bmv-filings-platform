@@ -1,0 +1,36 @@
+# Generated corpus + search index (rebuildable from sources)
+data/corpus/
+data/index/
+*.db
+*.sqlite
+*.sqlite3
+
+# The rest of alpha-go/data is downloaded or derived, 8.9 GB in total. None of it
+# was tracked, but nothing guarded it either — one `git add -A` would have
+# committed the lot.
+data/raw/
+data/derived/
+data/news/
+data/catalog/
+data/bmv/
+data/.corpus.projection.lock
+
+# Parse/LLM caches inherited from vendored infra
+.cache/
+.llm_cache/
+
+# Local embedding model downloads
+.models/
+
+# Secrets — LLM API keys for the opt-in sentiment/Q&A layers (never commit)
+.env
+.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.venv*/
+venv/
+*.egg-info/

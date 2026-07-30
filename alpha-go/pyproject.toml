@@ -1,0 +1,16 @@
+[project]
+name = "alpha-go"
+version = "0.1.0"
+description = "Local AlphaSense — a self-contained financial-document search & intelligence platform."
+requires-python = ">=3.10"
+
+# Self-contained: alpha-go vendors the reusable parent infra under its own src/ and
+# resolves it via the same `import src.<role>.<module>` namespace. Running from the
+# alpha-go/ root, these imports resolve to alpha-go's OWN copy — never the parent repo.
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+markers = [
+    "network: tests that hit the real network",
+    "model: tests that load the local embedding model",
+]

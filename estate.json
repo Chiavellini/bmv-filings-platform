@@ -1,0 +1,16 @@
+{
+  "bridge_version": 1,
+  "estate_root": "data/document_estate",
+  "catalog": "catalog.db",
+  "objects": "blobs",
+  "reports_view": "views/reports",
+  "uploads": "user",
+  "models": {
+    "root": "models",
+    "alpha_go_embedding": "models/paraphrase-multilingual-MiniLM-L12-v2"
+  },
+  "manifest": "manifest.json",
+  "indexes": {
+    "alpha_go": "indexes/alpha_go.db"
+  }
+}
