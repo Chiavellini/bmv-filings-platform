@@ -460,6 +460,7 @@ class InvestorRelationsAdapter:
                         source.delay_ms if source.delay_ms is not None else 300
                     ),
                     verify_ssl=bool(source.options.get("verify_ssl", True)),
+                    impersonate=source.impersonate,
                     detail_sink=template_details,
                 )
             except Exception as exc:

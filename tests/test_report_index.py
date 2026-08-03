@@ -65,6 +65,13 @@ def test_infer_period_label_handles_liverpool_xbrl_pdf_names():
     assert infer_period_label("1TXBRL2025") == "2025-1T"
 
 
+def test_infer_period_label_handles_orbia_leading_quarter_names():
+    from src.shared.report_index import infer_period_label
+
+    assert infer_period_label("orbia-q2-2026-earnings-release_vf1-1") == "2026-2T"
+    assert infer_period_label("company_T3_2025_results") == "2025-3T"
+
+
 def test_infer_period_label_recognizes_annual_reports():
     from src.shared.report_index import infer_period_label
 

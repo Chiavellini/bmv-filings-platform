@@ -806,10 +806,15 @@ overlays:
     ir:
       url: https://www.kimberly-clark.com.mx/finanzas/reportes-trimestrales
       pdf_link_pattern: '(?i)\.pdf'
+      direct_url_templates:
+        - https://www.kimberly-clark.com.mx/data/{year}/PR{quarter}T{year2}.pdf
       use_playwright: true
       max_reports: 120
       delay_ms: 500
       xbrl_ticker: KIMBER
+      live_verified_period: 2026-2T
+      live_verified_on: 2026-08-03
+      live_verified_url: https://www.kimberly-clark.com.mx/data/2026/PR2T26.pdf
   kof:
     name: Coca-Cola FEMSA
     market_ticker: KOFUBL
@@ -904,10 +909,15 @@ overlays:
     unit: millions
     ir:
       url: https://www.organizacionsoriana.com/principales_reportes_en.html
-      impersonate: chrome
+      impersonate: safari
+      direct_url_templates:
+        - https://www.organizacionsoriana.com/pdf/reportes/{year}/Eng/{quarter}Q{year2}InfDir_ENGVF.pdf
       xbrl_ticker: SORIANA
       max_reports: 120
       delay_ms: 500
+      live_verified_period: 2026-2T
+      live_verified_on: 2026-08-03
+      live_verified_url: https://www.organizacionsoriana.com/pdf/reportes/2026/Eng/2Q26InfDir_ENGVF.pdf
   sports_world:
     name: Grupo Sports World
     market_ticker: SPORT

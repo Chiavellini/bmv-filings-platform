@@ -403,6 +403,7 @@ def test_ir_page_failure_still_attempts_deterministic_period_templates(tmp_path)
             "https://issuer.test/{year}/results-{quarter}T.pdf",
         ),
         delay_ms=0,
+        impersonate="safari",
     )
     adapter = InvestorRelationsAdapter(
         downloader=blocked_page,
@@ -419,6 +420,7 @@ def test_ir_page_failure_still_attempts_deterministic_period_templates(tmp_path)
     )
 
     assert template_calls[0][1] == {"2025-1T", "2025-2T"}
+    assert template_calls[0][2]["impersonate"] == "safari"
     assert [artifact.source.period for artifact in report.artifacts] == [
         "2025-1T",
         "2025-2T",

@@ -52,6 +52,14 @@ _PERIOD_PATTERNS = (
         r"(?:^|[^0-9A-Za-z])(?P<year>20\d{2})[-_ ]?[tq](?P<quarter>[1-4])(?:[^0-9A-Za-z]|$)",
         re.IGNORECASE,
     ),
+    # Orbia-style leading quarter token: ``Q2-2026`` / ``T2_2026``.
+    # The quarterly-link gate has always accepted this shape, so period
+    # normalization must agree or target-aware downloads can choose an older
+    # unknown-period link that happens to appear first on the page.
+    re.compile(
+        r"(?:^|[^0-9A-Za-z])[tq](?P<quarter>[1-4])[-_. ]?(?P<year>20\d{2}|\d{2})(?:[^0-9A-Za-z]|$)",
+        re.IGNORECASE,
+    ),
     # Matches Herdez-style "1_T24_...", "2_Q25_...", "4_Q22_..." (quarter_sep_T/Q_year2digit)
     re.compile(
         r"(?:^|[^0-9A-Za-z])(?P<quarter>[1-4])[-_ ][tq](?P<year>\d{2,4})(?=[^0-9A-Za-z]|$)",

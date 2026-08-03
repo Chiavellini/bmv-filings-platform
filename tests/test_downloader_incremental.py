@@ -150,6 +150,46 @@ def test_target_aware_cap_keeps_newest_periods_from_oldest_first_page(
     assert downloaded_urls == [urls[3], urls[2]]
 
 
+def test_target_aware_selection_understands_orbia_qn_year_filenames(
+    monkeypatch,
+    tmp_path,
+):
+    from src.download import downloader
+
+    q1_url = (
+        "https://www.orbia.example/assets/2026/q1/"
+        "orbia-q1-2026-earnings-release.pdf"
+    )
+    q2_url = (
+        "https://www.orbia.example/assets/2026/q2/"
+        "orbia-q2-2026-earnings-release.pdf"
+    )
+    html = (
+        f'<a href="{q1_url}">English</a>'
+        f'<a href="{q2_url}">English</a>'
+    )
+    downloaded_urls: list[str] = []
+
+    def fake_download(_session, url, dest, **_kwargs):
+        downloaded_urls.append(url)
+        dest.write_bytes(b"%PDF-1.4\nfixture\n%%EOF")
+        return dest
+
+    monkeypatch.setattr(downloader, "_make_session", lambda **_kwargs: _Session(html))
+    monkeypatch.setattr(downloader, "_download_pdf", fake_download)
+
+    downloader.download_from_ir(
+        "https://www.orbia.example/quarterlies",
+        tmp_path,
+        delay_ms=0,
+        use_playwright=False,
+        desired_periods={"2026-2T"},
+        max_reports=1,
+    )
+
+    assert downloaded_urls == [q2_url]
+
+
 def test_download_failure_sink_preserves_failed_url_and_period(
     monkeypatch,
     tmp_path,
@@ -210,6 +250,38 @@ def test_pdf_candidate_preserves_spaces_in_navigable_href():
         "https://qinversionistas.qualitas.com.mx/storage/informes/2026/"
         "trimestral/2T/mx/Q - Reporte Trimestral 2T26 VFF2.pdf"
     ]
+
+
+def test_template_downloader_uses_configured_browser_tls_profile(monkeypatch, tmp_path):
+    from src.download import downloader
+
+    session = _Session("")
+
+    def fake_download(observed_session, _url, dest, **_kwargs):
+        assert observed_session is session
+        assert observed_session._impersonate_profile == "safari"
+        dest.write_bytes(b"%PDF-1.4\nfixture\n%%EOF")
+        return dest
+
+    monkeypatch.setattr(downloader, "_make_session", lambda *_args, **_kwargs: session)
+    monkeypatch.setattr(
+        downloader,
+        "_verify_pdf_url",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("requests-only probe must be skipped for impersonated fetches")
+        ),
+    )
+    monkeypatch.setattr(downloader, "_download_pdf", fake_download)
+
+    paths = downloader.download_from_url_templates(
+        ["https://issuer.example/{year}/{quarter}Q{year2}.pdf"],
+        tmp_path,
+        {"2026-2T"},
+        delay_ms=0,
+        impersonate="safari",
+    )
+
+    assert [path.name for path in paths] == ["2026-2T.pdf"]
 
 
 def test_liverpool_xbrl_named_pdf_is_a_quarterly_report():

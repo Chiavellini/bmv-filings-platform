@@ -929,6 +929,7 @@ def download_from_url_templates(
     *,
     delay_ms: int = 300,
     verify_ssl: bool = True,
+    impersonate: str | None = None,
     detail_sink: list[DownloadedPdf] | None = None,
 ) -> list[Path]:
     """Fetch quarterly PDFs from deterministic URL templates.
@@ -942,6 +943,8 @@ def download_from_url_templates(
     Configured per company via ``ir_website.direct_url_templates``.
     """
     session = _make_session(verify_ssl)
+    if impersonate:
+        session._impersonate_profile = impersonate
     saved: list[Path] = []
     for period in sorted(periods):
         m = re.match(r"^(\d{4})-([1-4])T$", period)
@@ -950,7 +953,10 @@ def download_from_url_templates(
         year, quarter = m.group(1), m.group(2)
         for tpl in templates:
             url = tpl.format(year=year, year2=year[-2:], quarter=quarter)
-            if not _verify_pdf_url(session, url, verify_ssl):
+            # A configured browser-TLS profile cannot be exercised by the
+            # requests-only HEAD probe. Let the full downloader use that
+            # profile and validate PDF magic bytes instead.
+            if not impersonate and not _verify_pdf_url(session, url, verify_ssl):
                 continue
             dest = out_dir / f"{year}-{quarter}T.pdf"
             try:

@@ -36,7 +36,7 @@ def test_canonical_registry_covers_actual_project_universes():
     assert sum(
         source.live_verified_period is not None
         for _issuer, source in primary_pdf_sources
-    ) == 8
+    ) == 10
 
     tiendas_3b = registry.get("tiendas_3b")
     assert not tiendas_3b.is_member("alpha_go")
@@ -72,6 +72,15 @@ def test_canonical_registry_covers_actual_project_universes():
     assert registry.get("walmex").source("ir").live_verified_period == "2026-2T"
     assert registry.get("walmex").source("ir").strict_pdf_link_pattern
     assert registry.get("liverpool").source("ir").live_verified_period == "2026-2T"
+    assert registry.get("kimber").source("ir").direct_url_templates == (
+        "https://www.kimberly-clark.com.mx/data/{year}/PR{quarter}T{year2}.pdf",
+    )
+    assert registry.get("kimber").source("ir").live_verified_period == "2026-2T"
+    assert registry.get("soriana").source("ir").direct_url_templates == (
+        "https://www.organizacionsoriana.com/pdf/reportes/"
+        "{year}/Eng/{quarter}Q{year2}InfDir_ENGVF.pdf",
+    )
+    assert registry.get("soriana").source("ir").live_verified_period == "2026-2T"
 
 
 def test_project_memberships_match_committed_source_universes_exactly():

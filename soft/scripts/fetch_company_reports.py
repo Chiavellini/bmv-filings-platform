@@ -283,6 +283,7 @@ def fetch(
                     templated = download_from_url_templates(
                         list(ir["direct_url_templates"]), stage_out, missing,
                         delay_ms=int(ir.get("delay_ms", 300)),
+                        impersonate=ir.get("impersonate"),
                     )
                     print(f"{company}: {len(templated)} period(s) staged via URL templates")
                 except Exception as exc:  # noqa: BLE001 — best-effort, like the other layers

@@ -936,7 +936,7 @@ def _validate_production_artifact(
     elif final_url is None:
         error = "production adapter returned no exact final source URL"
     elif not issuer_verified or not period_verified:
-        error = "PDF first-page text did not verify issuer and exact expected period"
+        error = "PDF sampled text did not verify issuer and exact expected period"
 
     local_path: str | None = None
     status = "validation_failed"
@@ -1207,9 +1207,9 @@ class SourceOnboardingCompiler:
 
         notes: list[str] = []
         if any(item.valid_pdf and not item.issuer_verified for item in validations):
-            notes.append("At least one PDF could not be bound to the issuer from first-page text.")
+            notes.append("At least one PDF could not be bound to the issuer from sampled PDF text.")
         if any(item.valid_pdf and not item.period_verified for item in validations):
-            notes.append("At least one PDF did not confirm its advertised quarter in first-page text.")
+            notes.append("At least one PDF did not confirm its advertised quarter in sampled PDF text.")
         if confidence == "medium":
             notes.append("One verified period is not enough to infer repeatability safely.")
         if confidence == "high" and not templates:
@@ -1806,7 +1806,7 @@ def extract_static_links(payload: HttpPayload) -> tuple[tuple[str, str], ...]:
     return tuple(sorted(links.items()))
 
 
-def extract_pdf_identity_text(content: bytes, *, pages: int = 3) -> str:
+def extract_pdf_identity_text(content: bytes, *, pages: int = 4) -> str:
     chunks: list[str] = []
     with pdfplumber.open(BytesIO(content)) as document:
         for page in document.pages[:pages]:
