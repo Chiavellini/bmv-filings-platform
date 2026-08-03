@@ -6,4 +6,4 @@
 #
 # Then install this file and the root package. psycopg is needed only when
 # moving from the single-computer SQLite trial to PostgreSQL metadata.
-psycopg2-binary==2.9.10
+psycopg2-binary==2.9.12

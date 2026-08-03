@@ -1,8 +1,9 @@
 # Native Airflow portability
 
-Status: native release candidate validated locally on a disposable estate,
-2026-07-30. Clean-checkout installation and service operation on the second
-computer remain pending.
+Status: deployment bundle and offline contracts are defined. Clean-checkout
+installation, DAG import with the pinned Airflow runtime, service activation,
+and a disposable-estate canary on the destination computer remain mandatory.
+Repository files alone do not mean that Airflow is installed or running.
 
 Docker is **not required** for this deployment. The supported first path is a
 normal Python 3.13 virtual environment on the other computer, with Airflow
@@ -13,25 +14,29 @@ The repository contains:
 
 - `deploy/airflow/dags/quarterly_estate.py`: Airflow 3 DAG definitions;
 - `src/deployment/airflow_task.py`: validated process boundary to the public
-  acquisition CLI;
+  acquisition and estate-consumer CLIs;
 - `scripts/configure_airflow.py`: local environment and secret generator;
 - `deploy/airflow/native/.env.example`: documented native settings;
 - `deploy/airflow/native/systemd/bmv-airflow@.service`: optional Linux service
   template;
+- `deploy/airflow/native/launchd/`: macOS launchd template (concrete plists are
+  rendered by the configurator without embedding secrets);
+- `scripts/run_airflow_native.sh`: path-validated native service launcher;
+- `scripts/airflow_native_status.py`: read-only static/runtime health gate;
 - `requirements/airflow-native.txt`: optional PostgreSQL driver pin; and
 - `.github/workflows/airflow-native.yml`: GitHub validation for downloader and
   DAG changes.
 
 ## One fleet downloader, not one downloader per company
 
-Airflow does not encode issuer-specific download logic. It executes one
-fleet-level public CLI:
+Airflow does not encode issuer-specific download logic. It executes one strict
+fleet-level public CLI, then drains the durable outbox into Alpha Go:
 
 ```text
 airflow-quarterly-estate sync
         |
         v
-refresh-quarterly-estate sync --apply --allow-coverage-gaps --json
+refresh-quarterly-estate sync --apply --json
         |
         +--> configs/issuers.yaml
         +--> shared BMV XBRL adapter
@@ -39,10 +44,12 @@ refresh-quarterly-estate sync --apply --allow-coverage-gaps --json
         +--> mounted document estate
         |
         v
-process_estate_outbox.py run --apply
+process-estate-outbox run --apply --enable-alpha-go --require-drained
         |
-        +--> root parsed/facts derivatives
-        +--> optional Alpha Go shared-estate projection
+        +--> verified Markdown derivative
+        +--> verified XBRL facts derivative
+        +--> derivative publication verification/receipts
+        +--> estate-wide Alpha manifest and index
 ```
 
 Issuer differences remain declarative in `configs/issuers.yaml`. New adapter
@@ -74,45 +81,41 @@ consistent filesystem.
 | DAG | Default schedule | Initial state | Mutation |
 |---|---|---|---|
 | `quarterly_estate_audit` | Weekdays, 07:00 Mexico City | enabled | none |
-| `quarterly_estate_sync` | Every six hours at minute 17 | paused plus environment write gate | estate plus downstream derivatives |
+| `quarterly_estate_sync` | Every six hours at minute 17 | paused plus acquisition and Alpha gates | estate, then Alpha |
+| `quarterly_estate_consume` | Every 15 minutes | paused plus Alpha gate | outbox/derivatives/Alpha |
+| `quarterly_estate_alpha_reconcile` | Daily, 03:43 Mexico City | paused plus Alpha gate | full Alpha reconcile, then read-only hash/status gates |
 
-Both DAGs have `catchup=False` and `max_active_runs=1`. The applied task uses
-the one-slot `estate_writer` pool, has no automatic retries, and times out
-before the acquisition lease expires.
+All DAGs have `catchup=False` and `max_active_runs=1`. Every catalog/index
+writer uses the one-slot `estate_writer` pool. Tasks default to two bounded,
+exponentially delayed retries and retain execution timeouts. Acquisition also
+has its own fenced singleton lease, so an Airflow retry cannot create two live
+estate writers.
 
-The sync task refuses to start unless
-`PDFS_AIRFLOW_SYNC_ENABLED=true`. Unpausing it is not enough. This double gate
-allows the repository and DAG to be exported safely while the first canary is
-still pending on the other computer. The local disposable-estate canary and its
-idempotent repeat have passed.
+The sync task refuses to start unless `PDFS_AIRFLOW_SYNC_ENABLED=true`; every
+Alpha task refuses unless `PDFS_AIRFLOW_ALPHA_ENABLED=true` and all Alpha root,
+corpus, index, config, interpreter, and target-id settings are explicit,
+absolute, and exist. Unpausing is not enough. The sync DAG is
+`sync_fleet >> drain_alpha_outbox`, while the independent 15-minute consumer
+DAG catches documents written by partial/legacy runs.
 
-After a successful sync, a second task in the same one-slot `estate_writer`
-pool drains the durable estate outbox in bounded batches. It runs the root
-derivative consumers and fails visibly if a delivery is retryable/dead, returns
-invalid machine output, or remains nonterminal at its configured batch ceiling.
-After the final applied batch it runs the read-only status check, so delayed
-retries and unpublished events cannot produce a false-green task. The downstream
-task also requires `PDFS_AIRFLOW_SYNC_ENABLED=true`; it cannot become an
-independent ungated writer. `PDFS_AIRFLOW_POST_SYNC_ENABLED=false` is an
-emergency kill switch. The generated configuration leaves this post-sync step
-enabled so an intentionally authorized sync refreshes both originals and their
-root derivatives. `PDFS_AIRFLOW_PDF_PARSER_VERSION` and
-`PDFS_AIRFLOW_XBRL_PROCESSOR_VERSION` are durable contract generations: bump
-the corresponding value whenever parser behavior changes materially so the
-outbox creates a new, auditable delivery generation.
+The drain deliberately uses the PR #1 public `run` command, so enabling Alpha
+does not replace the root derivative consumers: PDF-to-Markdown, XBRL-to-facts,
+and derivative-publication verification run in the same bounded delivery
+contract. `PDFS_AIRFLOW_PDF_PARSER_VERSION` and
+`PDFS_AIRFLOW_XBRL_PROCESSOR_VERSION` select their durable receipt generations;
+`PDFS_AIRFLOW_ALPHA_TIMEOUT_SECONDS` bounds each isolated Alpha invocation.
+Change a version only when its corresponding derivative contract changes.
 
-Alpha Go projection remains independently disabled. When enabled, it uses the
-Alpha-owned Python 3.12 environment while its corpus and SQLite index live under
-the shared estate. This keeps Airflow native and avoids importing Alpha's
-application package into the root/Airflow interpreter. Turning the Airflow
-switch off explicitly disables prior Alpha subscription generations; it does
-not leave undrainable receipts behind.
+Scheduled sync is strict by default. `PDFS_AIRFLOW_ALLOW_COVERAGE_GAPS=false`
+omits the diagnostic opt-out, so readiness gaps, discovery/download failures,
+or estate-write failures propagate a nonzero exit code to Airflow. A deliberate
+gap-tolerant run cannot prove publication freshness.
 
-The initial sync includes `--allow-coverage-gaps`. Missing primary-PDF
-configuration remains visible in the JSON report, but it does not prevent
-configured XBRL/PDF sources from remaining fresh. Actual discovery, download,
-validation, or estate-write failures still return nonzero and fail the Airflow
-task.
+Set `PDFS_AIRFLOW_ALERT_WEBHOOK` to an HTTPS endpoint before unattended use.
+The final task failure callback sends only DAG/task/run/attempt identifiers;
+secrets and document contents are excluded. With the setting blank, Airflow
+still records failures, but there is no external alert and the native health
+command reports not ready.
 
 ## Install on the second computer
 
@@ -137,7 +140,7 @@ On Linux, the administrator may also need Playwright's documented operating
 system dependencies. That is a host package installation, not a Docker
 requirement.
 
-### 2. Connect the external estate
+### 2. Connect the external estate and render host services
 
 The selected directory must already exist:
 
@@ -150,6 +153,15 @@ This writes the untracked `deploy/airflow/native/.env`, creates local Airflow
 state under `~/.local/state/bmv-filings-airflow`, generates Fernet/JWT secrets,
 and leaves applied sync disabled.
 
+On macOS, render the three concrete launchd agents at the same time. Rendering
+does not load or start them:
+
+```bash
+.airflow-venv/bin/python scripts/configure_airflow.py \
+  --estate /absolute/path/on/external/disk/document-estate \
+  --launchd-output-dir /Users/your-name/Library/LaunchAgents
+```
+
 Load the environment in each service shell:
 
 ```bash
@@ -158,11 +170,33 @@ set -a
 set +a
 ```
 
+The generated Alpha settings are deliberately blank. Choose them explicitly;
+the corpus path is a consequential choice. Pointing an existing 3,695-document
+index at its current Alpha corpus should reconcile unchanged, whereas pointing
+it at a new portable projection directory intentionally performs a full
+reindex. Do not infer one from the other. A current-layout example is:
+
+```text
+PDFS_AIRFLOW_ALPHA_ENABLED="false"
+PDFS_ALPHA_ROOT="/absolute/path/to/repository/alpha-go"
+PDFS_ALPHA_CORPUS="/absolute/path/to/repository/alpha-go/data/corpus"
+PDFS_ALPHA_INDEX="/absolute/path/to/estate/indexes/alpha_go.db"
+PDFS_ALPHA_CONFIG="/absolute/path/to/repository/alpha-go/configs/alpha_go.yaml"
+PDFS_ALPHA_PYTHON="/absolute/path/to/repository/alpha-go/.venv/bin/python"
+PDFS_ALPHA_TARGET_ID="portable-estate-v1"
+```
+
+For a new portable corpus, select a dedicated directory such as
+`<estate>/projections/alpha-go`, seed/certify it with a full reconcile, and
+then retain that exact path. Do not use the estate root itself as the corpus.
+
 ### 3. Initialize Airflow
 
-For the first exported-code trial, the generated configuration uses Airflow's
-own local SQLite metadata and `LocalExecutor`. This database is completely
-separate from the estate catalog.
+For a disposable first trial, the generated configuration uses Airflow's own
+local SQLite metadata and `LocalExecutor`. Airflow 3.3 supports this combination
+using SQLite WAL, but the official documentation still classifies SQLite as a
+development backend. It is completely separate from the estate catalog and is
+not the always-on configuration.
 
 ```bash
 .airflow-venv/bin/airflow db migrate
@@ -172,7 +206,7 @@ separate from the estate catalog.
 .airflow-venv/bin/airflow dags list-import-errors --local
 ```
 
-Start the native trial:
+For only the disposable import/UI trial, start standalone:
 
 ```bash
 .airflow-venv/bin/airflow standalone
@@ -181,43 +215,47 @@ Start the native trial:
 Airflow prints or stores the generated admin password under `AIRFLOW_HOME`.
 Open `http://127.0.0.1:8080`, inspect the enabled audit DAG, and trigger it.
 
-### 4. Run the applied canary
+### 4. Audit Alpha, then run the applied canary
+
+Before enabling either write gate, run the read-only whole-estate Alpha audit
+with the explicit paths selected above. It exits nonzero on missing families,
+manifest drift, index drift, or hash mismatch:
+
+```bash
+.airflow-venv/bin/process-estate-outbox audit-alpha \
+  --estate-root "${PDFS_DOCUMENT_ESTATE}" \
+  --database "${PDFS_DOCUMENT_ESTATE}/catalog.db" \
+  --alpha-root "${PDFS_ALPHA_ROOT}" \
+  --alpha-corpus "${PDFS_ALPHA_CORPUS}" \
+  --alpha-index "${PDFS_ALPHA_INDEX}" \
+  --alpha-config "${PDFS_ALPHA_CONFIG}" \
+  --alpha-target-id "${PDFS_ALPHA_TARGET_ID}" \
+  --alpha-python "${PDFS_ALPHA_PYTHON}" --json
+```
 
 Stop Airflow, edit the local `.env`, and set:
 
 ```text
 PDFS_AIRFLOW_ONLY="femsa"
 PDFS_AIRFLOW_SYNC_ENABLED="true"
-```
-
-Reload the environment, start Airflow again, leave the sync DAG paused, and
-manually trigger it. The run must finish both `sync_fleet` and
-`process_estate_outbox`. Repeat the same canary and verify that acquisition and
-delivery claim no new work. Only then clear `PDFS_AIRFLOW_ONLY` and decide
-whether to unpause the schedule.
-
-### 5. Opt in to Alpha Go projection
-
-Install Alpha's separately declared Python 3.12 environment:
-
-```bash
-python3.12 -m venv alpha-go/.venv312
-alpha-go/.venv312/bin/pip install -r alpha-go/requirements.txt
-```
-
-Confirm or edit the generated `PDFS_AIRFLOW_ALPHA_ROOT`,
-`PDFS_AIRFLOW_ALPHA_PYTHON`, `PDFS_AIRFLOW_ALPHA_CONFIG`,
-`PDFS_AIRFLOW_ALPHA_CORPUS`, and `PDFS_AIRFLOW_ALPHA_INDEX` paths. The default
-index path is `<estate>/indexes/alpha_go.db`, which is also the shared-estate
-dashboard target. Then set:
-
-```text
 PDFS_AIRFLOW_ALPHA_ENABLED="true"
 ```
 
-Leave `PDFS_AIRFLOW_ALPHA_TARGET_ID` stable for the life of that target. Change
-it deliberately only when replaying all projection receipts for a replacement
-generation.
+Reload the environment, start Airflow again, leave the sync DAG paused, and
+manually trigger it. The run must perform strict acquisition and fully drain
+the resulting derivative/Alpha receipts. Repeat the same canary and verify
+idempotency. Before clearing `PDFS_AIRFLOW_ONLY`, manually drain any historical
+backlog until `--require-drained` exits zero and run `audit-alpha` again.
+
+After the canary is clean, clear the issuer scope and explicitly unpause all
+four schedules:
+
+```bash
+.airflow-venv/bin/airflow dags unpause quarterly_estate_audit
+.airflow-venv/bin/airflow dags unpause quarterly_estate_sync
+.airflow-venv/bin/airflow dags unpause quarterly_estate_consume
+.airflow-venv/bin/airflow dags unpause quarterly_estate_alpha_reconcile
+```
 
 ## Always-on native service
 
@@ -236,6 +274,10 @@ Regenerate the environment with the PostgreSQL URL:
   -r requirements/airflow-native.txt
 ```
 
+When replacing a generated environment with `--force`, the configurator
+preserves the existing Fernet and JWT secrets and refuses replacement if it
+cannot parse them. It never rotates encryption material implicitly.
+
 After loading the environment, migrate Airflow's PostgreSQL metadata and
 recreate the one-slot pool. Run these native Airflow services under the target
 operating system's supervisor:
@@ -246,17 +288,36 @@ airflow scheduler
 airflow dag-processor
 ```
 
-The checked-in systemd template documents the Linux shape. Its user, checkout,
-venv, and environment-file paths are intentional placeholders for the target
-administrator to install under `/opt/bmv-filings` and `/etc/bmv-filings`.
-For macOS, the same three commands can be supervised by `launchd`; generate
-machine-specific plists only after the destination checkout and external-disk
-mount paths are known.
+The checked-in systemd template documents the Linux shape. Its service user and
+environment-file path are administrator-selected, while checkout and venv
+locations come from `PDFS_PROJECT_ROOT` and `PDFS_AIRFLOW_VENV` in that file.
 
-The release gate has not yet certified unattended scheduler/standalone
-operation, Playwright browser and host dependencies, PostgreSQL metadata, or
-the systemd template on the second computer. Those are destination-host
-acceptance checks, not claims made by the local DAG/task canary.
+On macOS, bootstrap the three rendered agents only after database migration,
+pool creation, Alpha audit, and the manual canary:
+
+```bash
+launchctl bootstrap "gui/$(id -u)" /Users/your-name/Library/LaunchAgents/com.bmv.airflow.api-server.plist
+launchctl bootstrap "gui/$(id -u)" /Users/your-name/Library/LaunchAgents/com.bmv.airflow.scheduler.plist
+launchctl bootstrap "gui/$(id -u)" /Users/your-name/Library/LaunchAgents/com.bmv.airflow.dag-processor.plist
+```
+
+Then use the read-only health gate. It verifies owner-only secrets, strict/write
+gates, every Alpha path, the one-slot pool, DAG imports, scheduler job, native
+services, all four DAGs present and unpaused, outbox status, and (on macOS) that the legacy `com.bmv.watch`
+scheduler is no longer loaded:
+
+```bash
+.airflow-venv/bin/python scripts/airflow_native_status.py --json
+```
+
+Never leave the legacy watcher and the Airflow writer enabled together. Inspect
+and deliberately retire the old launchd job only after the scoped Airflow
+canary is certified; this repository does not unload it automatically.
+
+The configurator never calls `launchctl`, `systemctl`, or an Airflow service.
+Rendering files is not activation. The release gate still needs to certify the
+pinned runtime, Playwright browser/host dependencies, PostgreSQL metadata,
+external alert endpoint, and supervisor behavior on the destination host.
 
 ## New estate versus legacy estate
 
@@ -285,14 +346,18 @@ Before the first other-computer canary:
 
 - GitHub CI passes the focused downloader/DAG tests;
 - the native Python 3.13 environment installs from the documented pins;
-- `airflow dags list-import-errors` is empty;
+- all four DAGs load and `airflow dags list-import-errors` is empty;
+- the `estate_writer` pool has exactly one slot;
 - the audit DAG succeeds against the selected external disk;
-- the selected estate is backed up or explicitly disposable; and
-- one scoped sync plus its repeat succeeds.
+- the selected estate is backed up or explicitly disposable;
+- the read-only Alpha audit has zero missing/stale/hash-drift families;
+- one scoped strict sync, its post-sync drain, and its repeat succeed; and
+- the native runtime health command reports `ok=true` with an HTTPS failure
+  alert configured.
 
-Full source coverage, extraction refinement, consumer rollout, and legacy
-estate migration remain follow-on work rather than prerequisites for this
-export milestone.
+Full source coverage is a prerequisite for unpausing the strict fleet sync.
+Legacy estate portability and destination-host service activation remain
+separate acceptance work; neither is implied by the checked-in templates.
 
 ## Official references
 

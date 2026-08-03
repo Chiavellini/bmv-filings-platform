@@ -14,9 +14,15 @@ elif [[ -n "${1:-}" ]]; then
 fi
 
 "${python_bin}" -c '
+import sqlite3
 import sys
 if sys.version_info[:2] != (3, 13):
     raise SystemExit(f"Python 3.13 is required, found {sys.version.split()[0]}")
+sqlite_version = tuple(map(int, sqlite3.sqlite_version.split(".")))
+if sqlite_version < (3, 15, 0):
+    raise SystemExit(
+        f"SQLite >=3.15 is required, found {sqlite3.sqlite_version}"
+    )
 '
 
 if [[ ! -x "${venv_path}/bin/python" ]]; then
