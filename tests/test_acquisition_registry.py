@@ -36,7 +36,7 @@ def test_canonical_registry_covers_actual_project_universes():
     assert sum(
         source.live_verified_period is not None
         for _issuer, source in primary_pdf_sources
-    ) == 5
+    ) == 8
 
     tiendas_3b = registry.get("tiendas_3b")
     assert not tiendas_3b.is_member("alpha_go")
@@ -66,7 +66,12 @@ def test_canonical_registry_covers_actual_project_universes():
     assert gfnorte.source("ir").live_verified_period == "2026-2T"
     assert registry.get("femsa").source("ir").live_verified_period == "2026-2T"
     assert registry.get("sports_world").source("ir").live_verified_period == "2026-2T"
+    assert registry.get("qualitas").source("ir").live_verified_period == "2026-2T"
+    assert registry.get("qualitas").source("ir").strict_pdf_link_pattern
     assert registry.get("tiendas_3b").source("ir").live_verified_period == "2026-1T"
+    assert registry.get("walmex").source("ir").live_verified_period == "2026-2T"
+    assert registry.get("walmex").source("ir").strict_pdf_link_pattern
+    assert registry.get("liverpool").source("ir").live_verified_period == "2026-2T"
 
 
 def test_project_memberships_match_committed_source_universes_exactly():

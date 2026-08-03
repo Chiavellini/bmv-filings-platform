@@ -180,11 +180,16 @@ def test_url_template_fetch_supports_two_digit_year(tmp_path, monkeypatch):
     monkeypatch.setattr(dl, "_verify_pdf_url", lambda *a, **k: True)
     monkeypatch.setattr(dl.time, "sleep", lambda s: None)
 
+    details = []
     saved = dl.download_from_url_templates(
         ["https://example.com/{quarter}T{year2}/report-{quarter}Q{year2}.pdf"],
         tmp_path,
         {"2024-1T"},
+        detail_sink=details,
     )
 
     assert [path.name for path in saved] == ["2024-1T.pdf"]
     assert fetched == ["https://example.com/1T24/report-1Q24.pdf"]
+    assert [(detail.url, detail.period) for detail in details] == [
+        ("https://example.com/1T24/report-1Q24.pdf", "2024-1T")
+    ]

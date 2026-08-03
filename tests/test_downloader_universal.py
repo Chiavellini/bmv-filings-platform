@@ -47,6 +47,8 @@ QUARTERLY_POSITIVES = [
     # Herdez/Soriana archive names observed on live IR pages.
     ("https://grupoherdez.com.mx/api/media/FIRST_QUARTER_2026_Grupo_Herdez_edffa6b129.pdf", "Read PDF"),
     ("https://grupoherdez.com.mx/api/media/1_TD_2026_GH_020426_78df86095a.pdf", "Read PDF"),
+    # Liverpool uses XBRL in the filename for its human-readable report PDF.
+    ("https://www.elpuertodeliverpool.mx/docs/informes-trimestrales/2026/2TXBRL2026.pdf", "Read PDF"),
     ("https://www.organizacionsoriana.com/pdf/reportes/2023/3Q23InfoDir_ingl%C3%A9sV3%20-%20VF.pdf", ""),
     ("https://www.organizacionsoriana.com/pdf/reportes/2022/Informe%20del%20Director%202Q22_ENG.pdf", ""),
 ]

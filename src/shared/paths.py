@@ -26,15 +26,26 @@ REPORTS_DIR = Path(os.environ.get("PDFS_REPORTS_DIR", DATA_DIR / "reports")).exp
 DOCUMENT_ESTATE_DIR = ESTATE_BRIDGE.estate_root
 DOCUMENT_ESTATE_DB = ESTATE_BRIDGE.catalog_path
 SHARED_REPORTS_DIR = ESTATE_BRIDGE.reports_view_dir
+# The root derivative consumer writes versioned Markdown here. Onboarding
+# reads it together with SHARED_REPORTS_DIR as a zero-copy union.
+SHARED_PARSED_REPORTS_DIR = DOCUMENT_ESTATE_DIR / "views" / "parsed"
 GROUND_TRUTH_DIR = DATA_DIR / "ground_truth"
 STYLE_DIR = DATA_DIR / "style"
 
 # Deliverable routes (clean input/output scheme):
 #   inputs/<company>.md                       — the markdown spec (IR link + outline)
 #   outputs/latest/<Company>.xlsx             — analyst handoff (exactly one workbook)
+#   outputs/archive/deliverables/<build>/      — exact prior analyst handoffs
 #   outputs/<Company>/{excel,csv,validation}/ — build artifacts and review evidence
 # Raw PDFs and parsed markdown stay in REPORTS_DIR (a durable cache), never
 # duplicated into the output tree.
 INPUTS_DIR = PROJECT_ROOT / "inputs"
 OUTPUTS_DIR = Path(os.environ.get("PDFS_OUTPUTS_DIR", PROJECT_ROOT / "outputs")).expanduser().resolve()
 LATEST_OUTPUT_DIR = OUTPUTS_DIR / "latest"
+# Receipt is deliberately adjacent to, not inside, ``latest`` so the handoff
+# directory remains exactly one workbook while its cryptographic provenance is
+# still machine-readable.
+LATEST_OUTPUT_RECEIPT = OUTPUTS_DIR / "latest_manifest.json"
+DELIVERABLE_ARCHIVE_DIR = Path(
+    os.environ.get("PDFS_DELIVERABLE_ARCHIVE_DIR", OUTPUTS_DIR / "archive" / "deliverables")
+).expanduser().resolve()

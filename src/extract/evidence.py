@@ -310,9 +310,21 @@ def _xbrl_candidates(src, metric_defs: list[MetricDef], cfg: dict) -> list[Candi
         return []
     try:
         from src.extract.tiered_extract import period_end_from_label
-        from src.extract.xbrl_facts import extract_from_xbrl, pesos_per_unit_for
+        from src.extract.xbrl_facts import (
+            extract_from_xbrl,
+            fact_value_divisor_for,
+            iso_currency_for,
+        )
         period_end = getattr(src, "period_end", None) or period_end_from_label(getattr(src, "period", None))
-        rows = extract_from_xbrl(facts, metric_defs, period_end, pesos_per_unit_for(cfg))
+        currency_mode = (((cfg or {}).get("xbrl") or {}).get("currency_mode") or "native")
+        expected_currency = None if currency_mode == "convert_to_mxn" else iso_currency_for(cfg)
+        rows = extract_from_xbrl(
+            facts,
+            metric_defs,
+            period_end,
+            fact_value_divisor_for(cfg, facts, currency_mode=currency_mode),
+            expected_currency=expected_currency,
+        )
     except Exception as exc:
         print(f"evidence: xbrl candidates failed: {exc}", file=sys.stderr)
         return []

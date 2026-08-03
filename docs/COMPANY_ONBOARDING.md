@@ -36,7 +36,10 @@ accuracy. A freshly-spawned agent should be able to follow this end-to-end with 
 ---
 
 ## Stage 0 — Intake
-You need three things from the user:
+You need four things from the user:
+- The **original analyst metric sheet** (`.csv` or `.xlsx`), not only a transcription or summary.
+  It is hashed into the build manifest and its ordered labels are compared with the executable
+  outline before extraction starts.
 - A **themed metric list** (sections + line items). Each line is either a *reported* number or a
   *derived* one (YoY, margin, % of total, check).
 - The **IR URL** (for downloads / provenance).
@@ -54,6 +57,8 @@ Translate the metric list into the lightweight outline grammar (parsed by
 ```markdown
 # Herdez                ← H1 = company name; slugifies to the slug (see GOTCHA)
 IR: https://grupoherdez.com.mx/investors-financial-information#reportarchive
+Analyst-Metrics: requests/Metrics.xlsx#Requested Metrics
+Analyst-Company: HERDEZ
 
 ## Net Sales            ← "## Section" header
 - Consolidated Net Sales {revenue}   ← "- Label {key}" = a PINNED data row
@@ -65,9 +70,22 @@ IR: https://grupoherdez.com.mx/investors-financial-information#reportarchive
 ```
 (No `Eliminations` row — Herdez never discloses it, so it stays out of the outline.)
 
-**Derived rows are LIVE Excel formulas, never hardcoded or blank.** Every derived token below renders
-a `=…` formula computed from the data rows; if its inputs are absent the row is **pruned** (it never
-ships blank). Recognized by `_derived_token` (`scripts/build_segments.py:159`) +
+Every reported row must carry an explicit `{metric_key}` pin. Exact-name auto-resolution is useful
+only while drafting and is rejected by strict onboarding. `--allow-auto-map` is an exploratory
+escape hatch, never a shipping mode.
+
+The analyst sheet and outline are an ordered contract: sections, reported rows, and requested
+derived rows must match 1:1 after whitespace/case normalization. Row roles cannot be changed (a
+requested metric cannot become a section), and any nonblank analyst `key` cell must match the
+Markdown pin. You may supply the source with
+`--analyst-metrics PATH --analyst-company MARKER --analyst-sheet WORKSHEET` instead of the metadata
+lines above. A mismatch writes `outputs/<Company>/validation/<slug>_metrics_manifest.json`, aborts
+before download/extraction, and leaves `outputs/latest/` unchanged.
+
+**Derived rows are LIVE Excel formulas, never hardcoded.** Every supported derived token below renders
+a `=…` formula computed from workbook data rows. On the onboarding path, analyst-requested rows are
+never silently pruned: a missing input makes the Excel audit fail and prevents publication.
+Recognized by `_derived_token` (`scripts/build_segments.py`) +
 `_classify_derived`/`build_outline_workbook` (`src/excel/segments_sheet.py`):
 
 | Token (outline label) | Renders | Inputs required |
@@ -86,12 +104,12 @@ ships blank). Recognized by `_derived_token` (`scripts/build_segments.py:159`) +
 | `Check` | section consolidated − Σ(same-family segments **in this section**) | a family consolidated + ≥1 segment, same section |
 
 To add a new ratio token, extend `_RATIO_DERIVED` (and `_derived_token`). Anything with a `{key}` pin
-is a data row; an unrecognized label without a pin is a placeholder → **pruned + flagged by the audit**.
+is a data row; an unrecognized/unpinned label fails the strict metric contract before extraction.
 
-**Do NOT list unreachable metrics in the outline.** If a metric is never disclosed (FX from Banxico,
-employee counts, N/D peer benchmarks) or a Check can't be expressed (cross-section, bespoke), leave it
-OUT — the builder prunes empties and the Stage-5 **Excel audit** fails on any row that would ship blank.
-`inputs/<slug>.md` must equal the rendered workbook 1:1.
+**Do NOT list unreachable metrics in the analyst request.** If a requested item is genuinely not
+disclosed, settle that scope with the analyst instead of silently removing it during implementation.
+The Stage-5 Excel audit fails on any requested row it cannot faithfully render.
+`inputs/<slug>.md` must equal both the analyst sheet and rendered workbook 1:1.
 
 **Keys:** reuse base keys where they exist (`revenue, cogs, gross_profit, operating_expense, ebitda,
 depreciation, operating_income, interest_expense, ebt, tax_expense, net_income, capex` …). Invent new
@@ -106,20 +124,39 @@ Exemplars: `inputs/herdez.md`, `inputs/soriana.md`.
 
 ---
 
-## Stage 2 — Reports cache → `data/reports/<slug>/`
-`build_segments` reuses `data/reports/<slug>/` if it holds parsed `*.md` (with `*.pdf` siblings) and
-skips download/parse. Three ways to fill it:
-1. **The dedicated fetcher (preferred):** `python3 scripts/fetch_company_reports.py <slug> --parse`
-   — cascades live IR page → URL templates → Wayback → BMV XBRL, canonicalizes to `<YYYY-NT>.pdf`,
-   and parses. Key flags: `--max N` (default 120), `--floor-year` (default 2016), `--no-wayback`,
-   `--no-xbrl`, `--jsonl`, `--annual-facts`. ⚠️ `--force-refresh` deletes and re-downloads the
-   refreshable artifacts (pre-floor-year files are preserved) — never needed for a first onboarding.
-2. Let `build_segments` download on the Stage-5 first run.
-3. Drop PDFs in manually and let it parse.
+## Stage 2 — Canonical acquisition + zero-copy report inputs
 
-**Phase-gate:** confirm the periods you intend to deliver actually downloaded and parsed
-cleanly before trusting any accuracy number — a missing/garbled quarter is a corpus problem, not an
-extractor problem.
+Do not infer freshness from a populated cache. First configure the issuer/source in
+`configs/issuers.yaml`, live-certify its newest report URL, then run the canonical company-scoped
+updater:
+
+```bash
+.venv/bin/refresh-quarterly-estate plan --only <slug> --json
+.venv/bin/refresh-quarterly-estate sync --only <slug> --apply --json
+```
+
+The applied command must exit zero. A partial/failing discovery, unresolved due period, failed PDF,
+or trailing-quarter recheck that observes nothing is not a successful freshness receipt.
+`build_segments` requires a successful non-backfill receipt for the exact issuer from the last 24
+hours. `--allow-stale-estate` exists for offline/exploratory work and is recorded in the metric
+manifest; it is not a shipping mode. A fresh run receipt alone is insufficient: the publication
+gate hash-binds the exact effective extraction files to their current catalog document/artifact
+lineage and run watermark. An unrefreshed compatibility view, superseded derivative, or local copy
+therefore produces a candidate only.
+
+Process newly stored originals through the derivative worker and refresh the compatibility view as
+specified in `docs/DOCUMENT_ESTATE.md`. Extraction then reads a zero-copy union of:
+
+- `data/document_estate/views/reports/<slug>/` (PDFs, legacy Markdown, facts);
+- `data/document_estate/views/parsed/<slug>/` (versioned acquisition derivatives); and
+- transitional `data/reports/<slug>/` inputs, if present.
+
+Duplicate periods are resolved using explicit directory/catalog version precedence. Ambiguous
+uncatalogued derivatives fail rather than winning by filename accident.
+
+**Phase-gate:** confirm the periods you intend to deliver downloaded, stored, and parsed cleanly
+before trusting any accuracy number — a missing/garbled quarter is a corpus problem, not an
+extractor problem. Wayback is for explicit historical backfill, never the recurring freshness path.
 
 ---
 
@@ -204,6 +241,20 @@ def extract_<slug>(text: str, metric_defs, period: str | None = None,
 unit, source_line`. The `source_line` prefix is the tier tag the cascade ranks on (`[statement]`,
 `[qcapex]`, …).
 
+Do not create one extractor per company merely for identity. Prefer generic/config-driven tiers.
+A company extractor is justified only for a stable structural exception (rotated tables, unusual
+segment basis, bespoke note layout). It may return the legacy row mapping or an `ExtractionBatch`
+from `src.extract.revisions` with typed `FactObservation` records.
+
+Typed observations separate the period being measured from the report that asserted it. This is
+the restatement contract: a 4Q release can explicitly revise 3Q, and a later version of the same
+filing family can supersede an earlier value. Series identity includes period kind, accounting
+basis, currency, unit, and dimensions, so a YTD/USD/segment observation cannot overwrite a
+quarterly/MXN/consolidated cell. Trusted explicit revisions win; unsafe conflicts remain in
+`df.attrs['revisions']` for review instead of being guessed away. Legacy `restated_prior` labels
+such as `2Q21A` are normalized to production labels such as `2021-2T`; optional
+`latest_comparative: allow` is restricted to trusted tiers, while `force` is an explicit override.
+
 **Register the dispatch**: add ONE entry to the `_CUSTOM_EXTRACTORS` dict near the top of
 `src/extract/tiered_extract.py`:
 ```python
@@ -251,7 +302,8 @@ single lever took Herdez's first-pass suspects from 107 → 11.)
 
 ## Stage 5 — Build + STRONG gate loop
 ```bash
-python3 scripts/verify_extraction.py <slug>          # build + score + print scorecard & worklist
+python3 scripts/verify_extraction.py <slug> \
+  --analyst-metrics requests/Metrics.xlsx --analyst-company TICKER
 ```
 This runs the full pipeline (download/parse if needed → extract → workbook → validation →
 **verification gate**) and writes `outputs/<Co>/validation/<slug>_worklist.json`. The gate
@@ -260,8 +312,15 @@ EXPECTED_EMPTY; **STRONG overall = no SUSPECT and no WEAK/EMPTY disclosed metric
 `docs/VERIFICATION.md` for the classification detail.
 
 For the analyst, the file to open is always `outputs/latest/<Company>.xlsx`.
-`outputs/latest/` contains exactly one workbook and is replaced only after a new build completes;
-the CSV, validation report, worklist, and retained company copy remain under `outputs/<Company>/`.
+`outputs/latest/` contains exactly one workbook and is replaced by a serialized,
+crash-recoverable swap only after the strict metric contract, rendered-row round trip, formula
+evaluable-period audit, and STRONG verification gate all pass. The adjacent
+`outputs/latest_manifest.json` binds the workbook SHA/build ID to its analyst sheet and estate
+watermark. The
+entire prior handoff directory moves to a timestamped location under
+`outputs/archive/deliverables/`; it is never mixed with the new handoff or silently deleted. A weak
+candidate remains under `outputs/<Company>/excel/`, cannot replace the current analyst file, and
+returns CLI status 3 so automation cannot mistake it for a publication.
 
 **The loop:**
 1. **Triage systematic causes FIRST** (cheap, shrinks the manual set): a wave of negatives on a

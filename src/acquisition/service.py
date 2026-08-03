@@ -8,9 +8,12 @@ corpus or search index.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import date, timedelta
+from dataclasses import dataclass, replace
+from datetime import date, datetime, timedelta, timezone
 import calendar
+import hashlib
+import json
+import math
 from pathlib import Path, PurePosixPath
 import sqlite3
 import tempfile
@@ -18,6 +21,7 @@ from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence
 
 from src.acquisition.adapters import (
     BmvXbrlAdapter,
+    IRFetchIssue,
     InvestorRelationsAdapter,
     WaybackBackfillAdapter,
     normalize_period,
@@ -36,7 +40,7 @@ from src.shared.company_aliases import (
     expand_company_aliases,
     load_company_aliases,
 )
-from src.shared.report_index import period_sort_key
+from src.shared.report_index import infer_period_label, period_sort_key
 
 
 PDF_DOCUMENT_TYPE = "quarterly_release"
@@ -157,6 +161,37 @@ class CoverageGap:
 
 
 @dataclass(frozen=True, slots=True)
+class SourceDiagnostic:
+    """Structured per-layer evidence attached to an applied run."""
+
+    issuer_slug: str
+    source_key: str
+    layer: str
+    candidates: int = 0
+    selected: int = 0
+    note: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class QuarterlySyncFreshness:
+    """Fail-closed receipt for one issuer's most recent successful sync."""
+
+    issuer_slug: str
+    fresh: bool
+    reason: str
+    max_age_seconds: float
+    run_id: str | None = None
+    completed_at: str | None = None
+    age_seconds: float | None = None
+    detail: str | None = None
+    input_document_ids: tuple[str, ...] = ()
+    input_artifact_ids: tuple[str, ...] = ()
+    catalog_document_ids: tuple[str, ...] = ()
+    run_document_ids: tuple[str, ...] = ()
+    input_watermark: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class RunReport:
     run_id: str | None
     mode: str
@@ -166,6 +201,7 @@ class RunReport:
     unchanged: int = 0
     failures: tuple[SyncFailure, ...] = ()
     coverage_gaps: tuple[CoverageGap, ...] = ()
+    diagnostics: tuple[SourceDiagnostic, ...] = ()
     coverage_strict: bool = False
 
     @property
@@ -177,6 +213,565 @@ class RunReport:
     @property
     def exit_code(self) -> int:
         return 0 if self.ok else 1
+
+
+def check_quarterly_sync_freshness(
+    db_path: str | Path,
+    issuer_slug: str,
+    max_age: timedelta | int | float,
+    *,
+    now: datetime | None = None,
+) -> QuarterlySyncFreshness:
+    """Read a successful recurring-sync receipt without mutating the catalog.
+
+    Only a completed, strict-coverage ``quarterly_acquisition`` run whose JSON
+    scope explicitly includes ``issuer_slug`` and is not a Wayback backfill can
+    prove freshness.
+    Missing databases/tables/receipts, malformed timestamps, future timestamps,
+    and stale receipts all return ``fresh=False`` with a stable reason code.
+    The SQLite connection uses ``mode=ro`` so this check cannot create or migrate
+    a catalog as a side effect of onboarding.
+    """
+
+    slug = str(issuer_slug).strip()
+    if not slug:
+        raise ValueError("issuer_slug must be non-empty")
+    if isinstance(max_age, timedelta):
+        max_age_seconds = max_age.total_seconds()
+    elif isinstance(max_age, bool):
+        raise TypeError("max_age must be a timedelta or number of seconds")
+    else:
+        max_age_seconds = float(max_age)
+    if not math.isfinite(max_age_seconds) or max_age_seconds < 0:
+        raise ValueError("max_age must be a finite non-negative duration")
+
+    checked_at = now or datetime.now(timezone.utc)
+    if checked_at.tzinfo is None:
+        checked_at = checked_at.replace(tzinfo=timezone.utc)
+    checked_at = checked_at.astimezone(timezone.utc)
+    database = Path(db_path).expanduser().resolve()
+
+    def receipt(reason: str, **values: Any) -> QuarterlySyncFreshness:
+        return QuarterlySyncFreshness(
+            issuer_slug=slug,
+            fresh=reason == "fresh",
+            reason=reason,
+            max_age_seconds=max_age_seconds,
+            **values,
+        )
+
+    if not database.is_file():
+        return receipt(
+            "catalog_missing",
+            detail=f"catalog does not exist: {database}",
+        )
+
+    connection: sqlite3.Connection | None = None
+    try:
+        connection = sqlite3.connect(
+            f"{database.as_uri()}?mode=ro",
+            uri=True,
+        )
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA query_only=ON")
+        table = connection.execute(
+            """SELECT 1 FROM sqlite_master
+               WHERE type='table' AND name='acquisition_runs'"""
+        ).fetchone()
+        if table is None:
+            return receipt(
+                "acquisition_runs_table_missing",
+                detail="catalog has no acquisition_runs table",
+            )
+        rows = connection.execute(
+            """SELECT run_id,scope_json,status,completed_at
+               FROM acquisition_runs
+               ORDER BY started_at DESC,rowid DESC"""
+        ).fetchall()
+    except sqlite3.Error as exc:
+        return receipt(
+            "catalog_unreadable",
+            detail=f"{type(exc).__name__}: {exc}",
+        )
+    finally:
+        if connection is not None:
+            connection.close()
+
+    matching: sqlite3.Row | None = None
+    for row in rows:
+        try:
+            scope = json.loads(str(row["scope_json"]))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if not isinstance(scope, dict):
+            continue
+        issuers = scope.get("issuers")
+        if (
+            scope.get("module") == "quarterly_acquisition"
+            and isinstance(issuers, list)
+            and slug in issuers
+            and scope.get("strict_coverage") is True
+            and not bool(scope.get("wayback_backfill", False))
+        ):
+            matching = row
+            break
+    if matching is None:
+        return receipt(
+            "no_succeeded_sync_receipt",
+            detail=(
+                "no succeeded quarterly_acquisition sync scope includes "
+                f"{slug}"
+            ),
+        )
+
+    status = str(matching["status"])
+    if status != "succeeded":
+        completed_text = matching["completed_at"]
+        return receipt(
+            "latest_sync_not_succeeded",
+            run_id=str(matching["run_id"]),
+            completed_at=(
+                str(completed_text) if completed_text is not None else None
+            ),
+            detail=(
+                "latest matching strict quarterly_acquisition run has status "
+                f"{status!r}; an older success cannot prove current freshness"
+            ),
+        )
+
+    completed_text = matching["completed_at"]
+    try:
+        completed = datetime.fromisoformat(str(completed_text))
+        if completed.tzinfo is None:
+            completed = completed.replace(tzinfo=timezone.utc)
+        completed = completed.astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return receipt(
+            "invalid_receipt_timestamp",
+            run_id=str(matching["run_id"]),
+            completed_at=(
+                str(completed_text) if completed_text is not None else None
+            ),
+            detail="successful sync receipt has an invalid completed_at",
+        )
+
+    age_seconds = (checked_at - completed).total_seconds()
+    common = {
+        "run_id": str(matching["run_id"]),
+        "completed_at": completed.isoformat(timespec="seconds"),
+        "age_seconds": age_seconds,
+    }
+    if age_seconds < 0:
+        return receipt(
+            "receipt_in_future",
+            detail="successful sync receipt is later than the check time",
+            **common,
+        )
+    if age_seconds > max_age_seconds:
+        return receipt(
+            "stale_receipt",
+            detail=(
+                f"successful sync receipt age {age_seconds:.0f}s exceeds "
+                f"maximum {max_age_seconds:.0f}s"
+            ),
+            **common,
+        )
+    return receipt("fresh", **common)
+
+
+def check_quarterly_publication_freshness(
+    db_path: str | Path,
+    issuer_slug: str,
+    max_age: timedelta | int | float,
+    input_paths: Iterable[str | Path] | str | Path,
+    *,
+    estate_root: str | Path | None = None,
+    now: datetime | None = None,
+) -> QuarterlySyncFreshness:
+    """Bind a fresh sync receipt to the exact files used for publication.
+
+    ``check_quarterly_sync_freshness`` proves only that discovery completed. A
+    publishable extraction additionally needs to prove that every *effective*
+    input is a hash-verified catalog artifact for this issuer, belongs to the
+    current acquisition document version, and that the newest selected period
+    for each document type was actually observed by that successful run.
+
+    Callers must pass files after their directory/period precedence has been
+    resolved, not every immutable historical file present in a view.  Local or
+    copied caches deliberately fail: matching bytes are not durable lineage.
+    The returned watermark is a deterministic digest of the run, document ids,
+    artifact ids, and catalog hashes and can be recorded in build provenance.
+    This function opens SQLite read-only and never repairs paths or schema.
+    """
+
+    base = check_quarterly_sync_freshness(
+        db_path,
+        issuer_slug,
+        max_age,
+        now=now,
+    )
+    if not base.fresh:
+        return base
+
+    if isinstance(input_paths, (str, Path)):
+        raw_paths: tuple[str | Path, ...] = (input_paths,)
+    else:
+        raw_paths = tuple(input_paths)
+    paths = tuple(
+        dict.fromkeys(Path(value).expanduser().absolute() for value in raw_paths)
+    )
+    if not paths:
+        return replace(
+            base,
+            fresh=False,
+            reason="publication_inputs_missing",
+            detail="no effective extraction input files were supplied",
+        )
+
+    database = Path(db_path).expanduser().resolve()
+    root = (
+        Path(estate_root).expanduser().absolute()
+        if estate_root is not None
+        else database.parent
+    )
+    required_tables = {
+        "documents",
+        "artifacts",
+        "source_records",
+        "source_record_versions",
+        "acquisition_attempts",
+    }
+    slug = str(issuer_slug).strip()
+
+    def failed(reason: str, detail: str, **values: Any) -> QuarterlySyncFreshness:
+        return replace(base, fresh=False, reason=reason, detail=detail, **values)
+
+    connection: sqlite3.Connection | None = None
+    try:
+        connection = sqlite3.connect(
+            f"{database.as_uri()}?mode=ro",
+            uri=True,
+        )
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA query_only=ON")
+        tables = {
+            str(row["name"])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        missing_tables = required_tables - tables
+        if missing_tables:
+            return failed(
+                "publication_lineage_schema_missing",
+                "catalog lacks publication-lineage tables: "
+                + ", ".join(sorted(missing_tables)),
+            )
+        has_memberships = "memberships" in tables
+
+        bound: list[dict[str, str]] = []
+        for path in paths:
+            if not path.is_file():
+                return failed(
+                    "publication_input_missing",
+                    f"effective extraction input is not a file: {path}",
+                )
+            digest = hashlib.sha256()
+            with path.open("rb") as stream:
+                for block in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(block)
+            input_sha256 = digest.hexdigest()
+
+            path_keys = [str(path)]
+            try:
+                relative = path.relative_to(root)
+            except ValueError:
+                pass
+            else:
+                path_keys.append(relative.as_posix())
+            placeholders = ",".join("?" for _ in path_keys)
+            artifact = connection.execute(
+                f"""SELECT a.artifact_id,a.document_id,a.path,a.sha256,
+                            d.company,d.period,d.doc_type
+                     FROM artifacts a
+                     JOIN documents d ON d.document_id=a.document_id
+                     WHERE a.path IN ({placeholders})
+                     ORDER BY CASE WHEN a.path=? THEN 0 ELSE 1 END
+                     LIMIT 1""",
+                (*path_keys, path_keys[0]),
+            ).fetchone()
+            if artifact is None:
+                # Acquisition compatibility views are materialized as hardlinks,
+                # copies, or symlinks and therefore need not have their own row in
+                # ``artifacts``.  Hash-only lookup is safe exclusively inside the
+                # estate-owned view namespace and only when issuer, period,
+                # document type, and *current* acquisition lineage resolve to one
+                # document. An identical copy elsewhere remains untrusted.
+                views_root = root / "views"
+                try:
+                    view_relative = path.relative_to(views_root)
+                except ValueError:
+                    return failed(
+                        "publication_input_not_cataloged",
+                        "effective extraction input has no exact catalog artifact "
+                        f"lineage and is outside the trusted estate view: {path}",
+                    )
+                if len(view_relative.parts) < 3 or view_relative.parts[1] != slug:
+                    return failed(
+                        "publication_view_scope_mismatch",
+                        f"estate view input is outside views/<namespace>/{slug}: {path}",
+                    )
+                namespace = view_relative.parts[0]
+                compatible_types = {
+                    "reports": ("quarterly_release", "annual_report"),
+                    "parsed": ("quarterly_release", "annual_report"),
+                    "regulatory": ("regulatory_filing",),
+                }.get(namespace)
+                if compatible_types is None:
+                    return failed(
+                        "publication_view_namespace_untrusted",
+                        f"unsupported estate compatibility-view namespace: {namespace}",
+                    )
+                inferred_period = infer_period_label(path.stem)
+                if inferred_period is None:
+                    return failed(
+                        "publication_view_period_unresolved",
+                        f"cannot infer a reporting period from estate view input: {path}",
+                    )
+                type_placeholders = ",".join("?" for _ in compatible_types)
+                issuer_predicate = "d.company=?"
+                issuer_values: tuple[str, ...] = (slug,)
+                if has_memberships:
+                    issuer_predicate = (
+                        "(d.company=? OR EXISTS (SELECT 1 FROM memberships m "
+                        "WHERE m.document_id=d.document_id AND m.company=?))"
+                    )
+                    issuer_values = (slug, slug)
+                candidates = connection.execute(
+                    f"""SELECT DISTINCT a.artifact_id,a.document_id,a.path,
+                                a.sha256,d.company,d.period,d.doc_type
+                         FROM artifacts a
+                         JOIN documents d ON d.document_id=a.document_id
+                         JOIN source_record_versions srv
+                           ON srv.document_id=d.document_id
+                         JOIN source_records sr
+                           ON sr.source_key=srv.source_key
+                          AND sr.source_record_id=srv.source_record_id
+                         WHERE a.sha256=?
+                           AND d.period=?
+                           AND d.doc_type IN ({type_placeholders})
+                           AND sr.current_document_id=d.document_id
+                           AND {issuer_predicate}
+                         ORDER BY a.artifact_id""",
+                    (
+                        input_sha256,
+                        inferred_period,
+                        *compatible_types,
+                        *issuer_values,
+                    ),
+                ).fetchall()
+                candidate_documents = {
+                    str(row["document_id"]) for row in candidates
+                }
+                if not candidates:
+                    return failed(
+                        "publication_view_lineage_missing",
+                        "estate view input hash has no compatible current catalog "
+                        f"lineage for {slug} {inferred_period}: {path}",
+                    )
+                if len(candidate_documents) != 1:
+                    return failed(
+                        "publication_view_lineage_ambiguous",
+                        "estate view input hash resolves to multiple current catalog "
+                        "documents: " + ", ".join(sorted(candidate_documents)),
+                    )
+                artifact = candidates[0]
+
+            if input_sha256 != str(artifact["sha256"]):
+                return failed(
+                    "publication_input_hash_mismatch",
+                    f"effective extraction input differs from its catalog hash: {path}",
+                )
+
+            document_id = str(artifact["document_id"])
+            issuer_match = str(artifact["company"]) == slug
+            if not issuer_match and has_memberships:
+                issuer_match = connection.execute(
+                    """SELECT 1 FROM memberships
+                       WHERE document_id=? AND company=? LIMIT 1""",
+                    (document_id, slug),
+                ).fetchone() is not None
+            if not issuer_match:
+                return failed(
+                    "publication_input_issuer_mismatch",
+                    f"catalog artifact {artifact['artifact_id']} is not owned by {slug}",
+                )
+
+            lineage = connection.execute(
+                """SELECT sr.current_document_id
+                   FROM source_record_versions srv
+                   JOIN source_records sr
+                     ON sr.source_key=srv.source_key
+                    AND sr.source_record_id=srv.source_record_id
+                   WHERE srv.document_id=?""",
+                (document_id,),
+            ).fetchall()
+            if not lineage:
+                return failed(
+                    "publication_input_without_acquisition_lineage",
+                    f"catalog document {document_id} was not created by acquisition",
+                )
+            if not any(str(row["current_document_id"]) == document_id for row in lineage):
+                return failed(
+                    "publication_input_superseded",
+                    f"catalog document {document_id} is not the current source version",
+                )
+
+            observed = connection.execute(
+                """SELECT 1 FROM acquisition_attempts
+                   WHERE run_id=? AND document_id=? AND status='stored'
+                   LIMIT 1""",
+                (base.run_id, document_id),
+            ).fetchone() is not None
+            bound.append(
+                {
+                    "artifact_id": str(artifact["artifact_id"]),
+                    "document_id": document_id,
+                    "sha256": str(artifact["sha256"]),
+                    "period": str(artifact["period"] or ""),
+                    "doc_type": str(artifact["doc_type"]),
+                    "observed": "1" if observed else "0",
+                }
+            )
+
+        selected_doc_types = sorted({row["doc_type"] for row in bound})
+        type_placeholders = ",".join("?" for _ in selected_doc_types)
+        issuer_predicate = "d.company=?"
+        if has_memberships:
+            issuer_predicate = (
+                "(d.company=? OR EXISTS (SELECT 1 FROM memberships m "
+                "WHERE m.document_id=d.document_id AND m.company=?))"
+            )
+        issuer_values: tuple[str, ...] = (slug, slug) if has_memberships else (slug,)
+        current_catalog = connection.execute(
+            f"""SELECT DISTINCT d.document_id,d.period,d.doc_type
+                 FROM documents d
+                 JOIN source_record_versions srv
+                   ON srv.document_id=d.document_id
+                 JOIN source_records sr
+                   ON sr.source_key=srv.source_key
+                  AND sr.source_record_id=srv.source_record_id
+                 WHERE sr.current_document_id=d.document_id
+                   AND {issuer_predicate}
+                   AND d.doc_type IN ({type_placeholders})""",
+            (*issuer_values, *selected_doc_types),
+        ).fetchall()
+
+        catalog_documents: set[str] = set()
+        for doc_type in selected_doc_types:
+            typed_catalog = [
+                row for row in current_catalog
+                if str(row["doc_type"]) == doc_type and row["period"]
+            ]
+            if not typed_catalog:
+                return failed(
+                    "publication_catalog_watermark_missing",
+                    f"catalog has no current {doc_type} period for {slug}",
+                )
+            catalog_period = max(
+                (str(row["period"]) for row in typed_catalog),
+                key=period_sort_key,
+            )
+            selected_period = max(
+                (row["period"] for row in bound if row["doc_type"] == doc_type),
+                key=period_sort_key,
+            )
+            catalog_documents.update(
+                str(row["document_id"])
+                for row in typed_catalog
+                if str(row["period"]) == catalog_period
+            )
+            if selected_period != catalog_period:
+                return failed(
+                    "publication_view_behind_catalog",
+                    f"effective {doc_type} inputs stop at {selected_period}, but "
+                    f"the current catalog watermark is {catalog_period}",
+                    input_document_ids=tuple(
+                        sorted({row["document_id"] for row in bound})
+                    ),
+                    input_artifact_ids=tuple(
+                        sorted({row["artifact_id"] for row in bound})
+                    ),
+                    catalog_document_ids=tuple(sorted(catalog_documents)),
+                )
+
+        newest_documents: set[str] = set()
+        for doc_type in selected_doc_types:
+            typed = [row for row in bound if row["doc_type"] == doc_type]
+            if any(not row["period"] for row in typed):
+                return failed(
+                    "publication_input_period_missing",
+                    f"{doc_type} publication input lacks a catalog period",
+                )
+            newest_period = max(
+                (row["period"] for row in typed),
+                key=period_sort_key,
+            )
+            newest = [row for row in typed if row["period"] == newest_period]
+            unobserved = sorted(
+                {row["document_id"] for row in newest if row["observed"] != "1"}
+            )
+            if unobserved:
+                return failed(
+                    "publication_watermark_not_observed",
+                    "successful sync did not observe the newest selected "
+                    f"{doc_type} document(s) for {newest_period}: "
+                    + ", ".join(unobserved),
+                    input_document_ids=tuple(
+                        sorted({row["document_id"] for row in bound})
+                    ),
+                    input_artifact_ids=tuple(
+                        sorted({row["artifact_id"] for row in bound})
+                    ),
+                    catalog_document_ids=tuple(sorted(catalog_documents)),
+                )
+            newest_documents.update(row["document_id"] for row in newest)
+
+        watermark_lines = [str(base.run_id)] + [
+            f"catalog\0{document_id}"
+            for document_id in sorted(catalog_documents)
+        ] + [
+            "\0".join(
+                (row["document_id"], row["artifact_id"], row["sha256"])
+            )
+            for row in sorted(
+                bound,
+                key=lambda item: (
+                    item["document_id"], item["artifact_id"], item["sha256"]
+                ),
+            )
+        ]
+        watermark = hashlib.sha256("\n".join(watermark_lines).encode()).hexdigest()
+        return replace(
+            base,
+            input_document_ids=tuple(
+                sorted({row["document_id"] for row in bound})
+            ),
+            input_artifact_ids=tuple(
+                sorted({row["artifact_id"] for row in bound})
+            ),
+            catalog_document_ids=tuple(sorted(catalog_documents)),
+            run_document_ids=tuple(sorted(newest_documents)),
+            input_watermark=watermark,
+        )
+    except (OSError, sqlite3.Error) as exc:
+        return failed(
+            "publication_lineage_unreadable",
+            f"{type(exc).__name__}: {exc}",
+        )
+    finally:
+        if connection is not None:
+            connection.close()
 
 
 class EmptyCoverage:
@@ -521,6 +1116,7 @@ class QuarterlyAcquisitionService:
         unchanged_count = 0
         failures: list[SyncFailure] = []
         coverage_gaps: list[CoverageGap] = []
+        diagnostics: list[SourceDiagnostic] = []
 
         try:
             for issuer_plan in plans:
@@ -592,6 +1188,7 @@ class QuarterlyAcquisitionService:
                                 staging,
                                 failures,
                                 coverage_gaps,
+                                diagnostics,
                                 wayback_backfill=wayback_backfill,
                                 backfill_from_year=backfill_from_year,
                             )
@@ -633,6 +1230,7 @@ class QuarterlyAcquisitionService:
             unchanged=unchanged_count,
             failures=tuple(failures),
             coverage_gaps=tuple(coverage_gaps),
+            diagnostics=tuple(diagnostics),
             coverage_strict=strict_coverage,
         )
 
@@ -661,6 +1259,16 @@ class QuarterlyAcquisitionService:
                 reason="source_discovery_failed",
                 periods=set(plan.missing_periods),
                 coverage_gaps=coverage_gaps,
+            )
+            self._record_unobserved_rechecks(
+                run_id,
+                issuer,
+                source,
+                plan,
+                observed_periods=set(),
+                failures=failures,
+                coverage_gaps=coverage_gaps,
+                source_failed=True,
             )
             return 0, 0, 0
 
@@ -697,6 +1305,15 @@ class QuarterlyAcquisitionService:
                 self._record_rejection(run_id, record, exc, failures)
             except Exception as exc:
                 self._record_failure(run_id, record, exc, failures)
+        self._record_unobserved_rechecks(
+            run_id,
+            issuer,
+            source,
+            plan,
+            observed_periods=candidate_periods,
+            failures=failures,
+            coverage_gaps=coverage_gaps,
+        )
         return discovered, stored, unchanged
 
     def _sync_bmv_issuer(
@@ -726,6 +1343,16 @@ class QuarterlyAcquisitionService:
                 reason="source_discovery_failed",
                 periods=set(plan.missing_periods),
                 coverage_gaps=coverage_gaps,
+            )
+            self._record_unobserved_rechecks(
+                run_id,
+                issuer,
+                source,
+                plan,
+                observed_periods=set(),
+                failures=failures,
+                coverage_gaps=coverage_gaps,
+                source_failed=True,
             )
             return 0, 0, 0
 
@@ -765,6 +1392,15 @@ class QuarterlyAcquisitionService:
                 self._record_rejection(run_id, record, exc, failures)
             except Exception as exc:
                 self._record_failure(run_id, record, exc, failures)
+        self._record_unobserved_rechecks(
+            run_id,
+            issuer,
+            source,
+            plan,
+            observed_periods=observed_periods,
+            failures=failures,
+            coverage_gaps=coverage_gaps,
+        )
         return discovered, stored, unchanged
 
     def _sync_ir(
@@ -776,26 +1412,66 @@ class QuarterlyAcquisitionService:
         staging: Path,
         failures: list[SyncFailure],
         coverage_gaps: list[CoverageGap],
+        diagnostics: list[SourceDiagnostic],
         *,
         wayback_backfill: bool,
         backfill_from_year: int | None,
     ) -> tuple[int, int, int]:
         source_failed = False
+        issues: tuple[IRFetchIssue, ...] = ()
+        candidate_periods: set[str] = set()
         try:
-            artifacts = self.ir.fetch_incremental(
-                issuer,
-                source,
-                staging / "live",
-                known_periods=set(plan.known_periods),
-                recheck_periods=set(plan.recheck_periods),
-                desired_periods=plan.desired_periods,
+            report_fetcher = getattr(
+                self.ir,
+                "fetch_incremental_report",
+                None,
             )
+            if callable(report_fetcher):
+                fetch_report = report_fetcher(
+                    issuer,
+                    source,
+                    staging / "live",
+                    known_periods=set(plan.known_periods),
+                    recheck_periods=set(plan.recheck_periods),
+                    desired_periods=plan.desired_periods,
+                )
+                artifacts = tuple(fetch_report.artifacts)
+                issues = tuple(fetch_report.issues)
+                candidate_periods = {
+                    period
+                    for value in fetch_report.candidate_periods
+                    if (period := normalize_period(value)) is not None
+                }
+                diagnostics.extend(
+                    SourceDiagnostic(
+                        issuer_slug=issuer.slug,
+                        source_key=source.key,
+                        layer=layer.layer,
+                        candidates=layer.candidates,
+                        selected=layer.selected,
+                        note=layer.note,
+                    )
+                    for layer in fetch_report.layers
+                )
+            else:
+                artifacts = self.ir.fetch_incremental(
+                    issuer,
+                    source,
+                    staging / "live",
+                    known_periods=set(plan.known_periods),
+                    recheck_periods=set(plan.recheck_periods),
+                    desired_periods=plan.desired_periods,
+                )
         except Exception as exc:
             self._record_source_failure(run_id, issuer, source, exc, failures)
             source_failed = True
             artifacts = ()
 
         discovered = stored = unchanged = 0
+        for issue in issues:
+            self.ledger.discover(issue.record, run_id=run_id)
+            discovered += 1
+            self._record_ir_issue(run_id, issue, failures)
         observed_periods = {
             period
             for artifact in artifacts
@@ -873,6 +1549,16 @@ class QuarterlyAcquisitionService:
                     periods=unresolved,
                     coverage_gaps=coverage_gaps,
                 )
+        self._record_unobserved_rechecks(
+            run_id,
+            issuer,
+            source,
+            plan,
+            observed_periods=candidate_periods | observed_periods,
+            failures=failures,
+            coverage_gaps=coverage_gaps,
+            source_failed=source_failed,
+        )
         return discovered, stored, unchanged
 
     def _store(
@@ -965,6 +1651,121 @@ class QuarterlyAcquisitionService:
         )
         self.ledger.discover(record, run_id=run_id)
         self._record_failure(run_id, record, exc, failures)
+
+    def _record_recheck_failure(
+        self,
+        run_id: str,
+        issuer: IssuerSpec,
+        source: AcquisitionSource,
+        document_type: str,
+        period: str,
+        failures: list[SyncFailure],
+    ) -> None:
+        normalized = normalize_period(period)
+        if normalized is None:
+            raise ValueError(f"invalid recheck period: {period!r}")
+        year, quarter = normalized.split("-")
+        record = SourceRecord(
+            source_key=source.key,
+            source_record_id=(
+                f"{issuer.slug}:recheck:{document_type}:{normalized}"
+            ),
+            issuer_slug=issuer.slug,
+            url=source.url,
+            document_type=document_type,
+            title=f"{issuer.name} {normalized} trailing recheck",
+            period_year=int(year),
+            period_quarter=int(quarter[0]),
+            metadata={
+                "adapter": source.kind,
+                "synthetic_probe": True,
+                "recheck_period": normalized,
+            },
+        )
+        self.ledger.discover(record, run_id=run_id)
+        self._record_failure(
+            run_id,
+            record,
+            RuntimeError(
+                "trailing recheck observed no candidate or artifact for "
+                f"{normalized}"
+            ),
+            failures,
+        )
+
+    def _record_unobserved_rechecks(
+        self,
+        run_id: str,
+        issuer: IssuerSpec,
+        source: AcquisitionSource,
+        plan: SourcePlan,
+        *,
+        observed_periods: set[str],
+        failures: list[SyncFailure],
+        coverage_gaps: list[CoverageGap],
+        source_failed: bool = False,
+    ) -> None:
+        """Make a failed trailing restatement probe operationally visible."""
+
+        known_rechecks = set(plan.recheck_periods) & set(plan.known_periods)
+        observed = {
+            period
+            for value in observed_periods
+            if (period := normalize_period(value)) is not None
+        }
+        unobserved = known_rechecks - observed
+        if not unobserved:
+            return
+        self._append_coverage_gap(
+            issuer,
+            source_key=source.key,
+            document_type=plan.document_type,
+            reason=(
+                "recheck_periods_unresolved_after_source_failure"
+                if source_failed
+                else "recheck_periods_not_observed"
+            ),
+            periods=unobserved,
+            coverage_gaps=coverage_gaps,
+        )
+        if source_failed:
+            return
+        for period in _sorted_periods(unobserved):
+            self._record_recheck_failure(
+                run_id,
+                issuer,
+                source,
+                plan.document_type,
+                period,
+                failures,
+            )
+
+    def _record_ir_issue(
+        self,
+        run_id: str,
+        issue: IRFetchIssue,
+        failures: list[SyncFailure],
+    ) -> None:
+        if issue.retryable:
+            self.ledger.mark_retryable(
+                issue.record,
+                run_id=run_id,
+                error=issue.error,
+            )
+        else:
+            self.ledger.mark_rejected(
+                issue.record,
+                run_id=run_id,
+                reason=issue.error,
+            )
+        failures.append(
+            SyncFailure(
+                issuer_slug=issue.record.issuer_slug,
+                source_key=issue.record.source_key,
+                source_record_id=issue.record.source_record_id,
+                error=issue.error,
+            )
+        )
 
     def _record_failure(
         self,
@@ -1121,16 +1922,21 @@ def _sorted_periods(periods: Iterable[str]) -> tuple[str, ...]:
 __all__ = [
     "AcquisitionLedgerProtocol",
     "CoverageProtocol",
+    "CoverageGap",
     "EmptyCoverage",
     "EstateCoverage",
     "EstateWriterProtocol",
     "IssuerPlan",
     "PDF_DOCUMENT_TYPE",
     "QuarterlyAcquisitionService",
+    "QuarterlySyncFreshness",
     "RunReport",
+    "SourceDiagnostic",
     "SourcePlan",
     "SyncFailure",
     "XBRL_DOCUMENT_TYPE",
+    "check_quarterly_publication_freshness",
+    "check_quarterly_sync_freshness",
     "expected_quarterly_periods",
     "latest_periods",
 ]

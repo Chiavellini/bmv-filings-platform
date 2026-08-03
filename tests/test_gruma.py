@@ -146,7 +146,8 @@ def test_gruma_outline_maps_repeated_volume_rows_and_formulas():
     assert ws[f"H{usa_share}"].value == f"=+H{usa_gp}/H${gross_profit}"
 
     check = _find_after(ws, "Check", usa_gp)
-    assert ws[f"H{check}"].value.startswith(f"=H{gross_profit}-SUM(")
+    assert ws[f"H{check}"].value.startswith("=IF(COUNT(")
+    assert f"H{gross_profit}-SUM(" in ws[f"H{check}"].value
 
     fx = _find(ws, "FX Effect")
     assert ws[f"B{fx}"].comment is not None
