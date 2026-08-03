@@ -37,6 +37,13 @@ _PERIOD_PATTERNS = (
         r"(?:^|[^0-9A-Za-z])(?P<quarter>[1-4])[tq](?P<year>\d{2,4})(?=bmv|[^0-9A-Za-z]|$)",
         re.IGNORECASE,
     ),
+    # Liverpool publishes quarterly financial-statement PDFs as
+    # ``2TXBRL2026.pdf``.  XBRL describes the report's taxonomy here; the
+    # artifact itself is still the human-readable quarterly PDF.
+    re.compile(
+        r"(?:^|[^0-9A-Za-z])(?P<quarter>[1-4])[tq]xbrl(?P<year>20\d{2})(?:[^0-9A-Za-z]|$)",
+        re.IGNORECASE,
+    ),
     re.compile(
         r"(?:^|[^0-9A-Za-z])20(?P<quarter>[1-4])[tq](?P<year>\d{2,4})(?:[^0-9A-Za-z]|$)",
         re.IGNORECASE,
@@ -93,15 +100,20 @@ _RELEASE_RE = re.compile(r"(?:^|[^a-z])release(?:[^a-z]|$)", re.IGNORECASE)
 _EARNINGS_RESULTS_RE = re.compile(r"(?:earnings?|results?)", re.IGNORECASE)
 _GRUMA_RELEASE_RE = re.compile(r"(?:^|[^a-z0-9])gruma[-_]?e(?:[^a-z0-9]|$)", re.IGNORECASE)
 
-# Annual/yearly report signal — an integrated/annual report or a SEC 20-F. Only consulted as a
-# FALLBACK after the quarter patterns miss (a real quarterly filename never carries these tokens),
-# so it cannot re-label any quarterly file; a year-only annual report gets a ``YYYY-FY`` period.
+# Annual/yearly report signal — an integrated/annual report or a SEC 20-F. Used only as a FALLBACK
+# after the quarterly patterns miss (a real quarterly filename never carries these tokens), so
+# adding it cannot re-label any existing quarterly file. A year-only annual report ("informe anual
+# 2024") gets no quarter token and would otherwise be dropped by the canonical gate.
 _ANNUAL_SIGNAL_RE = re.compile(
     r"(?:informe[-_ ]*anual|reporte[-_ ]*anual|integrated[-_ ]*(?:annual[-_ ]*)?report"
     r"|annual[-_ ]*report|(?<![a-z])annual(?![a-z])|(?<![a-z])anual(?![a-z])|\b20-?f\b)",
     re.IGNORECASE,
 )
 _ANNUAL_YEAR_RE = re.compile(r"(?<!\d)(20\d{2})(?!\d)")
+_CANONICAL_FY_RE = re.compile(
+    r"(?<![0-9A-Za-z])(?P<year>20\d{2})[-_ ]?FY(?![0-9A-Za-z])",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -121,7 +133,18 @@ class ReportGroup:
 
 
 def infer_period_label(stem: str) -> str | None:
-    """Normalize a report stem into canonical ``YYYY-NT`` form."""
+    """Normalize a report stem into a canonical ``YYYY-NT`` (quarterly) or ``YYYY-FY`` (annual).
+
+    Quarterly patterns are tried first (unchanged behavior); an annual report is recognised only
+    as a fallback, so a filename carrying a quarter token always resolves to the quarter.
+    """
+    quarter = _infer_quarter_period(stem)
+    if quarter is not None:
+        return quarter
+    return _infer_annual_period(stem)
+
+
+def _infer_quarter_period(stem: str) -> str | None:
     for pattern in _PERIOD_PATTERNS:
         match = pattern.search(stem)
         if not match:
@@ -140,11 +163,14 @@ def infer_period_label(stem: str) -> str | None:
             continue
         year_num = int(year) if len(year) == 4 else 2000 + int(year)
         return f"{year_num:04d}-{int(quarter)}T"
-    return _infer_annual_period(stem)
+    return None
 
 
 def _infer_annual_period(stem: str) -> str | None:
     """Canonical ``YYYY-FY`` for an annual/integrated report or a 20-F; None if not annual."""
+    canonical = _CANONICAL_FY_RE.search(stem)
+    if canonical:
+        return f"{int(canonical.group('year')):04d}-FY"
     if not _ANNUAL_SIGNAL_RE.search(stem):
         return None
     year = _ANNUAL_YEAR_RE.search(stem)
@@ -162,6 +188,58 @@ def period_sort_key(period: str) -> tuple[int, int, str]:
     if annual:
         return (int(annual.group("year")), 5, period)
     return (9999, 99, period)
+
+
+def is_pipeline_report_artifact(path: Path) -> bool:
+    """Whether ``path`` is a direct input the extraction pipeline can consume."""
+    if not path.is_file():
+        return False
+    return (
+        path.suffix.lower() in {".md", ".pdf"}
+        or path.name.lower().endswith("_facts.json")
+    )
+
+
+def controlled_report_directories(
+    directories: Iterable[Path],
+) -> tuple[Path, ...]:
+    """Expand report roots by exactly one supported ``xbrl/`` child.
+
+    This is intentionally not recursive.  The estate's compatibility view keeps
+    structured filing artifacts in ``<company>/xbrl/``; arbitrary nested folders
+    (temporary downloads, archives, review output) must never enter onboarding by
+    accident. Empty/unusable roots are omitted.
+    """
+    out: list[Path] = []
+    seen: set[Path] = set()
+    for raw_directory in directories:
+        directory = Path(raw_directory)
+        candidates = [directory]
+        if directory.name.lower() != "xbrl":
+            candidates.append(directory / "xbrl")
+        for candidate in candidates:
+            if not candidate.is_dir():
+                continue
+            if not any(is_pipeline_report_artifact(path) for path in candidate.iterdir()):
+                continue
+            identity = candidate.resolve()
+            if identity in seen:
+                continue
+            seen.add(identity)
+            out.append(candidate)
+    return tuple(out)
+
+
+def available_report_periods(directories: Iterable[Path]) -> list[str]:
+    """Canonical periods in direct, controlled extraction inputs."""
+    periods = {
+        period
+        for directory in controlled_report_directories(directories)
+        for path in directory.iterdir()
+        if is_pipeline_report_artifact(path)
+        and (period := infer_period_label(path.stem)) is not None
+    }
+    return sorted(periods, key=period_sort_key)
 
 
 def index_report_files(files: Iterable[Path]) -> dict[str, ReportGroup]:

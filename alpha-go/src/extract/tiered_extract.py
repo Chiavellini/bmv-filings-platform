@@ -33,6 +33,16 @@ from pathlib import Path
 
 from src.model.financial_model import MetricDef, compute_derived_metrics
 from src.extract.extract_metrics import extract_metrics, extract_metrics_segmented
+from src.extract.revisions import (
+    DEFAULT_TRUSTED_TIERS,
+    ExtractedMetrics,
+    FactObservation,
+    RevisionMode,
+    normalize_period_label,
+    policy_config,
+    shift_canonical_period,
+    unpack_extraction_result,
+)
 
 
 @dataclass
@@ -43,11 +53,38 @@ class PeriodSource:
     pdf_path: Path | None = None    # source PDF  → Tier 2
     period_end: str | None = None   # ISO quarter end, anchors XBRL context selection
     doc: object | None = None       # parse_pdf.DocMeta: detected scale + sections
+    # Optional richer output supplied by a company extractor or source adapter.
+    # These observations can target any fiscal period, not just ``period``.
+    observations: tuple[FactObservation, ...] = ()
+    # Artifact lineage carried by directory unions. These fields prevent a
+    # current amended report from being silently paired with stale structured
+    # facts/PDFs belonging to another estate document.
+    source_path: Path | None = None
+    source_document_id: str | None = None
+    source_artifact_id: str | None = None
+    pdf_document_id: str | None = None
+    pdf_artifact_id: str | None = None
+    facts_path: Path | None = None
+    facts_document_id: str | None = None
+    facts_artifact_id: str | None = None
 
 
 _QUARTER_END = {"1": "03-31", "2": "06-30", "3": "09-30", "4": "12-31"}
-_DEFAULT_TIER_ORDER = ["xbrl", "bmv", "search", "prose", "regex_table", "table", "llm", "calc"]
 _MONETARY_UNITS = {"currency", "miles_mxn"}
+
+# Company-specific deterministic extractors: config ``custom_extractor`` value →
+# (module path, function name, wants_period, wants_pdf_path). Onboarding a new
+# custom extractor = one entry here plus the src/extract/<name>.py module; an
+# unknown value warns loudly at dispatch instead of silently doing nothing.
+_CUSTOM_EXTRACTORS = {
+    "gruma":     ("src.extract.gruma", "extract_gruma_appendix", False, False),
+    "lab":       ("src.extract.lab", "extract_lab_release", True, False),
+    "liverpool": ("src.extract.liverpool", "extract_liverpool_release", True, False),
+    "herdez":    ("src.extract.herdez", "extract_herdez", True, True),
+    "soriana":   ("src.extract.soriana", "extract_soriana", True, True),
+    "orbia":     ("src.extract.orbia", "extract_orbia_release", True, False),
+    "gmexico":   ("src.extract.gmexico", "extract_gmexico", True, True),
+}
 
 
 def period_end_from_label(period: str | None) -> str | None:
@@ -153,6 +190,60 @@ def _scale_table_rows(rows: dict, metric_defs: list[MetricDef], scale: float) ->
     return scaled
 
 
+def _tag_scale_unverified(rows: dict, metric_defs: list[MetricDef]) -> dict:
+    """Mark monetary table rows whose scale had no positive evidence.
+
+    The "[scale_unverified]" marker rides in source_line (like tier tags), so
+    score_confidence can demote these cells and the verification gate lists them.
+    Non-monetary rows (counts, pcts) are scale-free and pass through untouched.
+    """
+    unit_by_key = {m.key: m.unit for m in metric_defs}
+    tagged = {}
+    for key, row in rows.items():
+        if unit_by_key.get(key) in _MONETARY_UNITS:
+            tagged[key] = replace(
+                row, source_line=f"[scale_unverified] {row.source_line or ''}"[:100])
+        else:
+            tagged[key] = row
+    return tagged
+
+
+def _quarantine_implausible(found: dict, cfg: dict | None = None) -> None:
+    """Drop values that fail a validator rule with an unambiguous culprit.
+
+    A generic, data-driven safety net (not per-company): a value that fails a
+    validator rule pinpointing one offender (segment > consolidated revenue,
+    non-positive revenue, a negative cost line, a capex unit artifact) is dropped
+    so the result is an honest MISS rather than a confident wrong value. Never
+    drops an ``[xbrl]``/``[bmv]``/``[statement]`` value (authoritative tiers,
+    matching pipeline._quarantine_series_magnitude). Escape: VALIDATOR_GATE=0.
+
+    ``validator.allow_negative`` (config) exempts listed metrics from the
+    negative-cost sanity rule only — e.g. Orbia prints income-tax BENEFITS as
+    negative "Income tax" rows, which are genuine, not sign errors.
+    """
+    if os.environ.get("VALIDATOR_GATE") == "0":
+        return
+    allow_negative = set(((cfg or {}).get("validator") or {}).get("allow_negative") or [])
+    try:
+        from src.shared.validator import validate, offending_metric
+        for res in validate(found):
+            key = offending_metric(res)
+            if not key:
+                continue
+            if key in allow_negative and res.rule == f"sanity_nonneg_{key}":
+                continue
+            row = found.get(key)
+            src_line = getattr(row, "source_line", "") or "" if row is not None else ""
+            # Authoritative tiers are never dropped — same exemption set as
+            # pipeline._quarantine_series_magnitude.
+            if row is None or any(t in src_line for t in ("[xbrl]", "[bmv]", "[statement]")):
+                continue
+            found.pop(key, None)
+    except Exception as exc:
+        print(f"tiered: validator gate skipped: {exc}", file=sys.stderr)
+
+
 def extract_metrics_tiered(
     src: PeriodSource,
     metric_defs: list[MetricDef],
@@ -171,16 +262,48 @@ def extract_metrics_tiered(
     lift of the BMV statement tier) without relying on which inputs are present.
     Names: "xbrl", "bmv", "search", "prose", "table", "llm".
     """
-    found: dict = {}
+    found = ExtractedMetrics(observations=src.observations)
     _on = lambda name: tiers is None or name in tiers
 
     # ---- Tier 1: XBRL structured facts -------------------------------------
     if src.facts and _on("xbrl"):
         try:
-            from src.extract.xbrl_facts import extract_from_xbrl, pesos_per_unit_for
+            from src.extract.xbrl_facts import (
+                extract_comparative_observations_from_xbrl,
+                extract_from_xbrl, fact_value_divisor_for, iso_currency_for,
+            )
             period_end = src.period_end or period_end_from_label(src.period)
-            ppu = pesos_per_unit_for(cfg)
-            _merge_rows(found, extract_from_xbrl(src.facts, metric_defs, period_end, ppu), cfg)
+            # Two currency regimes, selected per caller via config:
+            #  - default (deliverable/certified path): report in the filing's native
+            #    currency, guarded by the expected-currency FILTER (orbia/gmexico
+            #    certify USD as printed).
+            #  - "convert_to_mxn" (coverage path — soft injects this at call time):
+            #    facts-detected USD converts via USDMXN + per-filing millions
+            #    sensing, no filter.
+            currency_mode = (
+                ((cfg or {}).get("xbrl") or {}).get("currency_mode") or "native"
+            )
+            if currency_mode == "convert_to_mxn":
+                ppu = fact_value_divisor_for(
+                    cfg, src.facts, currency_mode="convert_to_mxn",
+                )
+                expected = None
+            else:
+                ppu = fact_value_divisor_for(cfg, src.facts, currency_mode="native")
+                expected = iso_currency_for(cfg)
+            _merge_rows(found, extract_from_xbrl(src.facts, metric_defs, period_end, ppu,
+                                                 expected_currency=expected), cfg)
+            found.observations.extend(extract_comparative_observations_from_xbrl(
+                src.facts,
+                metric_defs,
+                report_period=src.period,
+                period_end=period_end,
+                pesos_per_unit=ppu,
+                expected_currency=expected,
+                source_document_id=(src.facts_document_id
+                                    or src.source_document_id
+                                    or str(src.facts_path or src.source_path or "")),
+            ))
         except Exception as exc:
             print(f"tiered: Tier 1 (xbrl) failed for {src.period}: {exc}", file=sys.stderr)
 
@@ -195,25 +318,45 @@ def extract_metrics_tiered(
         except Exception as exc:
             print(f"tiered: Tier 1.5 (bmv) failed for {src.period}: {exc}", file=sys.stderr)
 
+    # ---- Tier 'note': header-aligned CNBV [800200] income-note segments ------
+    # Generalizes the per-company positional regexes that grab segment-revenue
+    # rows from the income note: it reads the column header and selects the
+    # single-quarter ("Trimestre … Actual") column whose quarter matches the
+    # target, so the note's varying column ORDER no longer matters. Opt-in per
+    # company via the `income_note:` config block; degrades to {} (positional
+    # regex fallback) whenever the header can't be confidently aligned.
+    if src.text and (cfg or {}).get("income_note", {}).get("enabled") and _on("note"):
+        try:
+            from src.extract.income_note import extract_from_income_note
+            _merge_rows(found, extract_from_income_note(src.text, metric_defs, cfg, src.period), cfg)
+        except Exception as exc:
+            print(f"tiered: note tier failed for {src.period}: {exc}", file=sys.stderr)
+
     # ---- Company-specific deterministic extractors -------------------------
-    if src.text and (cfg or {}).get("custom_extractor") == "gruma":
-        try:
-            from src.extract.gruma import extract_gruma_appendix
-            _merge_rows(found, extract_gruma_appendix(src.text, metric_defs), cfg)
-        except Exception as exc:
-            print(f"tiered: custom extractor failed for {src.period}: {exc}", file=sys.stderr)
-    if src.text and (cfg or {}).get("custom_extractor") == "lab" and _on("search"):
-        try:
-            from src.extract.lab import extract_lab_release
-            _merge_rows(found, extract_lab_release(src.text, metric_defs, src.period), cfg)
-        except Exception as exc:
-            print(f"tiered: LAB custom extractor failed for {src.period}: {exc}", file=sys.stderr)
-    if src.text and (cfg or {}).get("custom_extractor") == "liverpool" and _on("search"):
-        try:
-            from src.extract.liverpool import extract_liverpool_release
-            _merge_rows(found, extract_liverpool_release(src.text, metric_defs, src.period), cfg)
-        except Exception as exc:
-            print(f"tiered: Liverpool custom extractor failed for {src.period}: {exc}", file=sys.stderr)
+    # Uniformly gated on _on("search") so tier-ablation evals can switch them
+    # off together; "search" is in every full tier list, so production and
+    # certification runs are unaffected.
+    custom = (cfg or {}).get("custom_extractor")
+    if src.text and custom:
+        if custom not in _CUSTOM_EXTRACTORS:
+            print(f"tiered: unknown custom_extractor '{custom}' — not in "
+                  f"_CUSTOM_EXTRACTORS (tiered_extract.py); extractor NOT run",
+                  file=sys.stderr)
+        elif _on("search"):
+            mod_path, fn_name, wants_period, wants_pdf = _CUSTOM_EXTRACTORS[custom]
+            try:
+                import importlib
+                fn = getattr(importlib.import_module(mod_path), fn_name)
+                args = [src.text, metric_defs]
+                if wants_period:
+                    args.append(src.period)
+                kwargs = {"pdf_path": src.pdf_path} if wants_pdf else {}
+                custom_rows, custom_observations = unpack_extraction_result(fn(*args, **kwargs))
+                _merge_rows(found, custom_rows, cfg)
+                found.observations.extend(custom_observations)
+            except Exception as exc:
+                print(f"tiered: custom extractor '{custom}' failed for {src.period}: {exc}",
+                      file=sys.stderr)
 
     # ---- Tier 2: command-F analog over parsed markdown ---------------------
     # Find aliases/row labels in the report text and pick the nearby numeric
@@ -255,34 +398,26 @@ def extract_metrics_tiered(
                 raw_rows = extract_from_tables(
                     src.pdf_path, metric_defs, table_scale=1.0, cfg=cfg, period=src.period,
                 )
-                scale = resolve_table_scale(
-                    raw_rows, found, cfg, metric_defs, doc=getattr(src, "doc", None)
+                scale, scale_evidence = resolve_table_scale(
+                    raw_rows, found, cfg, metric_defs, doc=getattr(src, "doc", None),
+                    with_evidence=True,
                 )
                 table_rows = _scale_table_rows(raw_rows, metric_defs, scale)
+                if scale_evidence == "default":
+                    # Scale fell through to 1.0 with NO positive signal (no XBRL
+                    # overlap, no caption): monetary cells may be off by 1000×.
+                    # Tag them so confidence drops and the verification worklist
+                    # surfaces them, instead of a silent unit artifact.
+                    table_rows = _tag_scale_unverified(table_rows, metric_defs)
             _merge_rows(found, table_rows, cfg)
         except Exception as exc:
             print(f"tiered: Tier 2 (tables) failed for {src.period}: {exc}", file=sys.stderr)
 
     # ---- Validator safety-net gate: quarantine data-implausible values -----
-    # A generic, data-driven check (not per-company): a value that fails a
-    # validator rule with an unambiguous culprit (a segment exceeding consolidated
-    # revenue → wrong-row; non-positive revenue) is dropped so the result is an
-    # honest MISS instead of a confident wrong value, and so it can't poison
-    # derived ratios. Runs after table gap-fill, before LLM (which may re-seek it).
-    # Never drops an [xbrl] value (Tier 1 is authoritative). Escape: VALIDATOR_GATE=0.
-    if os.environ.get("VALIDATOR_GATE") != "0":
-        try:
-            from src.shared.validator import validate, offending_metric
-            for res in validate(found):
-                key = offending_metric(res)
-                if not key:
-                    continue
-                row = found.get(key)
-                if row is None or "[xbrl]" in (getattr(row, "source_line", "") or ""):
-                    continue
-                found.pop(key, None)
-        except Exception as exc:
-            print(f"tiered: validator gate skipped for {src.period}: {exc}", file=sys.stderr)
+    # Runs after table gap-fill, before LLM (which may re-seek a dropped metric).
+    # A second pass runs after derived ratios below, so a `calc` fallback can't
+    # resurrect an implausible value (e.g. tax_expense = ebt - net_income < 0).
+    _quarantine_implausible(found, cfg)
 
     # ---- Tier 4: LLM fallback (opt-in) -------------------------------------
     if use_llm and _on("llm"):
@@ -290,6 +425,8 @@ def extract_metrics_tiered(
         if missing:
             try:
                 from src.extract.llm_extract import llm_extract
+                # Alpha's approved LLM compatibility fork predates the optional
+                # root ``cfg`` keyword; keep the isolated app boundary callable.
                 for key, row in llm_extract(missing, src.text, found).items():
                     found.setdefault(key, row)
             except Exception as exc:
@@ -315,4 +452,151 @@ def extract_metrics_tiered(
     # above a source tier, derived rows can replace noisy raw ratio cells.
     _merge_rows(found, compute_derived_metrics(found, metric_defs, include_existing=True), cfg)
 
+    # Second gate pass: catch implausible values introduced by `calc` fallbacks.
+    _quarantine_implausible(found, cfg)
+
     return found
+
+
+# ── Restated comparatives (cross-period post-pass) ──────────────────────────
+_PERIOD_LABEL_RE = None  # compiled lazily (re imported locally to match module style)
+
+
+def _shift_period_label(label: str, years: int = 1) -> str | None:
+    """Same-quarter period label ``years`` later, preserving the input format.
+
+    Handles both label conventions used across the project:
+    eval-style ``2Q21A`` / ``2Q21`` and pipeline-style ``2021-2T``.
+    """
+    import re
+    global _PERIOD_LABEL_RE
+    if _PERIOD_LABEL_RE is None:
+        _PERIOD_LABEL_RE = re.compile(
+            r"^(?:(?P<y1>\d{4})-(?P<q1>[1-4])T|(?P<q2>[1-4])Q(?P<y2>\d{2})(?P<sfx>A?))$")
+    m = _PERIOD_LABEL_RE.match(label or "")
+    if not m:
+        return None
+    if m.group("y1"):
+        return f"{int(m.group('y1')) + years}-{m.group('q1')}T"
+    yy = (int(m.group("y2")) + years) % 100
+    return f"{m.group('q2')}Q{yy:02d}{m.group('sfx')}"
+
+
+def apply_restated_priors(
+    extracted_by_period: dict, metric_defs: list, cfg: dict | None,
+) -> list[dict]:
+    """Promote next-year comparatives according to explicit and automatic policy.
+
+    Mexican issuers routinely restate comparatives — discontinued operations
+    (Bimbo/Ricolino 2021), IFRS-16 adoption (2019), IAS-29 re-expression of
+    hyperinflationary subsidiaries (LatAm segments, every year). Analyst models
+    track the RESTATED series, which is printed only in the following year's
+    filing as the prior-year column. For each metric listed in
+    ``cfg['restated_prior']`` (value: list of period labels, or ``all``), period
+    P's value is replaced by extracted[P+1y].prior when that capture exists.
+    Configuration labels are normalized, so eval-style ``2Q21A`` works against
+    production's ``2021-2T`` keys.
+
+    A separate, conservative ``latest_comparative`` policy may be ``off``
+    (default), ``allow`` (trusted/official source tiers only), or ``force``.
+    Explicit ``restated_prior`` cells always retain their historical behavior and
+    take precedence over the automatic policy.  Returns audit events; callers
+    which previously ignored the ``None`` return remain compatible.
+    """
+    spec = (cfg or {}).get("restated_prior") or {}
+    if not isinstance(spec, dict):
+        spec = {}
+    auto_mode, auto_details = policy_config(cfg, "latest_comparative", default="off")
+    if not spec and auto_mode is RevisionMode.OFF:
+        return []
+
+    raw_auto_metrics = auto_details.get("metrics")
+    if isinstance(raw_auto_metrics, str):
+        auto_metrics = {raw_auto_metrics}
+    elif raw_auto_metrics:
+        auto_metrics = {str(key) for key in raw_auto_metrics}
+    else:
+        auto_metrics = None
+    trusted_tiers = {
+        str(tier).strip().lower().strip("[]")
+        for tier in (auto_details.get("trusted_tiers") or DEFAULT_TRUSTED_TIERS)
+    }
+
+    canonical_to_actual = {
+        normalize_period_label(period): period for period in extracted_by_period
+    }
+
+    def explicitly_configured(key: str, canonical_period: str) -> bool:
+        periods = spec.get(key)
+        if periods == "all":
+            return True
+        if isinstance(periods, str):
+            periods = [periods]
+        return canonical_period in {
+            normalize_period_label(item) for item in (periods or [])
+        }
+
+    touched: set = set()
+    events: list[dict] = []
+    # Snapshot the items: a future typed-observation projection may have added a
+    # period, and this pass must not mutate the mapping while iterating it.
+    for period, rows in list(extracted_by_period.items()):
+        canonical_period = normalize_period_label(period)
+        next_canonical = shift_canonical_period(canonical_period, 1)
+        next_actual = canonical_to_actual.get(next_canonical or "")
+        nxt = extracted_by_period.get(next_actual) if next_actual else None
+        if not nxt:
+            continue
+        for key, nrow in nxt.items():
+            explicit = explicitly_configured(key, canonical_period)
+            automatic = auto_mode is not RevisionMode.OFF and (
+                auto_metrics is None or key in auto_metrics
+            )
+            if not explicit and not automatic:
+                continue
+            if nrow is None or nrow.prior is None:
+                continue
+            if not explicit and auto_mode is RevisionMode.ALLOW:
+                if _source_tier(nrow) not in trusted_tiers:
+                    continue
+            old = rows.get(key)
+            old_value = getattr(old, "current", None) if old is not None else None
+            # Automatic promotion is intentionally quiet when the later filing
+            # merely confirms the as-reported number.  Explicit policy still
+            # annotates the cell, preserving its established semantics.
+            if not explicit and old_value is not None and old_value == nrow.prior:
+                continue
+            policy = "configured" if explicit else f"auto:{auto_mode.value}"
+            provenance = (
+                f"[restated] {policy} latest comparative from {next_actual} prior "
+                f"for {period} — {nrow.source_line}"
+            )
+            rows[key] = replace(
+                nrow,
+                current=nrow.prior,
+                prior=None,
+                var_pct=None,
+                source_line=provenance[:160],
+            )
+            touched.add(period)
+            events.append({
+                "kind": "latest_comparative",
+                "policy": policy,
+                "metric": key,
+                "observed_period": canonical_period,
+                "source_report_period": normalize_period_label(next_actual),
+                "previous_value": old_value,
+                "selected_value": nrow.prior,
+                "selected_source_tier": _source_tier(nrow),
+                "applied": True,
+            })
+    # Restated components must flow into derived ratios: recompute [calc] rows
+    # (only cells that are calc-sourced or absent — raw-extracted ratios stay).
+    for period in touched:
+        rows = extracted_by_period[period]
+        derived = compute_derived_metrics(rows, metric_defs, include_existing=True)
+        for key, drow in derived.items():
+            old = rows.get(key)
+            if old is None or "[calc" in (old.source_line or ""):
+                rows[key] = drow
+    return events

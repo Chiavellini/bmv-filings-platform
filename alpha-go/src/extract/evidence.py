@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import sys
 import unicodedata
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -205,7 +206,7 @@ def extract_with_evidence(
     candidates.extend(_regex_candidates(src, defs, cfg))
     candidates.extend(_table_candidates(doc, requests, defs, cfg))
     if use_llm_labeling:
-        candidates.extend(_llm_candidates(src, defs, {c.metric for c in candidates}))
+        candidates.extend(_llm_candidates(src, defs, {c.metric for c in candidates}, cfg))
 
     accepted, diagnostics = _resolve_candidates(
         doc.period, defs, candidates, confidence_threshold=confidence_threshold
@@ -309,22 +310,54 @@ def _xbrl_candidates(src, metric_defs: list[MetricDef], cfg: dict) -> list[Candi
         return []
     try:
         from src.extract.tiered_extract import period_end_from_label
-        from src.extract.xbrl_facts import extract_from_xbrl, pesos_per_unit_for
+        from src.extract.xbrl_facts import (
+            extract_from_xbrl,
+            fact_value_divisor_for,
+            iso_currency_for,
+        )
         period_end = getattr(src, "period_end", None) or period_end_from_label(getattr(src, "period", None))
-        rows = extract_from_xbrl(facts, metric_defs, period_end, pesos_per_unit_for(cfg))
-    except Exception:
+        currency_mode = (((cfg or {}).get("xbrl") or {}).get("currency_mode") or "native")
+        expected_currency = None if currency_mode == "convert_to_mxn" else iso_currency_for(cfg)
+        rows = extract_from_xbrl(
+            facts,
+            metric_defs,
+            period_end,
+            fact_value_divisor_for(cfg, facts, currency_mode=currency_mode),
+            expected_currency=expected_currency,
+        )
+    except Exception as exc:
+        print(f"evidence: xbrl candidates failed: {exc}", file=sys.stderr)
         return []
     return [_candidate_from_row(key, row, source="xbrl", confidence=0.95)
             for key, row in rows.items()]
 
 
 def _custom_candidates(src, metric_defs: list[MetricDef], cfg: dict) -> list[CandidateValue]:
-    if not getattr(src, "text", None) or cfg.get("custom_extractor") != "gruma":
+    """Candidates from the company's custom extractor (any registry entry).
+
+    Dispatches through tiered_extract._CUSTOM_EXTRACTORS so the evidence path
+    covers every custom extractor — previously only gruma was wired here and
+    ``--evidence`` silently lost the other companies' deterministic tiers.
+    """
+    custom = cfg.get("custom_extractor")
+    if not getattr(src, "text", None) or not custom:
         return []
+    from src.extract.tiered_extract import _CUSTOM_EXTRACTORS
+    spec = _CUSTOM_EXTRACTORS.get(custom)
+    if spec is None:
+        print(f"evidence: unknown custom_extractor '{custom}'", file=sys.stderr)
+        return []
+    mod_path, fn_name, wants_period, wants_pdf = spec
     try:
-        from src.extract.gruma import extract_gruma_appendix
-        rows = extract_gruma_appendix(src.text, metric_defs)
-    except Exception:
+        import importlib
+        fn = getattr(importlib.import_module(mod_path), fn_name)
+        args = [src.text, metric_defs]
+        if wants_period:
+            args.append(getattr(src, "period", None))
+        kwargs = {"pdf_path": getattr(src, "pdf_path", None)} if wants_pdf else {}
+        rows = fn(*args, **kwargs)
+    except Exception as exc:
+        print(f"evidence: custom extractor '{custom}' failed: {exc}", file=sys.stderr)
         return []
     return [_candidate_from_row(key, row, source="custom_table", confidence=0.90)
             for key, row in rows.items()]
@@ -407,15 +440,19 @@ def _table_candidates(
     return out
 
 
-def _llm_candidates(src, metric_defs: list[MetricDef], already_seen: set[str]) -> list[CandidateValue]:
+def _llm_candidates(src, metric_defs: list[MetricDef], already_seen: set[str],
+                    cfg: dict | None = None) -> list[CandidateValue]:
     text = getattr(src, "text", "") or ""
     missing = [m for m in metric_defs if m.key not in already_seen and m.patterns]
     if not missing:
         return []
     try:
         from src.extract.llm_extract import llm_extract
+        # Alpha's approved LLM compatibility fork predates the optional
+        # root ``cfg`` keyword; its extraction contract is otherwise the same.
         rows = llm_extract(missing, text, {})
-    except Exception:
+    except Exception as exc:
+        print(f"evidence: llm candidates failed: {exc}", file=sys.stderr)
         return []
     return [_candidate_from_row(key, row, source="llm", confidence=0.50)
             for key, row in rows.items()]
@@ -482,7 +519,8 @@ def _tables_from_pdf_cached(pdf_path: Path, *, cache_dir: Path | None) -> list[D
                             header_by_col=block.header_by_col,
                             block_rows=block.rows,
                         ))
-    except Exception:
+    except Exception as exc:
+        print(f"evidence: table parse failed: {exc}", file=sys.stderr)
         return []
 
     if cache_path is not None:
