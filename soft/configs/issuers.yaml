@@ -854,6 +854,9 @@ overlays:
       use_playwright: true
       max_reports: 120
       delay_ms: 500
+      live_verified_period: 2026-2T
+      live_verified_on: 2026-08-01
+      live_verified_url: https://www.elpuertodeliverpool.mx/docs/informes-trimestrales/2026/2TXBRL2026.pdf
   orbia:
     name: Orbia Advance Corporation
     market_ticker: ORBIA
@@ -874,10 +877,15 @@ overlays:
     unit: millions
     ir:
       url: https://qinversionistas.qualitas.com.mx/ES/reportes-trimestrales
+      pdf_link_pattern: '(?i)/storage/informes/20\d{2}/trimestral/[1-4]T/mx/Q(?:%20|\s|-).*Reporte(?:%20|\s|-).*Trimestral.*\.pdf'
+      strict_pdf_link_pattern: true
       xbrl_ticker: Q
       max_reports: 120
       floor_year: 2016
       delay_ms: 250
+      live_verified_period: 2026-2T
+      live_verified_on: 2026-08-01
+      live_verified_url: https://qinversionistas.qualitas.com.mx/storage/informes/2026/trimestral/2T/mx/Q%20-%20Reporte%20Trimestral%202T26%20VFF2.pdf
   regional:
     market_ticker: R
     language: es
@@ -944,5 +952,10 @@ overlays:
     unit: millions
     ir:
       url: https://www.walmex.mx/en/financial-information/quarterly.html
-      pdf_link_pattern: '(?:reporte|report|trimest|quarter|result|earning).*\.pdf'
+      pdf_link_pattern: '(?i)/walmex(?:(?:%20)|[ _-])[^/?]*(?:earnings(?:(?:%20)|[ _-])*release|release)[^/?]*\.pdf(?:[?#]|$)'
+      strict_pdf_link_pattern: true
+      coverage_from_period: 2025-1T
       xbrl_ticker: WALMEX
+      live_verified_period: 2026-2T
+      live_verified_on: 2026-08-01
+      live_verified_url: https://files.walmex.mx/upload/files/2026/EN/Quarterly/2Q26/Walmex%202Q26%20Earnings%20Release.pdf

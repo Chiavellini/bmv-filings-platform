@@ -22,11 +22,21 @@ STYLE_DIR = DATA_DIR / "style"
 
 # Deliverable routes (clean input/output scheme):
 #   inputs/<company>.md                       — the markdown spec (IR link + outline)
-#   outputs/<Company>/{excel,csv,validation}/ — the generated deliverables
+#   outputs/latest/<Company>.xlsx             — analyst handoff (exactly one workbook)
+#   outputs/archive/deliverables/<build>/      — exact prior analyst handoffs
+#   outputs/<Company>/{excel,csv,validation}/ — build artifacts and review evidence
 # Raw PDFs and parsed markdown stay in REPORTS_DIR (a durable cache), never
 # duplicated into the output tree.
 INPUTS_DIR = PROJECT_ROOT / "inputs"
 OUTPUTS_DIR = Path(os.environ.get("PDFS_OUTPUTS_DIR", PROJECT_ROOT / "outputs")).expanduser().resolve()
+LATEST_OUTPUT_DIR = OUTPUTS_DIR / "latest"
+LATEST_OUTPUT_RECEIPT = OUTPUTS_DIR / "latest_manifest.json"
+DELIVERABLE_ARCHIVE_DIR = Path(
+    os.environ.get(
+        "PDFS_DELIVERABLE_ARCHIVE_DIR",
+        OUTPUTS_DIR / "archive" / "deliverables",
+    )
+).expanduser().resolve()
 
 
 # ── shared document estate (lazy) ──────────────────────────────────────────────
@@ -37,7 +47,8 @@ OUTPUTS_DIR = Path(os.environ.get("PDFS_OUTPUTS_DIR", PROJECT_ROOT / "outputs"))
 # This module nevertheless used to walk up the filesystem for the parent's
 # estate_bridge.py and call load_estate_bridge() AT IMPORT TIME, binding three
 # names — DOCUMENT_ESTATE_DIR, DOCUMENT_ESTATE_DB, SHARED_REPORTS_DIR — that a
-# repo-wide grep shows nothing in soft/ ever read.
+# repo-wide grep shows nothing in soft/ ever read. The parsed-report view follows
+# the same lazy boundary so standalone Soft imports remain estate-independent.
 #
 # Because src/download/market_data.py imports this module, that made the entire
 # daily pricing path fail at import if the parent's bridge were missing or
@@ -52,6 +63,7 @@ _ESTATE_ATTRIBUTES = {
     "DOCUMENT_ESTATE_DIR": lambda bridge: bridge.estate_root,
     "DOCUMENT_ESTATE_DB": lambda bridge: bridge.catalog_path,
     "SHARED_REPORTS_DIR": lambda bridge: bridge.reports_view_dir,
+    "SHARED_PARSED_REPORTS_DIR": lambda bridge: bridge.estate_root / "views" / "parsed",
 }
 
 
