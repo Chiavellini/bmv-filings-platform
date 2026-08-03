@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from src.search.filters import SearchFilters
 from src.search.retriever import HybridRetriever
+from src.index.store import IndexStore
 
 
 def _retriever(built_index):
@@ -50,3 +51,25 @@ def test_keyword_only_when_no_embedder(built_index):
     kw_only = HybridRetriever(store)
     hits = kw_only.search("revenues")
     assert hits and "revenue" in hits[0].snippet.text.lower()
+
+
+def test_long_lived_retriever_invalidates_caches_after_external_index_commit(
+    built_index,
+):
+    store, _embedder = built_index
+    retriever = HybridRetriever(store)
+    stale_vector = (["stale-chunk"], object())
+    retriever._vector_cache = stale_vector
+    retriever._id_index = {"stale-chunk": 0}
+    retriever._boiler_cache = object()
+
+    writer = IndexStore(store.db_path)
+    writer.connect()
+    writer.set_meta("external_projection_test", "committed")
+    writer.commit()
+    writer.close()
+
+    assert retriever.search("revenues")
+    assert retriever._vector_cache is None
+    assert retriever._id_index is None
+    assert retriever._boiler_cache is None

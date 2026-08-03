@@ -13,7 +13,6 @@ from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
-import sqlite3
 import subprocess
 import sys
 from typing import Any, Literal
@@ -65,7 +64,15 @@ def _payload(event: object) -> dict[str, Any]:
 
 
 class AlphaGoProjectionConsumer:
-    """Project parsed estate documents through Alpha Go's owned CLI."""
+    """Project every parsed estate document through Alpha Go's owned CLI.
+
+    Alpha Go is the estate-wide search projection, not a product-specific
+    corpus. Eligibility therefore comes from the existence of a verified
+    parsed-text artifact; ``document_projects`` pins are deliberately not a
+    filter here. The generation is ``v2`` so deployments that previously
+    persisted ``project_not_pinned`` skips create fresh receipts and backfill
+    those documents automatically.
+    """
 
     event_types = (_PARSED_EVENT,)
     batch_size = 64
@@ -100,39 +107,16 @@ class AlphaGoProjectionConsumer:
             target_identity.encode("utf-8")
         ).hexdigest()[:16]
         self.consumer_id = (
-            f"alpha-go.search-projection.v1:{target_digest}"
+            f"alpha-go.search-projection.v2:{target_digest}"
+        )
+        self.supersedes_consumer_ids = (
+            f"alpha-go.search-projection.v1:{target_digest}",
         )
         self.python_executable = str(python_executable)
         self.timeout_seconds = int(timeout_seconds)
         self.runner = runner
         if self.timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
-
-    def _current_projects(self, document_id: str) -> set[str]:
-        connection = sqlite3.connect(
-            f"file:{self.database}?mode=ro",
-            uri=True,
-        )
-        connection.row_factory = sqlite3.Row
-        try:
-            table = connection.execute(
-                """SELECT 1 FROM sqlite_master
-                   WHERE type='table' AND name='document_projects'"""
-            ).fetchone()
-            if table is None:
-                raise RuntimeError(
-                    "estate catalog has no authoritative document_projects table"
-                )
-            return {
-                str(row["project"])
-                for row in connection.execute(
-                    """SELECT project FROM document_projects
-                       WHERE document_id=?""",
-                    (document_id,),
-                )
-            }
-        finally:
-            connection.close()
 
     def handle(
         self, event: object, context: object | None = None
@@ -151,10 +135,6 @@ class AlphaGoProjectionConsumer:
             )
         if not document_id:
             raise ValueError("parsed-document event has no document_id")
-        if "alpha-go" not in self._current_projects(str(document_id)):
-            return ProjectionResult(
-                "skipped", str(document_id), reason="project_not_pinned"
-            )
         detail = self._project((str(document_id),))
         return ProjectionResult(
             "succeeded",
@@ -188,13 +168,6 @@ class AlphaGoProjectionConsumer:
             if not document_id:
                 raise ValueError("parsed-document event has no document_id")
             document_id = str(document_id)
-            if "alpha-go" not in self._current_projects(document_id):
-                outcomes.append(
-                    ProjectionResult(
-                        "skipped", document_id, reason="project_not_pinned"
-                    )
-                )
-                continue
             projected.append((len(outcomes), document_id))
             outcomes.append(None)
         if projected:
@@ -213,7 +186,81 @@ class AlphaGoProjectionConsumer:
             if outcome is not None
         ]
 
-    def _project(self, document_ids: Sequence[str]) -> dict[str, Any]:
+    def reconcile(self) -> dict[str, Any]:
+        """Reconcile the complete searchable estate into this Alpha target.
+
+        Event delivery is the incremental fast path. This bounded process
+        boundary is the periodic safety net for legacy writers, missing
+        historical events, removed artifacts, and metadata-only changes.
+        """
+
+        return self._project((), require_eligible=False)
+
+    def audit(self) -> dict[str, Any]:
+        """Read-only coverage proof for eligible estate families and the index."""
+
+        script = self.project_root / "scripts" / "sync_shared_estate.py"
+        for path, label in (
+            (script, "Alpha Go projection script"),
+            (self.database, "estate catalog"),
+            (self.index_db, "Alpha Go index"),
+            (self.config, "Alpha Go runtime config"),
+        ):
+            if not path.is_file():
+                raise FileNotFoundError(f"{label} not found: {path}")
+        command = [
+            self.python_executable,
+            str(script),
+            "--estate",
+            str(self.database),
+            "--corpus",
+            str(self.corpus),
+            "--db",
+            str(self.index_db),
+            "--config",
+            str(self.config),
+            "--audit-index",
+            "--json",
+        ]
+        completed = self.runner(
+            command,
+            cwd=self.project_root,
+            capture_output=True,
+            text=True,
+            timeout=self.timeout_seconds,
+            check=False,
+        )
+        try:
+            response = json.loads((completed.stdout or "").strip())
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                "Alpha Go projection audit returned invalid machine output"
+            ) from exc
+        result = response.get("result")
+        if (
+            completed.returncode not in {0, 4}
+            or response.get("status") not in {"healthy", "drift"}
+            or not isinstance(result, Mapping)
+        ):
+            diagnostic = (completed.stderr or "").strip()
+            raise RuntimeError(
+                "Alpha Go projection audit failed: "
+                + (diagnostic or str(response))[-2000:]
+            )
+        healthy = completed.returncode == 0 and response["status"] == "healthy"
+        return {
+            "command": "audit_shared_estate_projection",
+            "target_id": self.target_id,
+            "healthy": healthy,
+            "result": dict(result),
+        }
+
+    def _project(
+        self,
+        document_ids: Sequence[str],
+        *,
+        require_eligible: bool = True,
+    ) -> dict[str, Any]:
         script = self.project_root / "scripts" / "sync_shared_estate.py"
         for path, label in (
             (script, "Alpha Go projection script"),
@@ -265,7 +312,10 @@ class AlphaGoProjectionConsumer:
         if (
             response.get("status") != "succeeded"
             or not isinstance(result, Mapping)
-            or int(result.get("eligible") or 0) < 1
+            or (
+                require_eligible
+                and int(result.get("eligible") or 0) < 1
+            )
         ):
             raise RuntimeError(
                 "Alpha Go projection did not verify the requested document: "

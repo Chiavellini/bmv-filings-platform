@@ -175,6 +175,18 @@ def _consumer_contract(consumer: Consumer) -> tuple[str, tuple[str, ...]]:
     return consumer_id, event_types
 
 
+def _superseded_consumers(consumer: Consumer, consumer_id: str) -> tuple[str, ...]:
+    raw = getattr(consumer, "supersedes_consumer_ids", ())
+    if isinstance(raw, str):
+        raw = (raw,)
+    values = tuple(
+        dict.fromkeys(str(value).strip() for value in raw if str(value).strip())
+    )
+    if consumer_id in values:
+        raise ValueError(f"{consumer_id}: consumer cannot supersede itself")
+    return values
+
+
 def _normalize_result(value: object) -> HandlerResult:
     if value is None:
         return HandlerResult.succeeded()
@@ -248,14 +260,35 @@ class OutboxDispatcher:
         clock: Callable[[], datetime] = _utc_now,
         managed_generations: Mapping[str, Sequence[str]] | None = None,
     ):
-        validated: list[tuple[Consumer, str, tuple[str, ...]]] = []
+        validated: list[
+            tuple[Consumer, str, tuple[str, ...], tuple[str, ...]]
+        ] = []
         seen_consumer_ids: set[str] = set()
         for consumer in consumers:
             consumer_id, event_types = _consumer_contract(consumer)
             if consumer_id in seen_consumer_ids:
                 raise ValueError(f"duplicate consumer_id: {consumer_id}")
             seen_consumer_ids.add(consumer_id)
-            validated.append((consumer, consumer_id, event_types))
+            validated.append(
+                (
+                    consumer,
+                    consumer_id,
+                    event_types,
+                    _superseded_consumers(consumer, consumer_id),
+                )
+            )
+        active_ids = {consumer_id for _c, consumer_id, _e, _s in validated}
+        conflicting = sorted(
+            old_id
+            for _consumer, _consumer_id, _event_types, superseded in validated
+            for old_id in superseded
+            if old_id in active_ids
+        )
+        if conflicting:
+            raise ValueError(
+                "active consumers cannot also be superseded: "
+                + ", ".join(conflicting)
+            )
         if lease_seconds <= 0:
             raise ValueError("lease_seconds must be positive")
         if max_attempts <= 0:
@@ -290,7 +323,7 @@ class OutboxDispatcher:
         now = _iso(self.clock())
         self._begin()
         try:
-            for _consumer, consumer_id, event_types in validated:
+            for _consumer, consumer_id, event_types, _superseded in validated:
                 self._register_locked(
                     consumer_id,
                     event_types,
@@ -298,6 +331,10 @@ class OutboxDispatcher:
                     now=now,
                 )
             disabled: list[str] = []
+            for _consumer, _consumer_id, _event_types, superseded in validated:
+                for old_consumer_id in superseded:
+                    if self._disable_locked(old_consumer_id, None, now=now):
+                        disabled.append(old_consumer_id)
             for prefix, keep_consumer_ids in managed:
                 disabled.extend(
                     self._disable_prefix_locked(
@@ -314,7 +351,7 @@ class OutboxDispatcher:
         self.disabled_consumer_ids = tuple(sorted(set(disabled)))
         self.consumers = {
             consumer_id: consumer
-            for consumer, consumer_id, _event_types in validated
+            for consumer, consumer_id, _event_types, _superseded in validated
         }
         self._consumer_order = tuple(sorted(self.consumers))
         self._claim_cursor = 0
@@ -638,9 +675,16 @@ class OutboxDispatcher:
     def register(self, consumer: Consumer, *, max_attempts: int | None = None) -> None:
         """Atomically persist and activate a new in-process consumer."""
         consumer_id, event_types = _consumer_contract(consumer)
+        superseded = _superseded_consumers(consumer, consumer_id)
         existing = self.consumers.get(consumer_id)
         if existing is not None and existing is not consumer:
             raise ValueError(f"duplicate consumer_id: {consumer_id}")
+        active_conflicts = sorted(set(superseded) & set(self.consumers))
+        if active_conflicts:
+            raise ValueError(
+                "active consumers cannot also be superseded: "
+                + ", ".join(active_conflicts)
+            )
         limit = int(max_attempts or self.default_max_attempts)
         if limit <= 0:
             raise ValueError("max_attempts must be positive")
@@ -653,34 +697,64 @@ class OutboxDispatcher:
                 max_attempts=limit,
                 now=now,
             )
+            disabled: list[str] = []
+            for old_consumer_id in superseded:
+                if self._disable_locked(old_consumer_id, None, now=now):
+                    disabled.append(old_consumer_id)
             self.conn.commit()
         except BaseException:
             self.conn.rollback()
             raise
         self.consumers[consumer_id] = consumer
+        self.disabled_consumer_ids = tuple(
+            sorted(set(self.disabled_consumer_ids) | set(disabled))
+        )
         self._consumer_order = tuple(sorted(self.consumers))
         self._claim_cursor %= max(1, len(self._consumer_order))
+
+    def _disable_locked(
+        self,
+        consumer_id: str,
+        event_type: str | None,
+        *,
+        now: str,
+    ) -> int:
+        clauses = ["consumer_id=?", "enabled=1"]
+        params: list[object] = [consumer_id]
+        if event_type is not None:
+            clauses.append("event_type=?")
+            params.append(event_type)
+        event_ids = tuple(
+            row["event_id"]
+            for row in self.conn.execute(
+                f"""SELECT DISTINCT o.event_id
+                    FROM outbox o JOIN outbox_subscriptions s
+                      ON s.event_type=o.event_type
+                    WHERE {' AND '.join('s.' + clause for clause in clauses)}""",
+                params,
+            )
+        )
+        cursor = self.conn.execute(
+            f"""UPDATE outbox_subscriptions SET enabled=0,updated_at=?
+                WHERE {' AND '.join(clauses)}""",
+            (now, *params),
+        )
+        if cursor.rowcount:
+            for event_id in event_ids:
+                self._refresh_event_locked(event_id)
+        return cursor.rowcount
 
     def disable(self, consumer_id: str, event_type: str | None = None) -> int:
         """Disable future gating for a consumer; existing receipts are retained."""
         self._begin()
         try:
-            if event_type is None:
-                cursor = self.conn.execute(
-                    """UPDATE outbox_subscriptions SET enabled=0,updated_at=?
-                       WHERE consumer_id=? AND enabled=1""",
-                    (_iso(self.clock()), consumer_id),
-                )
-            else:
-                cursor = self.conn.execute(
-                    """UPDATE outbox_subscriptions SET enabled=0,updated_at=?
-                       WHERE consumer_id=? AND event_type=? AND enabled=1""",
-                    (_iso(self.clock()), consumer_id, event_type),
-                )
-            for row in self.conn.execute("SELECT event_id FROM outbox"):
-                self._refresh_event_locked(row["event_id"])
+            changed = self._disable_locked(
+                consumer_id,
+                event_type,
+                now=_iso(self.clock()),
+            )
             self.conn.commit()
-            return cursor.rowcount
+            return changed
         except BaseException:
             self.conn.rollback()
             raise
