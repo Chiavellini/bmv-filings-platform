@@ -58,6 +58,20 @@ def test_infer_period_label_handles_herdez_and_soriana_archive_names():
     assert infer_period_label("3Q23InfoDir_inglesV3_VF") == "2023-3T"
 
 
+def test_infer_period_label_handles_liverpool_xbrl_pdf_names():
+    from src.shared.report_index import infer_period_label
+
+    assert infer_period_label("2TXBRL2026") == "2026-2T"
+    assert infer_period_label("1TXBRL2025") == "2025-1T"
+
+
+def test_infer_period_label_handles_orbia_leading_quarter_names():
+    from src.shared.report_index import infer_period_label
+
+    assert infer_period_label("orbia-q2-2026-earnings-release_vf1-1") == "2026-2T"
+    assert infer_period_label("company_T3_2025_results") == "2025-3T"
+
+
 def test_infer_period_label_recognizes_annual_reports():
     from src.shared.report_index import infer_period_label
 
@@ -65,6 +79,7 @@ def test_infer_period_label_recognizes_annual_reports():
     assert infer_period_label("informe_anual_2023_bimbo") == "2023-FY"
     assert infer_period_label("Grupo-Herdez-Reporte-Anual-2022") == "2022-FY"
     assert infer_period_label("femsa-20-f-2024") == "2024-FY"
+    assert infer_period_label("FINAMEX_2021-FY_facts") == "2021-FY"
     # No annual signal or no year → not annual (stays None, dropped as before).
     assert infer_period_label("some_random_memo_2024") is None
     assert infer_period_label("annual_report_no_year") is None

@@ -16,7 +16,12 @@ from src.acquisition.registry import (
     IssuerRegistry,
     load_issuer_registry,
 )
-from src.acquisition.service import QuarterlyAcquisitionService
+from src.acquisition.service import (
+    QuarterlyAcquisitionService,
+    QuarterlySyncFreshness,
+    check_quarterly_publication_freshness,
+    check_quarterly_sync_freshness,
+)
 from src.acquisition.writer import EstateWriter, StoreResult
 
 
@@ -29,7 +34,10 @@ __all__ = [
     "IssuerSpec",
     "ProjectMembership",
     "QuarterlyAcquisitionService",
+    "QuarterlySyncFreshness",
     "SourceRecord",
     "StoreResult",
+    "check_quarterly_publication_freshness",
+    "check_quarterly_sync_freshness",
     "load_issuer_registry",
 ]

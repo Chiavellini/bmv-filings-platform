@@ -110,7 +110,9 @@ def test_corrected_acquisition_replaces_old_alpha_search_text(tmp_path):
                 {
                     "company": "acme",
                     "industry": "transport",
-                    "alpha_go": True,
+                    # Alpha is the estate-wide search projection; no product
+                    # pin is required for a parsed document to become visible.
+                    "soft": True,
                 },
             ),
         )
@@ -142,7 +144,7 @@ def test_corrected_acquisition_replaces_old_alpha_search_text(tmp_path):
                 {
                     "company": "acme",
                     "industry": "transport",
-                    "alpha_go": True,
+                    "soft": True,
                 },
             ),
         )
@@ -175,7 +177,7 @@ def test_corrected_acquisition_replaces_old_alpha_search_text(tmp_path):
     )
 
 
-def test_same_hash_late_alpha_pin_reprojects_current_facets(tmp_path):
+def test_same_hash_routing_change_reprojects_current_facets(tmp_path):
     estate_root = tmp_path / "estate"
     database = estate_root / "catalog.db"
     corpus = tmp_path / "alpha-corpus"
@@ -237,8 +239,8 @@ def test_same_hash_late_alpha_pin_reprojects_current_facets(tmp_path):
             database, [derivatives, projection]
         ) as dispatcher:
             initial = dispatcher.run(max_deliveries=10)
-    assert (initial.succeeded, initial.skipped) == (1, 1)
-    assert not index.exists()
+    assert (initial.succeeded, initial.skipped) == (2, 0)
+    assert _fts_hits(index, "passenger") > 0
 
     with EstateWriter(database, estate_root) as writer:
         adopted = writer.store_fetched(
@@ -252,7 +254,6 @@ def test_same_hash_late_alpha_pin_reprojects_current_facets(tmp_path):
                 {
                     "company": "acme",
                     "industry": "airports",
-                    "alpha_go": True,
                     "soft": True,
                 },
             ),

@@ -6,12 +6,20 @@ from src.consumers.contracts import (
     HandlerResult,
     OutboxEvent,
 )
+from src.consumers.derivatives import (
+    PdfMarkdownDerivativeConsumer,
+    XbrlFactsDerivativeConsumer,
+)
 from src.consumers.outbox import OutboxDispatcher
+from src.consumers.publication import DerivativePublicationVerifier
 
 __all__ = [
     "Consumer",
+    "DerivativePublicationVerifier",
     "DeliveryContext",
     "HandlerResult",
     "OutboxDispatcher",
     "OutboxEvent",
+    "PdfMarkdownDerivativeConsumer",
+    "XbrlFactsDerivativeConsumer",
 ]

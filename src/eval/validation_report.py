@@ -29,12 +29,17 @@ _PERIOD_RE = re.compile(r"(\d{4})-(\d)[TQ]", re.IGNORECASE)
 # Trusted accounting identities — derived from the declarative table in
 # series_checks so the Python audit and the in-sheet identity Check rows
 # (segments_sheet) can never drift.
-from src.eval.series_checks import IDENTITIES as _IDENTITY_TABLE, identity_expected as _identity_expected
+from src.eval.series_checks import (
+    IDENTITIES as _IDENTITY_TABLE,
+    IDENTITY_RULES as _IDENTITY_RULES,
+    identity_expected as _identity_expected,
+)
 
 _IDENTITIES = [
     (target, label,
      (lambda v, ident=ident: _identity_expected(v, ident)),
-     (op_a, op_b, target))
+     (op_a, op_b, target),
+     _IDENTITY_RULES.get(target))
     for ident in _IDENTITY_TABLE
     for target, op_a, _, op_b, label in (ident,)
 ]
@@ -89,14 +94,17 @@ def _confidence_table(df, keys) -> tuple[str, dict]:
     return "\n".join(lines), per_metric
 
 
-def _identity_audit(df) -> str:
+def _identity_audit(df, *, skip_rules=None) -> str:
+    skip_rules = set(skip_rules or ())
     by_period = {}
     for _, row in df.iterrows():
         by_period[str(row["period"])] = {c: _num(row[c]) for c in df.columns if c != "period"}
     violations = []
     for period in sorted(by_period):
         v = by_period[period]
-        for key, label, expected_fn, operands in _IDENTITIES:
+        for key, label, expected_fn, operands, rule in _IDENTITIES:
+            if rule in skip_rules:
+                continue
             if any(v.get(o) is None for o in operands):
                 continue
             got = v[key]
@@ -203,7 +211,8 @@ def _ground_truth(slug: str, keys) -> str:
     return "\n".join(lines)
 
 
-def build_validation_report(df, keys, *, name: str, slug: str) -> str:
+def build_validation_report(df, keys, *, name: str, slug: str,
+                            skip_rules=None) -> str:
     """Return the Markdown validation report for an extracted wide DataFrame."""
     keys = list(keys)
     n_periods = df["period"].nunique() if "period" in df.columns else 0
@@ -225,7 +234,7 @@ def build_validation_report(df, keys, *, name: str, slug: str) -> str:
         "",
         "## 2. Accounting-identity audit",
         "",
-        _identity_audit(df),
+        _identity_audit(df, skip_rules=skip_rules),
         "",
         "## 3. Flagged / low-confidence cells",
         "",
@@ -244,10 +253,13 @@ def build_validation_report(df, keys, *, name: str, slug: str) -> str:
     return "\n".join(parts)
 
 
-def write_validation_report(df, keys, *, name: str, slug: str, out_path: Path) -> Path:
+def write_validation_report(df, keys, *, name: str, slug: str, out_path: Path,
+                            skip_rules=None) -> Path:
     """Build and write the validation report; return the path written."""
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(build_validation_report(df, keys, name=name, slug=slug),
+    out_path.write_text(build_validation_report(
+        df, keys, name=name, slug=slug, skip_rules=skip_rules,
+    ),
                         encoding="utf-8")
     return out_path

@@ -4,7 +4,7 @@ Deliberately deferred items, recorded so they are decisions rather than
 surprises. Each entry says what is wrong, why it was not fixed, and what fixing
 it would cost. Nothing here blocks day-to-day use; several block *distribution*.
 
-Last reviewed: 2026-07-29.
+Last reviewed: 2026-07-30.
 
 ---
 
@@ -44,19 +44,27 @@ silently resolved to Soft's extractor.
 
 This is a direct consequence of issue #1 and disappears when the rename happens.
 
-## 3. Vendored forks drift, and re-syncing silently reverts them
+## 3. Vendored forks remain semantically unreconciled, but drift is hash-pinned
 
 `alpha-go/` and `soft/` each carry a copy-fork of seven root packages
 (`download, parse, extract, shared, model, excel, eval`), maintained by their own
-`scripts/vendor_sync.py`. Current divergence from root: **alpha-go 26 files**,
-**soft 8 files**.
+`scripts/vendor_sync.py`. Current exact-byte divergence from root:
+**alpha-go 36 files**, **soft 16 files**.
 
-`vendor_sync.py --sync` is `rmtree` + `copytree`. Running it today would discard
-those divergences — including Soft's herdez extraction fixes — with no warning.
+The previously missing parent-managed files were restored verbatim from root
+(Alpha: 10 files/configs; Soft: 3). Future missing managed files are hard
+failures.
 
-**Partially addressed**: `--sync` now refuses to run when `--check` reports drift
-unless `--force` is passed. That converts silent data loss into an explicit
-decision, but it does not reconcile the forks.
+Each app now checks in `vendor_divergences.json`, recording both the parent and
+vendor SHA-256 for every intentional divergence. `--check` exits successfully
+only when every difference exactly matches its approval; it fails for an
+unapproved difference, a change on either side, a missing file, or an approval
+that has become stale. `--sync` remains `rmtree` + `copytree` and still refuses
+to overwrite *any* divergence unless `--force` is supplied.
+
+These approvals are app-compatibility snapshots. They establish exact
+provenance and prevent accidental overwrites; they are **not evidence of
+semantic parity** with root.
 
 **Still open**: deciding, per diverged file, whether the fork should be upstreamed
 into root or discarded. `src/extract/xbrl_facts.py` exists in three versions
@@ -152,3 +160,19 @@ transactional, so resuming is safe.
 `alpha_go.db` (hashing, 256d), with `alpha_go.db.previous` retained as rollback.
 Neither was modified by this sweep. Run `PRAGMA quick_check` only after the
 migration completes, not before.
+
+## 10. Canonical XBRL publication does not yet retain the MD&A sidecar
+
+The root XBRL processor publishes the normalized numeric facts as the canonical
+`root/xbrl_facts` derivative, but it does not publish the parser's separate
+management-discussion (MD&A) sidecar. Airflow therefore keeps canonical numeric
+facts current, while Soft metrics that depend on narrative MD&A content,
+including some FIBRA measures, cannot be refreshed from `xbrl_facts` alone.
+
+This does not block relocating the code or estate, and it does not affect the
+numeric facts contract. It is a freshness boundary for prose-derived metrics.
+Closing it requires a versioned canonical derivative such as `root/xbrl_mdna`
+(with the same lineage, hash, publication-verification, and current-version
+semantics as `xbrl_facts`) or an explicitly selected canonical PDF-parsed
+source. Until then, do not interpret a current XBRL facts artifact as evidence
+that every Soft narrative/FIBRA metric is current.

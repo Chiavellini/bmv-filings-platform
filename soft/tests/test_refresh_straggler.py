@@ -2,6 +2,11 @@
 Yahoo throttle gaps into fills. Offline: build_one / _read_price / parse_spec are mocked."""
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+
+from scripts import build_dense
 from scripts import refresh_daily
 
 
@@ -48,3 +53,14 @@ def test_refresh_one_survives_build_exception(monkeypatch):
     # a single company blowing up becomes an ERROR row (never sinks the run), and is a straggler
     assert row[2] == "ERROR" and row[4] is None and "kaboom" in row[6]
     assert refresh_daily._straggler_indices([row]) == [0]
+
+
+def test_required_dense_regeneration_propagates_failure(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(refresh_daily, "ROOT", tmp_path)
+
+    def fail_emit(*args, **kwargs):
+        raise build_dense.DenseMatrixError("no qualifying companies")
+
+    monkeypatch.setattr(build_dense, "emit", fail_emit)
+    with pytest.raises(build_dense.DenseMatrixError, match="no qualifying"):
+        refresh_daily._regenerate_dense_matrix()

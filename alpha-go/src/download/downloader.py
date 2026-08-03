@@ -11,6 +11,7 @@ Usage (programmatic):
 Usage (CLI):
     python3 downloader.py --url "https://company.com/ir/" --out ./downloads
     python3 downloader.py --url "..." --filter 2024 --max 10
+    python3 downloader.py --url "..." --pattern "results.*\\.pdf" --strict-file-pattern
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ import time
 import shutil
 import subprocess
 import tempfile
+import uuid
 from collections import deque
 from pathlib import Path
 from urllib.parse import unquote, urlencode, urljoin, urlparse
@@ -56,23 +58,61 @@ class _FetchResult:
     url: str
 
 
-@dataclass
-class _LayerReport:
-    """Diagnostic record for one discovery layer attempt."""
+@dataclass(frozen=True)
+class DiscoveryLayerDiagnostic:
+    """Structured result for one discovery layer attempt.
+
+    The downloader still prints its legacy diagnostics, but acquisition callers
+    can now retain the same evidence in the durable run report.
+    """
+
     layer: str
     candidates: int = 0
     selected: int = 0
     note: str = ""
 
 
-def _scoped_download_context(fn):
-    """Isolate per-run language/document-kind selectors and restore them on every exit.
+# Private compatibility name retained for callers/tests that inspected the
+# legacy diagnostic object before it became part of the public sink contract.
+_LayerReport = DiscoveryLayerDiagnostic
 
-    ``ContextVar.set`` persists in the current context until its token is reset. The downloader
-    previously set both values without restoring them, so an annual or English-only company could
-    silently change the selector used by the next company (and by later tests). The wrapper binds
-    defaults from the public signature and guarantees restoration even when a fetch raises.
+
+@dataclass(frozen=True)
+class DownloadedPdf:
+    """A downloaded PDF together with the source identity needed by acquisition.
+
+    ``download_from_ir`` historically returned paths only, which discarded the
+    canonical URL as soon as the file reached disk.  The optional detail sink
+    preserves that provenance without breaking existing callers.
     """
+
+    url: str
+    path: Path
+    filename: str
+    period: str | None
+
+
+@dataclass(frozen=True)
+class DiscoveredPdf:
+    """A selected source candidate before its bytes are downloaded."""
+
+    url: str
+    period: str | None
+    layers: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class DownloadFailure:
+    """A per-URL failure that legacy path-only returns could not expose."""
+
+    url: str
+    period: str | None
+    error: str
+
+
+def _scoped_download_context(fn):
+    """Scope Alpha's language and legacy document-kind selectors to one run."""
+
     signature = inspect.signature(fn)
 
     @functools.wraps(fn)
@@ -80,7 +120,8 @@ def _scoped_download_context(fn):
         bound = signature.bind(*args, **kwargs)
         bound.apply_defaults()
         lang_token = _LANG_FILTER.set(_build_lang_spec(
-            bound.arguments["language"], bound.arguments["lang_include"],
+            bound.arguments["language"],
+            bound.arguments["lang_include"],
             bound.arguments["lang_exclude"],
         ))
         kind_token = _DOC_KIND.set(bound.arguments["doc_kind"])
@@ -105,6 +146,7 @@ def download_from_ir(
     period_filter: str | None = None,
     max_reports: int = 50,
     file_pattern: str = r"(?:quarterly|trimestral|reporte|informe|results?|report|earnings?|10-[kqKQ]).*\.pdf",
+    strict_file_pattern: bool = False,
     delay_ms: int = 500,
     verify_ssl: bool = True,
     headers: dict | None = None,
@@ -117,6 +159,12 @@ def download_from_ir(
     lang_include: str | None = None,
     lang_exclude: str | None = None,
     doc_kind: str = "quarterly",
+    exclude_periods: set[str] | frozenset[str] | None = None,
+    detail_sink: list[DownloadedPdf] | None = None,
+    desired_periods: set[str] | frozenset[str] | None = None,
+    candidate_sink: list[DiscoveredPdf] | None = None,
+    failure_sink: list[DownloadFailure] | None = None,
+    layer_sink: list[DiscoveryLayerDiagnostic] | None = None,
 ) -> list[Path]:
     """
     Scrape an IR webpage for PDF links and download them.
@@ -128,6 +176,11 @@ def download_from_ir(
                        PDFs whose URL contains "2024").
         max_reports:   Maximum number of PDFs to download.
         file_pattern:  Regex applied to the PDF href/filename to select reports.
+        strict_file_pattern:
+                       When True, ``file_pattern`` is an allowlist: a discovery
+                       layer that finds PDF anchors but no pattern matches returns
+                       no links from those anchors. The default False preserves the
+                       legacy quarterly/annual selector fallbacks.
         delay_ms:      Milliseconds to wait between downloads (rate limiting).
         verify_ssl:    Set False to skip SSL verification (self-signed certs).
         headers:       Optional additional request headers.
@@ -151,6 +204,25 @@ def download_from_ir(
                         wall that 403s plain HTTP clients; it skips the wasted first
                         request. When None (default), a Cloudflare block is still detected
                         automatically and retried with impersonation.
+        doc_kind:       "quarterly" (default) keeps the quarterly-report selectors verbatim.
+                        "annual" switches to the annual-report selectors so annual/integrated/
+                        20-F links (normally dropped) are kept — point it at an annual-reports
+                        section URL with an annual-oriented file_pattern.
+        exclude_periods: Canonical periods (for example ``{"2024-1T"}``) that an
+                        incremental caller already owns. Recognisable links for these
+                        periods are not downloaded; unclassifiable links are retained.
+        detail_sink:    Optional list populated with URL/path/period provenance for
+                        every successful download. Existing path-only return behavior
+                        is unchanged.
+        desired_periods:
+                        Optional canonical periods the caller is actively seeking.
+                        Discovery layers are unioned until these periods are observed,
+                        instead of stopping after the first non-empty stale layer.
+        candidate_sink: Optional list populated with selected URL/period/layer
+                        provenance before downloads begin.
+        failure_sink:   Optional list populated for every URL whose download fails.
+        layer_sink:     Optional list populated with structured per-layer discovery
+                        counts and notes.
 
     Returns:
         Sorted list of Path objects for successfully downloaded PDFs.
@@ -163,17 +235,77 @@ def download_from_ir(
         # Route all fetches through curl_cffi browser impersonation (Cloudflare-gated host).
         session._impersonate_profile = impersonate
 
-    # URL → preferred filename (populated by Playwright layer with year-injected names)
+    from src.shared.report_index import infer_period_label as _ipl, period_sort_key as _psk
+
+    # URL → preferred filename (populated by browser/static layers for
+    # extensionless CMS objects and year-injected names).
     _hint_fnames: dict[str, str] = {}
 
-    layer_reports: list[_LayerReport] = []
+    wanted_periods = {
+        period
+        for value in (desired_periods or ())
+        if (period := _ipl(str(value))) is not None
+    }
+    # Preserve the historical early-stop behavior for callers that do not
+    # provide a target set. Acquisition callers provide desired periods and
+    # receive completeness-oriented, uncapped discovery followed by one final
+    # period-aware cap.
+    target_aware = bool(wanted_periods)
+    discovery_limit: int | None = None if target_aware else max_reports
+
+    layer_reports: list[DiscoveryLayerDiagnostic] = []
     rejected_samples: list[tuple[_PdfAnchor, str]] = []
     pdf_links: list[str] = []
+    link_layers: dict[str, set[str]] = {}
 
     page_url = url
     base_url = url
     page_html = ""
     playwright_ran = False
+
+    def _link_period(link: str) -> str | None:
+        """Infer a period from a browser hint first, then the canonical URL."""
+
+        hint = _hint_fnames.get(link)
+        candidates = [Path(hint).stem] if hint else []
+        candidates.append(Path(urlparse(link).path).stem)
+        candidates.append(unquote(link))
+        for candidate in candidates:
+            period = _ipl(candidate)
+            if period is not None:
+                return period
+        return None
+
+    def _merge_links(layer: str, links: list[str]) -> None:
+        # An extensionless CMS URL is not a usable candidate until its response
+        # proves to be a PDF. Verify before evaluating target satisfaction so a
+        # false-positive link cannot short-circuit later discovery layers.
+        verified_links = _verify_extensionless_links(
+            session,
+            links,
+            verify_ssl,
+        )
+        for link in verified_links:
+            link_layers.setdefault(link, set()).add(layer)
+            if link not in pdf_links:
+                pdf_links.append(link)
+
+    def _needs_more() -> bool:
+        if not pdf_links:
+            return True
+        if not target_aware:
+            return False
+        observed = {
+            period
+            for link in pdf_links
+            if (period := _link_period(link)) is not None
+        }
+        return not wanted_periods.issubset(observed)
+
+    def _record_layer(report: DiscoveryLayerDiagnostic) -> None:
+        layer_reports.append(report)
+        if layer_sink is not None:
+            layer_sink.append(report)
 
     def _run_playwright_layer() -> list[str]:
         nonlocal _hint_fnames, playwright_ran
@@ -181,19 +313,32 @@ def download_from_ir(
         playwright_anchors = _playwright_collect_pdf_links(url, base_url, verify_ssl)
         links: list[str] = []
         if playwright_anchors:
-            _hint_fnames = {a.url: a.filename for a in playwright_anchors}
-            links, rejected = _select_pdf_links_with_diag(playwright_anchors, file_pattern)
+            _hint_fnames.update(
+                {a.url: a.filename for a in playwright_anchors}
+            )
+            links, rejected = _select_pdf_links_with_diag(
+                playwright_anchors,
+                file_pattern,
+                doc_kind,
+                strict_file_pattern=strict_file_pattern,
+            )
             rejected_samples.extend(rejected)
-        layer_reports.append(_LayerReport(
-            "playwright", len(playwright_anchors), len(links),
-            "" if playwright_anchors else "browser rendered no PDF anchors (or playwright not installed)",
-        ))
+        _record_layer(
+            DiscoveryLayerDiagnostic(
+                "playwright",
+                len(playwright_anchors),
+                len(links),
+                ""
+                if playwright_anchors
+                else "browser rendered no PDF anchors (or playwright not installed)",
+            )
+        )
         return links
 
     if browser_first:
-        pdf_links = _run_playwright_layer()
+        _merge_links("playwright", _run_playwright_layer())
 
-    if not pdf_links:
+    if _needs_more():
         print(f"Fetching IR page: {url}", file=sys.stderr)
         try:
             resp = _session_get(session, url, timeout=30, verify_ssl=verify_ssl)
@@ -205,36 +350,81 @@ def download_from_ir(
         base_url = _effective_base_url(page_html, page_url)
 
     # Layer 0: config-supplied year API URLs (highest priority, user-specified)
-    if not pdf_links and year_api_urls:
-        pdf_links = _fetch_year_api_links(session, year_api_urls, base_url, file_pattern, verify_ssl)
-        layer_reports.append(_LayerReport(
-            "year_api", len(pdf_links), len(pdf_links),
-            "" if pdf_links else "configured APIs returned no matching PDFs",
-        ))
-    elif not pdf_links:
-        layer_reports.append(_LayerReport("year_api", note="skipped: no year_api_urls configured"))
+    if _needs_more() and year_api_urls:
+        api_diag: list[str] = []
+        layer_links = _fetch_year_api_links(
+            session,
+            year_api_urls,
+            base_url,
+            file_pattern,
+            verify_ssl,
+            doc_kind=doc_kind,
+            strict_file_pattern=strict_file_pattern,
+            diag=api_diag,
+        )
+        _merge_links("year_api", layer_links)
+        _record_layer(
+            DiscoveryLayerDiagnostic(
+                "year_api",
+                len(layer_links),
+                len(layer_links),
+                "; ".join(api_diag)
+                or (
+                    ""
+                    if layer_links
+                    else "configured APIs returned no matching PDFs"
+                ),
+            )
+        )
+    elif _needs_more():
+        _record_layer(
+            DiscoveryLayerDiagnostic(
+                "year_api", note="skipped: no year_api_urls configured"
+            )
+        )
 
     # Layer 1: Walmex-style quarterly archive JSON API
-    if not pdf_links:
+    if _needs_more():
         archive_diag: list[str] = []
-        pdf_links = _extract_quarterly_archive_links(
-            session, page_html, page_url, max_reports, delay_ms, diag=archive_diag,
+        layer_links = _extract_quarterly_archive_links(
+            session,
+            page_html,
+            page_url,
+            discovery_limit,
+            delay_ms,
+            diag=archive_diag,
+            file_pattern=file_pattern,
+            strict_file_pattern=strict_file_pattern,
         )
-        layer_reports.append(_LayerReport(
-            "archive_json", len(pdf_links), len(pdf_links), "; ".join(archive_diag),
-        ))
+        _merge_links("archive_json", layer_links)
+        _record_layer(
+            DiscoveryLayerDiagnostic(
+                "archive_json",
+                len(layer_links),
+                len(layer_links),
+                "; ".join(archive_diag),
+            )
+        )
 
     # Layer 2: Next.js __NEXT_DATA__ + page data endpoint
-    if not pdf_links:
+    if _needs_more():
         nextjs_anchors = _extract_nextjs_links(page_html, base_url)
         page_data_anchors = _extract_nextjs_page_data_links(session, page_url, page_html, verify_ssl)
         combined = {a.url: a for a in nextjs_anchors}
         combined.update({a.url: a for a in page_data_anchors})
         if combined:
-            pdf_links, rejected = _select_pdf_links_with_diag(list(combined.values()), file_pattern)
+            layer_links, rejected = _select_pdf_links_with_diag(
+                list(combined.values()),
+                file_pattern,
+                doc_kind,
+                strict_file_pattern=strict_file_pattern,
+            )
             rejected_samples.extend(rejected)
-            layer_reports.append(_LayerReport("nextjs", len(combined), len(pdf_links)))
-            if not pdf_links:
+            _merge_links("nextjs", layer_links)
+            _record_layer(
+                DiscoveryLayerDiagnostic("nextjs", len(combined), len(layer_links))
+            )
+            if not layer_links:
                 print(
                     f"  Next.js: found {len(combined)} PDF(s) in page data but none matched "
                     "the quarterly-report filter. Supply year_api_urls in the config if the "
@@ -242,89 +432,125 @@ def download_from_ir(
                     file=sys.stderr,
                 )
         else:
-            layer_reports.append(_LayerReport("nextjs", note="no __NEXT_DATA__ script on page"))
+            _record_layer(
+                DiscoveryLayerDiagnostic(
+                    "nextjs", note="no __NEXT_DATA__ script on page"
+                )
+            )
 
     # Layer 2.5: static per-year sibling pages (year <select> navigation, year URL tokens)
-    if not pdf_links:
+    if _needs_more():
         year_diag: list[str] = []
-        pdf_links = _crawl_year_variant_pages(
+        layer_links = _crawl_year_variant_pages(
             session,
             page_html,
             page_url,
             verify_ssl=verify_ssl,
             delay_ms=delay_ms,
             diag=year_diag,
+            file_pattern=file_pattern,
+            strict_file_pattern=strict_file_pattern,
+            doc_kind=doc_kind,
         )
-        layer_reports.append(_LayerReport(
-            "year_pages", len(pdf_links), len(pdf_links), "; ".join(year_diag),
-        ))
+        _merge_links("year_pages", layer_links)
+        _record_layer(
+            DiscoveryLayerDiagnostic(
+                "year_pages",
+                len(layer_links),
+                len(layer_links),
+                "; ".join(year_diag),
+            )
+        )
 
     # Layer 2.6: ASP.NET WebForms year/quarter filters (e.g. GRUMA)
-    if not pdf_links:
+    if _needs_more():
         aspnet_diag: list[str] = []
-        pdf_links = _crawl_aspnet_quarter_filter_links(
+        layer_links = _crawl_aspnet_quarter_filter_links(
             session,
             page_html,
             page_url,
-            max_reports=max_reports,
+            max_reports=discovery_limit,
             file_pattern=file_pattern,
             verify_ssl=verify_ssl,
             delay_ms=delay_ms,
             diag=aspnet_diag,
+            strict_file_pattern=strict_file_pattern,
         )
-        layer_reports.append(_LayerReport(
-            "aspnet_quarter_filter", len(pdf_links), len(pdf_links), "; ".join(aspnet_diag),
-        ))
+        _merge_links("aspnet_quarter_filter", layer_links)
+        _record_layer(
+            DiscoveryLayerDiagnostic(
+                "aspnet_quarter_filter",
+                len(layer_links),
+                len(layer_links),
+                "; ".join(aspnet_diag),
+            )
+        )
 
     # Layer 3: Playwright headless browser, when explicitly enabled (config/CLI)
-    if not pdf_links and use_playwright and not playwright_ran:
-        pdf_links = _run_playwright_layer()
-    elif not pdf_links and use_playwright is False:
-        layer_reports.append(_LayerReport("playwright", note="skipped: use_playwright disabled"))
+    if _needs_more() and use_playwright and not playwright_ran:
+        _merge_links("playwright", _run_playwright_layer())
+    elif _needs_more() and use_playwright is False:
+        _record_layer(
+            DiscoveryLayerDiagnostic(
+                "playwright", note="skipped: use_playwright disabled"
+            )
+        )
 
     # Layer 4: static HTML crawl with pagination
-    if not pdf_links:
-        pdf_links = _crawl_paginated_ir_links(
+    if _needs_more():
+        static_diag: list[str] = []
+        layer_links = _crawl_paginated_ir_links(
             session,
             page_html,
             page_url,
-            max_reports=max_reports,
+            max_reports=discovery_limit,
             file_pattern=file_pattern,
             verify_ssl=verify_ssl,
+            doc_kind=doc_kind,
+            delay_ms=delay_ms,
+            strict_file_pattern=strict_file_pattern,
+            hint_filenames=_hint_fnames,
+            diag=static_diag,
         )
-        layer_reports.append(_LayerReport("static_crawl", len(pdf_links), len(pdf_links)))
+        _merge_links("static_crawl", layer_links)
+        _record_layer(
+            DiscoveryLayerDiagnostic(
+                "static_crawl",
+                len(layer_links),
+                len(layer_links),
+                "; ".join(static_diag),
+            )
+        )
 
     # Layer 5: automatic Playwright fallback — only when nothing else worked, the
     # caller did not explicitly disable it, and Playwright is actually installed.
-    if not pdf_links and use_playwright is None:
+    if _needs_more() and use_playwright is None:
         if _playwright_available() and not playwright_ran:
             print(
                 "No PDFs found via static layers; retrying with Playwright headless browser...",
                 file=sys.stderr,
             )
-            pdf_links = _run_playwright_layer()
+            _merge_links("playwright", _run_playwright_layer())
         else:
             note = (
                 "auto-fallback skipped: playwright already ran"
                 if playwright_ran
                 else "auto-fallback skipped: playwright not installed"
             )
-            layer_reports.append(_LayerReport(
-                "playwright", note=note,
-            ))
+            _record_layer(DiscoveryLayerDiagnostic("playwright", note=note))
 
     if period_filter:
         before_filter = len(pdf_links)
         pdf_links = [lnk for lnk in pdf_links if period_filter in lnk]
         if before_filter and not pdf_links:
-            layer_reports.append(_LayerReport(
-                "period_filter", before_filter, 0,
-                f"period filter {period_filter!r} removed all links",
-            ))
-
-    # Extension-less links (Liferay-style /documents/d/...) may point at anything;
-    # confirm they serve PDFs before they consume download slots.
-    pdf_links = _verify_extensionless_links(session, pdf_links, verify_ssl)
+            _record_layer(
+                DiscoveryLayerDiagnostic(
+                    "period_filter",
+                    before_filter,
+                    0,
+                    f"period filter {period_filter!r} removed all links",
+                )
+            )
 
     if len(pdf_links) < 3:
         _print_layer_diagnostics(layer_reports, rejected_samples, page_html, base_url, pdf_links)
@@ -342,12 +568,9 @@ def download_from_ir(
     # Drop links whose filename is recognisably before the floor year.
     # Links whose period cannot be inferred are kept (safe default).
     if floor_year is not None:
-        from src.shared.report_index import infer_period_label as _ipl, period_sort_key as _psk
-
         def _pre_floor(u: str) -> bool:
-            stem = Path(urlparse(u).path).stem
-            p = _ipl(stem)
-            return p is not None and _psk(p)[0] < floor_year
+            period = _link_period(u)
+            return period is not None and _psk(period)[0] < floor_year
 
         before = len(pdf_links)
         pdf_links = [u for u in pdf_links if not _pre_floor(u)]
@@ -355,7 +578,37 @@ def download_from_ir(
         if dropped:
             print(f"  [floor={floor_year}] skipped {dropped} pre-{floor_year} link(s)", file=sys.stderr)
 
-    pdf_links = pdf_links[:max_reports]
+    if exclude_periods:
+        excluded = set(exclude_periods)
+        before = len(pdf_links)
+        pdf_links = [
+            link for link in pdf_links
+            if (_link_period(link) is None or _link_period(link) not in excluded)
+        ]
+        dropped = before - len(pdf_links)
+        if dropped:
+            print(f"  [incremental] skipped {dropped} known-period link(s)", file=sys.stderr)
+
+    # Discovery order is a property of the site, not a freshness signal. Keep
+    # all classified links ahead of unclassified fallbacks and sort them newest
+    # first before applying the caller's cap. This prevents an oldest-first IR
+    # archive from capping out the latest filing.
+    classified = [link for link in pdf_links if _link_period(link) is not None]
+    unclassified = [link for link in pdf_links if _link_period(link) is None]
+    classified.sort(
+        key=lambda link: _psk(_link_period(link) or "0000-1T"),
+        reverse=True,
+    )
+    pdf_links = (classified + unclassified)[:max_reports]
+    if candidate_sink is not None:
+        candidate_sink.extend(
+            DiscoveredPdf(
+                url=link,
+                period=_link_period(link),
+                layers=tuple(sorted(link_layers.get(link, ()))),
+            )
+            for link in pdf_links
+        )
     print(f"Found {len(pdf_links)} PDF link(s) to download.", file=sys.stderr)
 
     downloaded: list[Path] = []
@@ -366,8 +619,23 @@ def download_from_ir(
         try:
             path = _download_pdf(session, pdf_url, dest, verify_ssl=verify_ssl, referer=page_url)
             downloaded.append(path)
+            if detail_sink is not None:
+                detail_sink.append(DownloadedPdf(
+                    url=pdf_url,
+                    path=path,
+                    filename=filename,
+                    period=_link_period(pdf_url) or _ipl(Path(filename).stem),
+                ))
             print(f"  [{i}/{len(pdf_links)}] Downloaded: {filename}", file=sys.stderr)
         except Exception as exc:
+            if failure_sink is not None:
+                failure_sink.append(
+                    DownloadFailure(
+                        url=pdf_url,
+                        period=_link_period(pdf_url),
+                        error=f"{type(exc).__name__}: {exc}",
+                    )
+                )
             print(f"  [{i}/{len(pdf_links)}] FAILED {pdf_url}: {exc}", file=sys.stderr)
         if i < len(pdf_links):
             time.sleep(delay_ms / 1000)
@@ -380,7 +648,7 @@ def download_from_ir(
 # ---------------------------------------------------------------------------
 
 def _print_layer_diagnostics(
-    layer_reports: list[_LayerReport],
+    layer_reports: list[DiscoveryLayerDiagnostic],
     rejected_samples: list[tuple[_PdfAnchor, str]],
     page_html: str,
     base_url: str,
@@ -443,7 +711,15 @@ def _make_session(
     return session
 
 
-def _extract_pdf_links(html: str, base_url: str, pattern: str | None) -> list[str]:
+def _extract_pdf_links(
+    html: str,
+    base_url: str,
+    pattern: str | None,
+    doc_kind: str | None = None,
+    *,
+    strict_file_pattern: bool = False,
+    hint_filenames: dict[str, str] | None = None,
+) -> list[str]:
     """Parse HTML and return absolute URLs of PDF links matching the best pattern."""
     effective_base_url = _effective_base_url(html, base_url)
     candidates = _extract_pdf_candidates(html, effective_base_url)
@@ -452,7 +728,22 @@ def _extract_pdf_links(html: str, base_url: str, pattern: str | None) -> list[st
         if anchor.url not in seen:
             seen.add(anchor.url)
             candidates.append(anchor)
-    return _select_pdf_links(candidates, pattern)
+    selected = _select_pdf_links(
+        candidates,
+        pattern,
+        doc_kind,
+        strict_file_pattern=strict_file_pattern,
+    )
+    if hint_filenames is not None:
+        by_url = {candidate.url: candidate for candidate in candidates}
+        for url in selected:
+            anchor = by_url.get(url)
+            if anchor is None:
+                continue
+            hint = _period_filename_hint(anchor)
+            if hint:
+                hint_filenames.setdefault(url, hint)
+    return selected
 
 
 def _extract_pdf_candidates(html: str, base_url: str) -> list[_PdfAnchor]:
@@ -484,7 +775,13 @@ def _extract_pdf_candidates(html: str, base_url: str) -> list[_PdfAnchor]:
 
     for tag in soup.find_all(True):
         text = tag.get_text(" ", strip=True)
-        for attr_value in tag.attrs.values():
+        for attr_name, attr_value in tag.attrs.items():
+            # ``download="report.pdf"`` is a suggested local filename, not a
+            # navigable URL. Treating it as relative to the page creates false
+            # links such as ``/quarterly-results/report.pdf`` beside the real
+            # extensionless CMS object.
+            if attr_name.lower() in {"download", "title", "aria-label", "alt"}:
+                continue
             values = attr_value if isinstance(attr_value, list) else [attr_value]
             for value in values:
                 if not isinstance(value, str):
@@ -492,10 +789,24 @@ def _extract_pdf_candidates(html: str, base_url: str) -> list[_PdfAnchor]:
                 lower = value.lower()
                 if ".pdf" not in lower:
                     continue
+                # Preserve a navigable attribute as one URL before applying the
+                # embedded-URL regex.  Some IR sites legally use spaces in PDF
+                # hrefs; tokenizing first turns
+                # ``/storage/.../Q - Reporte Trimestral 2T26 VFF2.pdf`` into the
+                # false relative URL ``/ES/VFF2.pdf``.
+                if attr_name.lower() in {"href", "src"}:
+                    add_candidate(value, text)
+                    continue
                 for raw_url in _pdf_url_pattern().findall(value):
                     add_candidate(raw_url, text)
 
     for raw_url in _pdf_url_pattern().findall(html):
+        # Raw HTML scanning is for embedded URLs in scripts/JSON. A bare
+        # ``vf.pdf`` token is commonly a download filename attribute and has no
+        # independently resolvable location; normal relative hrefs were already
+        # handled above.
+        if "/" not in raw_url and not raw_url.startswith(("http:", "https:", "//")):
+            continue
         add_candidate(raw_url)
 
     return anchors
@@ -504,7 +815,7 @@ def _extract_pdf_candidates(html: str, base_url: str) -> list[_PdfAnchor]:
 # Hosted-document URL shapes that commonly serve PDFs without a .pdf extension
 # (Liferay /documents/d/..., generic download endpoints, id-style query strings).
 _EXTENSIONLESS_DOC_PATH_RE = re.compile(
-    r"(?:/documents?/|/download|/getfile|/descarga|[?&](?:id|file|doc|document|attachment)=)",
+    r"(?:/documents?/|/static-files/|/download|/getfile|/descarga|[?&](?:id|file|doc|document|attachment)=)",
     re.IGNORECASE,
 )
 
@@ -571,6 +882,21 @@ def _extract_extensionless_candidates(html: str, base_url: str) -> list[_PdfAnch
     return anchors
 
 
+def _period_filename_hint(anchor: _PdfAnchor) -> str | None:
+    """Return a canonical filename for an extensionless quarterly-document link."""
+    parsed = urlparse(anchor.url)
+    if parsed.path.lower().endswith(".pdf") or ".pdf" in parsed.query.lower():
+        return None
+
+    from src.shared.report_index import infer_period_label
+
+    for value in (anchor.text, anchor.filename, unquote(anchor.url)):
+        period = infer_period_label(value)
+        if period:
+            return f"{period}.pdf"
+    return None
+
+
 def _verify_extensionless_links(
     session: requests.Session,
     pdf_links: list[str],
@@ -594,6 +920,62 @@ def _verify_extensionless_links(
         else:
             print(f"  Skipping non-PDF document link: {link}", file=sys.stderr)
     return kept
+
+
+def download_from_url_templates(
+    templates: list[str],
+    out_dir: Path,
+    periods: set[str],
+    *,
+    delay_ms: int = 300,
+    verify_ssl: bool = True,
+    impersonate: str | None = None,
+    detail_sink: list[DownloadedPdf] | None = None,
+) -> list[Path]:
+    """Fetch quarterly PDFs from deterministic URL templates.
+
+    For IR sites whose index pages are bot-blocked (403) but whose document
+    URLs are cleanly templated — e.g. Grupo Mexico's
+    ``gmexico.com/GMDocs/ReportesFinancieros/Esp/{year}/RF_ES_{year}_{quarter}T.pdf``
+    — enumerate the template over the requested canonical periods
+    (``{"2024-3T", ...}``), keep only URLs that actually serve a PDF, and save
+    each under its canonical ``{year}-{quarter}T.pdf`` name in ``out_dir``.
+    Configured per company via ``ir_website.direct_url_templates``.
+    """
+    session = _make_session(verify_ssl)
+    if impersonate:
+        session._impersonate_profile = impersonate
+    saved: list[Path] = []
+    for period in sorted(periods):
+        m = re.match(r"^(\d{4})-([1-4])T$", period)
+        if not m:
+            continue
+        year, quarter = m.group(1), m.group(2)
+        for tpl in templates:
+            url = tpl.format(year=year, year2=year[-2:], quarter=quarter)
+            # A configured browser-TLS profile cannot be exercised by the
+            # requests-only HEAD probe. Let the full downloader use that
+            # profile and validate PDF magic bytes instead.
+            if not impersonate and not _verify_pdf_url(session, url, verify_ssl):
+                continue
+            dest = out_dir / f"{year}-{quarter}T.pdf"
+            try:
+                _download_pdf(session, url, dest, verify_ssl=verify_ssl)
+            except (requests.RequestException, RuntimeError, ValueError) as exc:
+                print(f"  template fetch failed {url}: {exc}", file=sys.stderr)
+                continue
+            print(f"  saved {dest.name}  ({dest.stat().st_size // 1024} KB) via URL template")
+            saved.append(dest)
+            if detail_sink is not None:
+                detail_sink.append(DownloadedPdf(
+                    url=url,
+                    path=dest,
+                    filename=dest.name,
+                    period=period,
+                ))
+            break
+        time.sleep(delay_ms / 1000.0)
+    return saved
 
 
 def _verify_pdf_url(session: requests.Session, url: str, verify_ssl: bool = True) -> bool:
@@ -633,11 +1015,13 @@ def _extract_quarterly_archive_links(
     session: requests.Session,
     html: str,
     base_url: str,
-    max_reports: int,
+    max_reports: int | None,
     delay_ms: int = 0,
     diag: list[str] | None = None,
+    file_pattern: str | None = None,
+    strict_file_pattern: bool = False,
 ) -> list[str]:
-    """Walk Walmex-style quarterly archive JSON pages and return release PDFs."""
+    """Walk Walmex-style quarterly archive JSON pages and return selected release PDFs."""
     archive = _discover_quarterly_archive(html, base_url)
     if not archive:
         archive = _walmex_quarterly_archive(base_url)
@@ -651,7 +1035,7 @@ def _extract_quarterly_archive_links(
     links: list[str] = []
 
     page = 1
-    while len(links) < max_reports:
+    while max_reports is None or len(links) < max_reports:
         page_params = dict(params)
         page_params["page"] = page
         try:
@@ -664,12 +1048,31 @@ def _extract_quarterly_archive_links(
             )
             payload = _response_json(resp)
         except (requests.RequestException, ValueError, json.JSONDecodeError) as exc:
+            if diag is not None:
+                diag.append(
+                    f"page {page} failed: {type(exc).__name__}: {exc}"
+                )
             print(f"Archive page {page} failed: {exc}", file=sys.stderr)
             break
 
-        page_links = _extract_release_links_from_archive(payload)
-        if not page_links:
+        candidate_links = _extract_release_links_from_archive(payload)
+        if not candidate_links:
             break
+        page_links = candidate_links
+        if strict_file_pattern and file_pattern:
+            anchors = [
+                _PdfAnchor(
+                    url=link,
+                    filename=Path(urlparse(link).path).name,
+                    text="",
+                )
+                for link in candidate_links
+            ]
+            page_links = _select_pdf_links(
+                anchors,
+                file_pattern,
+                strict_file_pattern=True,
+            )
 
         added = 0
         for link in page_links:
@@ -678,10 +1081,16 @@ def _extract_quarterly_archive_links(
             seen.add(link)
             links.append(link)
             added += 1
-            if len(links) >= max_reports:
+            if max_reports is not None and len(links) >= max_reports:
                 break
 
-        if not added:
+        # In strict mode a page may contain valid release PDFs that simply do not
+        # match the configured allowlist. Keep walking later archive pages, where
+        # matching filenames may still exist.
+        strict_rejected_page = bool(
+            strict_file_pattern and file_pattern and candidate_links and not page_links
+        )
+        if not added and not strict_rejected_page:
             break
 
         page_total = _archive_page_total(payload)
@@ -767,6 +1176,9 @@ def _crawl_year_variant_pages(
     verify_ssl: bool,
     delay_ms: int = 0,
     diag: list[str] | None = None,
+    file_pattern: str | None = None,
+    strict_file_pattern: bool = False,
+    doc_kind: str = "quarterly",
 ) -> list[str]:
     """Fetch each per-year sibling page and select quarterly reports across all of them.
 
@@ -797,6 +1209,10 @@ def _crawl_year_variant_pages(
         try:
             resp = _session_get(session, year_url, timeout=30, verify_ssl=verify_ssl)
         except requests.RequestException as exc:
+            if diag is not None:
+                diag.append(
+                    f"year page {year_url} failed: {type(exc).__name__}: {exc}"
+                )
             print(f"  Year page {year_url} failed: {exc}", file=sys.stderr)
             continue
         for anchor in page_anchors(resp.text, getattr(resp, "url", year_url)):
@@ -804,7 +1220,15 @@ def _crawl_year_variant_pages(
         if delay_ms > 0:
             time.sleep(delay_ms / 1000)
 
-    return _select_quarterly_report_links(list(combined.values()))
+    anchors = list(combined.values())
+    if strict_file_pattern and file_pattern:
+        return _select_pdf_links(
+            anchors,
+            file_pattern,
+            doc_kind,
+            strict_file_pattern=True,
+        )
+    return _select_quarterly_report_links(anchors)
 
 
 def _crawl_aspnet_quarter_filter_links(
@@ -812,11 +1236,12 @@ def _crawl_aspnet_quarter_filter_links(
     html: str,
     page_url: str,
     *,
-    max_reports: int,
+    max_reports: int | None,
     file_pattern: str | None,
     verify_ssl: bool,
     delay_ms: int = 0,
     diag: list[str] | None = None,
+    strict_file_pattern: bool = False,
 ) -> list[str]:
     """Submit ASP.NET WebForms year/quarter filters and collect report PDFs."""
     spec = _discover_aspnet_quarter_filter(html, page_url)
@@ -839,7 +1264,11 @@ def _crawl_aspnet_quarter_filter_links(
             if anchor.url not in seen_urls:
                 anchors.append(anchor)
                 seen_urls.add(anchor.url)
-        for link in _select_pdf_links(anchors, file_pattern):
+        for link in _select_pdf_links(
+            anchors,
+            file_pattern,
+            strict_file_pattern=strict_file_pattern,
+        ):
             if link in seen:
                 continue
             seen.add(link)
@@ -849,7 +1278,7 @@ def _crawl_aspnet_quarter_filter_links(
 
     for year in years:
         for quarter in quarters:
-            if len(selected) >= max_reports:
+            if max_reports is not None and len(selected) >= max_reports:
                 return selected[:max_reports]
             data = dict(payload)
             data[year_name] = year
@@ -880,7 +1309,7 @@ def _crawl_aspnet_quarter_filter_links(
             if delay_ms > 0:
                 time.sleep(delay_ms / 1000)
 
-    return selected[:max_reports]
+    return selected if max_reports is None else selected[:max_reports]
 
 
 def _discover_aspnet_quarter_filter(
@@ -981,9 +1410,14 @@ def _crawl_paginated_ir_links(
     html: str,
     page_url: str,
     *,
-    max_reports: int,
+    max_reports: int | None,
     file_pattern: str | None,
     verify_ssl: bool,
+    doc_kind: str = "quarterly",
+    delay_ms: int = 300,
+    strict_file_pattern: bool = False,
+    hint_filenames: dict[str, str] | None = None,
+    diag: list[str] | None = None,
 ) -> list[str]:
     """Collect report PDFs from a page plus same-site pagination links."""
     queue: deque[tuple[str, str | None, str | None]] = deque()
@@ -993,13 +1427,15 @@ def _crawl_paginated_ir_links(
     pdf_links: list[str] = []
     seen_pdfs: set[str] = set()
 
-    while queue and len(pdf_links) < max_reports:
+    while queue and (max_reports is None or len(pdf_links) < max_reports):
         current_url, current_html, referer = queue.popleft()
         page_key = _normalize_page_url(current_url)
         if page_key in visited:
             continue
 
         if current_html is None:
+            if delay_ms:
+                time.sleep(delay_ms / 1000.0)   # be polite between pagination pages
             try:
                 resp = _session_get(
                     session,
@@ -1008,7 +1444,12 @@ def _crawl_paginated_ir_links(
                     verify_ssl=verify_ssl,
                     extra_headers={"Referer": referer} if referer else None,
                 )
-            except requests.RequestException:
+            except requests.RequestException as exc:
+                if diag is not None:
+                    diag.append(
+                        "page "
+                        f"{current_url} failed: {type(exc).__name__}: {exc}"
+                    )
                 continue
             current_html = resp.text
             current_url = getattr(resp, "url", current_url)
@@ -1019,15 +1460,22 @@ def _crawl_paginated_ir_links(
         visited.add(page_key)
 
         current_base = _effective_base_url(current_html, current_url)
-        for link in _extract_pdf_links(current_html, current_base, file_pattern):
+        for link in _extract_pdf_links(
+            current_html,
+            current_base,
+            file_pattern,
+            doc_kind,
+            strict_file_pattern=strict_file_pattern,
+            hint_filenames=hint_filenames,
+        ):
             if link in seen_pdfs:
                 continue
             seen_pdfs.add(link)
             pdf_links.append(link)
-            if len(pdf_links) >= max_reports:
+            if max_reports is not None and len(pdf_links) >= max_reports:
                 break
 
-        if len(pdf_links) >= max_reports:
+        if max_reports is not None and len(pdf_links) >= max_reports:
             break
 
         for next_url in _extract_pagination_links(current_html, current_base, current_url):
@@ -1207,6 +1655,10 @@ def _fetch_year_api_links(
     base_url: str,
     file_pattern: str | None,
     verify_ssl: bool,
+    *,
+    doc_kind: str = "quarterly",
+    strict_file_pattern: bool = False,
+    diag: list[str] | None = None,
 ) -> list[str]:
     """Call each year API URL, walk the JSON response for PDF links, and return filtered results."""
     seen: set[str] = set()
@@ -1219,6 +1671,10 @@ def _fetch_year_api_links(
             resp = _session_get(session, api_url, timeout=15, verify_ssl=verify_ssl)
             payload = _response_json(resp)
         except Exception as exc:
+            if diag is not None:
+                diag.append(
+                    f"{api_url} failed: {type(exc).__name__}: {exc}"
+                )
             print(f"year_api_url failed ({api_url}): {exc}", file=sys.stderr)
             continue
 
@@ -1244,7 +1700,12 @@ def _fetch_year_api_links(
 
         _walk(payload)
 
-    return _select_pdf_links(all_anchors, file_pattern)
+    return _select_pdf_links(
+        all_anchors,
+        file_pattern,
+        doc_kind,
+        strict_file_pattern=strict_file_pattern,
+    )
 
 
 def _playwright_available() -> bool:
@@ -1520,7 +1981,18 @@ def _playwright_collect_pdf_links(
         except Exception:
             pass  # test fakes have no event API
         try:
-            page.goto(url, wait_until="networkidle", timeout=timeout_ms)
+            # IR SPAs (e.g. ircuervo.com) frequently never reach "networkidle"
+            # within the timeout because of persistent analytics/websocket traffic.
+            # A hard networkidle wait here previously RAISED and aborted the entire
+            # render — no harvest, no year-button clicks, falling back to garbage
+            # static links. Load the DOM, then treat network-idle as a best-effort
+            # settle (via _playwright_settle) so the rest of the flow always runs.
+            try:
+                page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+            except Exception as exc:
+                # Even a partially-loaded page can carry the report anchors.
+                print(f"  Playwright: navigation warning: {exc}", file=sys.stderr)
+            _playwright_settle(page)
             _harvest(page)
 
             # Click any "quarterly" type tabs to ensure the quarterly view is active
@@ -1711,38 +2183,58 @@ def _normalize_page_url(url: str) -> str:
 def _select_pdf_links_with_diag(
     anchors: list[_PdfAnchor],
     pattern: str | None,
+    doc_kind: str | None = None,
+    *,
+    strict_file_pattern: bool = False,
 ) -> tuple[list[str], list[tuple[_PdfAnchor, str]]]:
     """Like _select_pdf_links, but also return (anchor, reason) for unselected candidates."""
-    links = _select_pdf_links(anchors, pattern)
+    doc_kind = doc_kind or _DOC_KIND.get()
+    links = _select_pdf_links(
+        anchors,
+        pattern,
+        doc_kind,
+        strict_file_pattern=strict_file_pattern,
+    )
     chosen = set(links)
-    rejected = [
-        (a, _explain_rejection(a))
-        for a in anchors
-        if a.url not in chosen
-    ]
+    configured_matches = set(_match_selector(anchors, pattern, doc_kind)) if pattern else set()
+    rejected = []
+    for anchor in anchors:
+        if anchor.url in chosen:
+            continue
+        if strict_file_pattern and pattern and anchor.url not in configured_matches:
+            reason = "configured file_pattern did not select anchor (strict fallback disabled)"
+        else:
+            reason = _explain_rejection(anchor)
+        rejected.append((anchor, reason))
     return links, rejected
 
 
-# --- English-only language filtering ----------------------------------------------------
-# When a source declares ``language: en`` we keep only English-looking PDF anchors. Signals are
-# read off the same ``unquote(filename + text + url).lower()`` haystack the quarterly-report
-# heuristic uses, so a Spanish-only report ("reporte trimestral", "/es/") is dropped while an
-# English one ("results", "/en/") survives. The active spec is carried in a ContextVar so the
-# single chokepoint ``_select_pdf_links`` (which every discovery strategy funnels through) can
-# apply it without threading a parameter through all six crawlers.
+# --- Alpha language filtering -----------------------------------------------------------
+# Alpha source configs can request English-only reports on bilingual IR pages. Keep the
+# filter at the common selector chokepoint so every root discovery layer receives the same
+# treatment without duplicating crawler logic.
+_EN_PATH_RE = re.compile(
+    r"(?:/en/|/eng/|/english/|[_-]en[_./-]|[_-]eng[_./-])",
+    re.IGNORECASE,
+)
+_ES_PATH_RE = re.compile(
+    r"(?:/es/|/esp/|/spanish/|[_-]es[_./-]|[_-]esp[_./-])",
+    re.IGNORECASE,
+)
+_EN_WORD_RE = re.compile(
+    r"\b(?:report|reports|results?|earnings?|quarter(?:ly)?|english"
+    r"|press\s+release|financial\s+statements)\b",
+    re.IGNORECASE,
+)
+_ES_WORD_RE = re.compile(
+    r"(?:reporte|trimestre|trimestral|resultados|informe|espa[nñ]ol"
+    r"|comunicado|estados?\s+financieros)",
+    re.IGNORECASE,
+)
 
-_EN_PATH_RE = re.compile(r"(?:/en/|/eng/|/english/|[_-]en[_./-]|[_-]eng[_./-])", re.IGNORECASE)
-_ES_PATH_RE = re.compile(r"(?:/es/|/esp/|/spanish/|[_-]es[_./-]|[_-]esp[_./-])", re.IGNORECASE)
-_EN_WORD_RE = re.compile(r"\b(?:report|reports|results?|earnings?|quarter(?:ly)?|english"
-                         r"|press\s+release|financial\s+statements)\b", re.IGNORECASE)
-_ES_WORD_RE = re.compile(r"(?:reporte|trimestre|trimestral|resultados|informe|espa[nñ]ol"
-                         r"|comunicado|estados?\s+financieros)", re.IGNORECASE)
-
-# Active English-only spec: None (no filtering) or {"include": re|None, "exclude": re|None}.
 _LANG_FILTER: "contextvars.ContextVar[dict | None]" = contextvars.ContextVar(
     "downloader_lang_filter", default=None
 )
-# "quarterly" (default) or "annual" — selects which report selectors _select_pdf_links uses.
 _DOC_KIND: "contextvars.ContextVar[str]" = contextvars.ContextVar(
     "downloader_doc_kind", default="quarterly"
 )
@@ -1753,73 +2245,85 @@ def _is_english_only(language: str | None) -> bool:
 
 
 def _build_lang_spec(
-    language: str | None, include: str | None, exclude: str | None
+    language: str | None,
+    include: str | None,
+    exclude: str | None,
 ) -> dict | None:
-    """Build the active language-filter spec for a ``download_from_ir`` run.
+    """Build a per-run language selector from Alpha's source configuration."""
 
-    Explicit ``include``/``exclude`` regexes win (and force filtering on). Otherwise English-only
-    sources get the built-in EN-keep/ES-drop heuristic, and everything else is a no-op (``None``).
-    """
     if include or exclude:
         return {
             "include": re.compile(include, re.IGNORECASE) if include else None,
             "exclude": re.compile(exclude, re.IGNORECASE) if exclude else None,
         }
     if _is_english_only(language):
-        return {"include": None, "exclude": None}  # built-in heuristic
+        return {"include": None, "exclude": None}
     return None
 
 
 def _filter_anchors_by_language(
-    anchors: list[_PdfAnchor], spec: dict | None
+    anchors: list[_PdfAnchor],
+    spec: dict | None,
 ) -> list[_PdfAnchor]:
-    """Drop non-English anchors per ``spec`` (set by :func:`download_from_ir`).
+    """Apply explicit regexes or Alpha's conservative English-only heuristic."""
 
-    ``spec`` of ``None`` is a no-op (preserves behavior for Spanish/untagged sources). When
-    ``include``/``exclude`` regexes are supplied they win; otherwise the built-in EN-keep /
-    ES-drop heuristic applies: drop an anchor only when it shows a Spanish signal and no English
-    one (so bilingual filenames under an ``/en/`` path are kept).
-    """
     if not spec or not anchors:
         return anchors
     include = spec.get("include")
     exclude = spec.get("exclude")
     kept: list[_PdfAnchor] = []
-    for a in anchors:
-        hay = unquote(" ".join((a.filename, a.text, a.url))).lower()
+    for anchor in anchors:
+        haystack = unquote(
+            " ".join((anchor.filename, anchor.text, anchor.url))
+        ).lower()
         if include is not None or exclude is not None:
-            if include is not None and not include.search(hay):
+            if include is not None and not include.search(haystack):
                 continue
-            if exclude is not None and exclude.search(hay):
+            if exclude is not None and exclude.search(haystack):
                 continue
-            kept.append(a)
+            kept.append(anchor)
             continue
-        has_en = bool(_EN_PATH_RE.search(hay) or _EN_WORD_RE.search(hay))
-        has_es = bool(_ES_PATH_RE.search(hay) or _ES_WORD_RE.search(hay))
+        has_en = bool(_EN_PATH_RE.search(haystack) or _EN_WORD_RE.search(haystack))
+        has_es = bool(_ES_PATH_RE.search(haystack) or _ES_WORD_RE.search(haystack))
         if has_es and not has_en:
             continue
-        kept.append(a)
+        kept.append(anchor)
     return kept
 
 
-def _select_pdf_links(anchors: list[_PdfAnchor], pattern: str | None) -> list[str]:
+def _select_pdf_links(
+    anchors: list[_PdfAnchor],
+    pattern: str | None,
+    doc_kind: str | None = None,
+    *,
+    strict_file_pattern: bool = False,
+) -> list[str]:
     """Choose the best PDF links using hidden, ordered selectors.
 
-    Reads the active ``_DOC_KIND`` (set per run in :func:`download_from_ir`): ``"annual"`` keeps
-    annual/integrated/20-F links the quarterly path drops; the default is the old behavior.
+    ``doc_kind="annual"`` switches to the annual-report selectors (keeps annual/integrated/20-F
+    links that the quarterly path deliberately drops); the default is byte-for-byte the old path.
+
+    When ``strict_file_pattern`` is true and ``pattern`` matches no eligible
+    anchor, return no links. This turns a configured issuer pattern into an
+    allowlist and prevents the generic report heuristics from silently selecting
+    another document type. The default remains permissive for legacy callers.
     """
     anchors = _filter_anchors_by_language(anchors, _LANG_FILTER.get())
     if not anchors:
         return []
 
+    doc_kind = doc_kind or _DOC_KIND.get()
+
     if pattern:
-        configured = _match_selector(anchors, pattern)
+        configured = _match_selector(anchors, pattern, doc_kind)
         if configured:
             return configured
+        if strict_file_pattern:
+            return []
 
-    if _DOC_KIND.get() == "annual":
-        # No permissive last resort: only anchors that actually look annual, so a mixed page
-        # never leaks quarterly PDFs into the annual pass.
+    if doc_kind == "annual":
+        # No permissive last resort: only anchors that actually look like an annual report, so a
+        # mixed page never leaks quarterly PDFs into the annual pass.
         return _select_annual_report_links(anchors)
 
     quarterly_reports = _select_quarterly_report_links(anchors)
@@ -1861,7 +2365,7 @@ _QR_EXCLUDE_RE = re.compile(
     r"(?:webcast|transcript|script|presentation|presentaci[oó]n|infograf|infographic|postcard|carrusel"
     r"|informe.{0,8}anual|reporte.{0,8}anual|(?<![a-z])annual(?![a-z])"
     r"|sostenibilidad|sustainability|carta.{0,12}accionistas|gobierno.{0,12}corporativo"
-    r"|governance|(?<![a-z])proxy(?![a-z])|prospecto|prospectus|xbrl?"
+    r"|governance|(?<![a-z])proxy(?![a-z])|prospecto|prospectus"
     # Conference-call invitations carry a period in their name but are never the report.
     # (Re-transmission / eventos-relevantes docs are NOT excluded here: an audited
     # "retransmisión ... cifras dictaminadas" can be the real report. Those are handled by
@@ -1895,27 +2399,55 @@ _QR_QUARTER_SIGNAL_RE = re.compile(
     r"|(?:^|[^0-9a-z])[1-4](?:er|do|to)?[-_ ]*trim(?:estre)?[-_ .]*20\d{2}"
     r"|(?:^|[^0-9a-z])[1-4][_\s][tq][_\s](?:quarter|trimestre|results?|report)"
     r"|(?:^|[^0-9a-z])[1-4][_][tq]\d{2,4}(?:[^0-9a-z]|$)"
+    r"|(?:^|[^0-9a-z])[1-4][tq]xbrl20\d{2}(?:[^0-9a-z]|$)"
     r")",
     re.IGNORECASE,
 )
 
+_QR_XBRL_TOKEN_RE = re.compile(r"xbrl?", re.IGNORECASE)
+_QR_HUMAN_READABLE_XBRL_NAME_RE = re.compile(
+    r"[1-4][tq]xbrl20\d{2}\.pdf",
+    re.IGNORECASE,
+)
+
+
+def _is_non_report_xbrl_asset(anchor: _PdfAnchor) -> bool:
+    """Reject regulatory XBR/XBRL attachments except the known report filename.
+
+    Liverpool publishes a human-readable quarterly financial-statements PDF as
+    ``2TXBRL2026.pdf``.  Other XBR/XBRL-labelled PDFs encountered on IR pages
+    are regulatory payloads or exchange notices, not the earnings report.
+    Keep the exception deliberately filename-shaped instead of removing the
+    general XBRL safeguard.
+    """
+
+    haystack = unquote(" ".join((anchor.filename, anchor.text, anchor.url)))
+    if not _QR_XBRL_TOKEN_RE.search(haystack):
+        return False
+    names = (
+        Path(unquote(anchor.filename)).name,
+        Path(unquote(urlparse(anchor.url).path)).name,
+    )
+    return not any(_QR_HUMAN_READABLE_XBRL_NAME_RE.fullmatch(name) for name in names)
+
 
 def _looks_like_quarterly_report(anchor: _PdfAnchor) -> bool:
     haystack = unquote(" ".join((anchor.filename, anchor.text, anchor.url))).lower()
-    if _QR_EXCLUDE_RE.search(haystack):
+    if _QR_EXCLUDE_RE.search(haystack) or _is_non_report_xbrl_asset(anchor):
         return False
     return bool(_QR_REPORT_SIGNAL_RE.search(haystack) and _QR_QUARTER_SIGNAL_RE.search(haystack))
 
 
 def _is_excluded_report_asset(anchor: _PdfAnchor) -> bool:
     haystack = unquote(" ".join((anchor.filename, anchor.text, anchor.url))).lower()
-    return bool(_QR_EXCLUDE_RE.search(haystack))
+    return bool(_QR_EXCLUDE_RE.search(haystack)) or _is_non_report_xbrl_asset(anchor)
 
 
 # --- Annual-report selection (doc_kind="annual") -------------------------------------------
-# Same non-report exclusions as the quarterly path EXCEPT the annual/anual clauses — which are the
-# whole point in annual mode. An annual report is year-only, so it requires an annual signal + a
-# year rather than a quarter signal.
+# The mirror image of the quarterly selectors: same non-report exclusions (webcast, transcript,
+# presentation, sustainability, governance, proxy, prospectus, conference-call invites) EXCEPT the
+# annual/anual clauses — which are exactly what we want to keep in annual mode. An annual report is
+# year-only, so there is no quarter-signal requirement; instead we require an annual signal + a year.
 _AR_EXCLUDE_RE = re.compile(
     r"(?:webcast|transcript|script|presentation|presentaci[oó]n|infograf|infographic|postcard|carrusel"
     r"|sostenibilidad|sustainability|carta.{0,12}accionistas|gobierno.{0,12}corporativo"
@@ -1962,6 +2494,8 @@ def _explain_rejection(anchor: _PdfAnchor) -> str:
     excluded = _QR_EXCLUDE_RE.search(haystack)
     if excluded:
         return f"excluded (matched {excluded.group(0)!r})"
+    if _is_non_report_xbrl_asset(anchor):
+        return "excluded (regulatory XBR/XBRL attachment)"
     missing = []
     if not _QR_REPORT_SIGNAL_RE.search(haystack):
         missing.append("report signal (e.g. 'reporte', 'results', 'bmv')")
@@ -1972,9 +2506,9 @@ def _explain_rejection(anchor: _PdfAnchor) -> str:
     return "passes quarterly filter"
 
 
-def _match_selector(anchors: list[_PdfAnchor], pattern: str) -> list[str]:
-    excluded = (_is_excluded_annual_asset if _DOC_KIND.get() == "annual"
-                else _is_excluded_report_asset)
+def _match_selector(anchors: list[_PdfAnchor], pattern: str,
+                    doc_kind: str = "quarterly") -> list[str]:
+    excluded = _is_excluded_annual_asset if doc_kind == "annual" else _is_excluded_report_asset
     seen: set[str] = set()
     selected: list[str] = []
     for anchor in anchors:
@@ -2002,7 +2536,32 @@ def _download_pdf(
     request_headers = {"Accept": "application/pdf,*/*"}
     if referer:
         request_headers["Referer"] = referer
-    tmp = dest.with_suffix(".tmp")
+    # A fleet refresh may fetch different source records concurrently. A unique
+    # sibling prevents two workers from sharing/truncating the same ``.tmp``.
+    tmp = dest.with_name(f".{dest.name}.part-{uuid.uuid4().hex}")
+    try:
+        return _download_pdf_inner(
+            session, url, tmp, dest,
+            verify_ssl=verify_ssl, chunk_size=chunk_size,
+            request_headers=request_headers,
+        )
+    except Exception:
+        # Never leave a partial .tmp behind — a stale one turns the next run's
+        # magic-byte check into a confusing FileNotFoundError/garbage read.
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def _download_pdf_inner(
+    session: requests.Session,
+    url: str,
+    tmp: Path,
+    dest: Path,
+    *,
+    verify_ssl: bool,
+    chunk_size: int,
+    request_headers: dict,
+) -> Path:
     profile = _impersonate_profile(session)
     if profile:
         # Known Cloudflare-protected host: fetch with a browser TLS fingerprint up front.
@@ -2060,7 +2619,7 @@ def _download_pdf(
         tmp.unlink()
         raise ValueError(f"Downloaded file is not a PDF (header: {header!r})")
 
-    tmp.rename(dest)
+    os.replace(tmp, dest)
     return dest
 
 
@@ -2118,7 +2677,12 @@ def _session_get(
             return resp
         if not _should_fallback_to_curl(exc):
             raise
-        return _curl_get(session, url, timeout=timeout, verify_ssl=verify_ssl, params=params, extra_headers=extra_headers)
+        resp = _curl_get(session, url, timeout=timeout, verify_ssl=verify_ssl, params=params, extra_headers=extra_headers)
+        # A curl-recovered error page must fail like any other branch — returning
+        # it unraised lets a 403/500 body get parsed as the IR page ("no PDF
+        # links found" instead of an error).
+        resp.raise_for_status()
+        return resp
 
 
 def _curl_get(
@@ -2257,7 +2821,7 @@ def _run_curl(
 
     parts = [p for p in completed.stdout.splitlines() if p.strip()]
     final_url = url
-    status_code = 200
+    status_code: int | None = None
     if len(parts) >= 2:
         final_url = parts[-2].strip() or url
         try:
@@ -2270,6 +2834,13 @@ def _run_curl(
         except ValueError:
             final_url = parts[0].strip() or url
 
+    if status_code is None:
+        # Unparsable -w output means we cannot vouch for the response; treating
+        # it as 200 would let an unknown failure masquerade as success.
+        raise RuntimeError(
+            f"curl fetch for {url}: could not parse HTTP status from -w output "
+            f"({completed.stdout!r:.120})"
+        )
     return final_url or url, status_code
 
 
@@ -2297,6 +2868,9 @@ def _should_fallback_to_curl(exc: Exception) -> bool:
         "unsafe legacy renegotiation",
         "bad handshake",
         "connection reset",
+        "incompleteread",
+        "incomplete read",
+        "chunkedencoding",
         "tls",
         "ssl",
     )
@@ -2465,6 +3039,14 @@ def _slugify_url(
     else:
         path_parts = [part for part in Path(parsed.path).parts if part not in {"/", ""}]
         name = _clean_filename_part(path_parts[-1]) if path_parts else "download"
+        # Sites that shelve documents under .../{year}/{qN}/ reuse the same
+        # basename every quarter (Orbia: "earnings-release-eng.pdf") — bake the
+        # period context in up front so infer_period_label can canonicalize and
+        # same-name quarters can't collide.
+        if len(path_parts) >= 3:
+            year_part, q_part = path_parts[-3], path_parts[-2]
+            if re.fullmatch(r"(?:19|20)\d{2}", year_part) and re.fullmatch(r"[qQ][1-4]", q_part):
+                name = f"{year_part}_{q_part.lower()}_{name}"
     if not name.lower().endswith(".pdf"):
         name += ".pdf"
 
@@ -2534,6 +3116,14 @@ def main() -> None:
                     help="Only download PDFs whose URL contains TEXT (e.g. '2024')")
     ap.add_argument("--max", type=int, default=50, help="Max reports to download (default: 50)")
     ap.add_argument("--pattern", default=None, help="Regex for PDF filename filter")
+    ap.add_argument(
+        "--strict-file-pattern",
+        action="store_true",
+        help=(
+            "Treat --pattern as an allowlist and disable generic report-selector "
+            "fallbacks when it matches no PDF"
+        ),
+    )
     ap.add_argument("--delay", type=int, default=500,
                     help="Milliseconds between downloads (default: 500)")
     ap.add_argument("--no-verify-ssl", action="store_true",
@@ -2554,6 +3144,10 @@ def main() -> None:
     kwargs: dict = {}
     if args.pattern:
         kwargs["file_pattern"] = args.pattern
+    if args.strict_file_pattern:
+        if not args.pattern:
+            ap.error("--strict-file-pattern requires --pattern")
+        kwargs["strict_file_pattern"] = True
     if args.year_api_urls:
         kwargs["year_api_urls"] = args.year_api_urls
     if args.playwright:

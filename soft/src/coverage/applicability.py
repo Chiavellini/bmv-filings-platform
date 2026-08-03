@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 
 import yaml
 
@@ -28,6 +29,7 @@ from src.coverage.columns import (
     COLKEY_BY_LABEL, COLUMNS, HISTORY_LABELS, SHORT_HISTORY_LABELS, YAHOO_FILLABLE_LABELS,
 )
 from src.download.cnbv import SLUG_TO_CNBV
+from src.shared.paths import REPORTS_DIR
 
 _ROOT = Path(__file__).resolve().parents[2]
 
@@ -212,15 +214,15 @@ def _annual_periods(slug: str) -> int:
     """Distinct fiscal-year XBRL filings cached for a company — the annual depth the CAGR/σ columns
     need. Counts both ``-4T`` (industrial) and ``-FY`` (bank) year-end markers. Filesystem-derived
     so certification never over-claims history."""
-    xd = _ROOT / "data" / "reports" / slug / "xbrl"
+    xd = REPORTS_DIR / slug / "xbrl"
     if not xd.is_dir():
         return 0
     years: set[str] = set()
-    for marker in _ANNUAL_MARKERS:
-        for p in xd.glob(f"*{marker}.json.gz"):
-            # ``GFNORTE_2021-FY.json.gz`` → year token is the last "_"-part, before the marker.
-            token = p.name.split("_")[-1]
-            years.add(token.split(marker)[0])
+    annual_name = re.compile(r"(20\d{2})(?:-4T|-FY)(?:_facts)?\.json(?:\.gz)?$")
+    for path in xd.iterdir():
+        match = annual_name.search(path.name)
+        if match:
+            years.add(match.group(1))
     return len(years)
 
 

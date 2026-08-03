@@ -22,9 +22,12 @@ def test_dir_constants_are_expected_children():
     assert paths.CONFIGS_DIR == paths.PROJECT_ROOT / "configs"
     assert paths.DATA_DIR == paths.PROJECT_ROOT / "data"
     assert paths.REPORTS_DIR == paths.DATA_DIR / "reports"
+    assert paths.SHARED_PARSED_REPORTS_DIR == paths.DOCUMENT_ESTATE_DIR / "views" / "parsed"
     assert paths.GROUND_TRUTH_DIR == paths.DATA_DIR / "ground_truth"
     assert paths.STYLE_DIR == paths.DATA_DIR / "style"
     assert paths.LATEST_OUTPUT_DIR == paths.OUTPUTS_DIR / "latest"
+    assert paths.LATEST_OUTPUT_RECEIPT == paths.OUTPUTS_DIR / "latest_manifest.json"
+    assert paths.DELIVERABLE_ARCHIVE_DIR == paths.OUTPUTS_DIR / "archive" / "deliverables"
 
 
 def test_key_data_dirs_exist():

@@ -11,11 +11,11 @@ the thin wrapper at `scripts/refresh_quarterly_estate.py`.
 
 The root now also has a separate, bounded outbox worker at
 `scripts/process_estate_outbox.py`. It can create a verified Markdown derivative
-for stored PDF, HTML/news, or text and can optionally invoke Alpha Go's owned
-projection CLI. The worker is implemented and fixture-tested, but it has not
-been applied to the
-live catalog or deployed as a service. It is not a Soft or Earnings consumer,
-and raw XBRL still requires a purpose-built downstream consumer.
+for stored PDF, HTML/news, or text; create canonical numeric facts from raw BMV
+XBRL JSON/JSON.GZ; and optionally invoke Alpha Go's owned projection CLI. The
+worker is implemented and fixture-tested, but it has not been deployed as a
+continuous service. Soft and Earnings consume the resulting root-owned facts;
+they do not own acquisition or fact derivation.
 
 ```text
 external scheduler
@@ -26,17 +26,19 @@ acquisition engine
        |
        +-- applied run: discover -> fetch -> validate -> EstateWriter
                                                         |
-                                      object + absolute compatibility path
+                                  object + estate-relative compatibility path
                                                         |
                                          estate.document.stored outbox row
                                                         |
                                      per-consumer delivery receipts
                                                         |
-                              verified document -> Markdown derivative
-                                                        |
-                                     estate.document.parsed outbox row
-                                                        |
-                                      optional Alpha Go projection
+                       +--------------------------------+----------------------+
+                       |                                                       |
+        verified PDF/HTML/text -> Markdown                    raw XBRL -> facts
+                       |                                                       |
+        estate.document.parsed outbox row              estate.document.facts_extracted
+                       |
+        optional Alpha Go projection
 ```
 
 An estate commit and consumer delivery are separate transactions. A stored
@@ -122,22 +124,28 @@ It marks the event published only when all enabled receipts are terminal. A
 dead receipt remains visible as a failure even though it is terminal, so
 `published_at` alone is not a success signal.
 
-The derivative verifies the original SHA-256, parses PDF or converts HTML/text
-to immutable content-addressed Markdown, records processor lineage, and emits
-`estate.document.parsed`. Same-hash project/facet changes emit a routing event,
-so a later Alpha adoption is delivered. The optional Alpha consumer projects
-eligible receipts in batches of up to 64 through
+Both root derivatives verify the source SHA-256 and record immutable processor
+lineage. The document derivative converts PDF/HTML/text to content-addressed
+Markdown and emits `estate.document.parsed`. The XBRL derivative runs the root
+`bmv_xbrl.extract_artifacts` helper, stores a root-owned `xbrl_facts` JSON
+artifact under `views/reports/<issuer>/xbrl/`, and emits
+`estate.document.facts_extracted`. Same-hash project/facet changes emit a
+routing event, so downstream adoption can be delivered. An always-enabled
+terminal verifier checks each derived event's portable output, content
+object/hash, artifact ownership, and immutable lineage. The optional Alpha
+consumer projects eligible parsed receipts in batches of up to 64 through
 `alpha-go/scripts/sync_shared_estate.py`; target generations have distinct
 receipt identities and Alpha holds a file lock over manifest/index
-replacement. It is not enabled by default. XBRL events are explicitly skipped
-and do not yet produce facts or Markdown downstream.
+replacement. Alpha projection is not enabled by default.
 
-New content objects receive portable keys such as `blobs/ab/<sha256>`. The
-current SQLite/local-filesystem implementation also stores absolute
-`content_objects.blob_path` and `artifacts.path` values and materializes
-absolute compatibility paths. Consumers must not treat those machine-specific
-paths as durable identities, but they remain part of the current compatibility
-contract.
+New content objects receive portable keys such as `blobs/ab/<sha256>`, and new
+acquisition and derivative rows store estate-relative `artifacts.path` values.
+The current SQLite/local-filesystem implementation still records an absolute
+`content_objects.blob_path` as a local locator; consumers use `object_key` as
+the portable content identity and resolve artifact paths against the configured
+estate root. Legacy catalog rows may still contain host-absolute artifact paths.
+Worker preflight flags those rows, and they must be migrated before that legacy
+catalog is connected read-write on another host.
 
 ## Operator commands
 

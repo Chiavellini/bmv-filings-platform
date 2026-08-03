@@ -8,6 +8,7 @@ overrides and custom KPIs are loaded from YAML configs via load_config().
 
 from __future__ import annotations
 
+import ast
 import re
 import yaml
 from dataclasses import dataclass, field
@@ -39,6 +40,52 @@ class PatternSpec:
     source: str = "table"     # "table" | "prose" — informs confidence scoring
 
 
+AGGREGATIONS = frozenset({"sum", "ending", "average", "none"})
+
+# Count metrics are normally period-end stocks.  These exceptions are period
+# flows and therefore belong in a guarded FY sum instead.  Company configs may
+# override either default explicitly with ``aggregation``.
+_FLOW_COUNT_KEYS = {
+    "net_new_stores", "stores_opened", "stores_closed", "openings", "closures",
+    "clubs_sw_openings", "clubs_sw_closures", "club_openings", "club_closures",
+}
+
+# Stock-like metrics sometimes live in a custom ``kpi`` section rather than the
+# balance sheet.  Key-level defaults keep those rows from being accidentally
+# summed when a caller only has a key/unit map available.
+_ENDING_KEYS = {
+    "cash", "accounts_receivable", "inventory", "prepaid", "current_assets",
+    "ppe_net", "intangibles", "goodwill", "right_of_use", "non_current_assets",
+    "total_assets", "accounts_payable", "short_term_debt", "current_liabilities",
+    "long_term_debt", "lease_liabilities", "total_debt", "non_current_liabilities",
+    "total_liabilities", "equity", "minority_interest", "retained_earnings",
+    "net_debt", "shares_outstanding", "employees", "total_units",
+    "total_sales_floor", "clubs_count", "plants", "dist_centers",
+    "capex_annual",
+}
+
+
+def default_metric_aggregation(key: str, section: str | None, unit: str | None) -> str:
+    """Return the safe FY aggregation for a metric.
+
+    ``sum`` is reserved for flows, ``ending`` uses the Q4/period-end value,
+    ``average`` requires all four quarters, and ``none`` leaves FY blank unless
+    a derived formula can be evaluated against other FY rows.
+    """
+    key = str(key or "").strip().lower()
+    section = str(section or "").strip().lower()
+    unit = str(unit or "").strip().lower()
+    if key in _FLOW_COUNT_KEYS:
+        return "sum"
+    if section == "balance" or key in _ENDING_KEYS or unit == "count":
+        return "ending"
+    if section == "ratio" or unit in {"pct", "ratio", "per_share"}:
+        return "none"
+    if section in {"income", "cashflow"} or unit in {"currency", "volume"}:
+        return "sum"
+    return "none"
+
+
 @dataclass
 class MetricDef:
     key: str                           # canonical snake_case identifier
@@ -51,6 +98,20 @@ class MetricDef:
     validate: list[str] = field(default_factory=list)  # rules from validator.py to apply
     xbrl_concepts: list[str] = field(default_factory=list)  # Tier 1: ordered IFRS concept keys (first present wins)
     aliases: list[str] = field(default_factory=list)        # Tier 2: row labels for table-cell matching
+    aggregation: str | None = None      # FY: sum | ending | average | none
+
+    def __post_init__(self) -> None:
+        aggregation = self.aggregation or default_metric_aggregation(
+            self.key, self.section, self.unit,
+        )
+        aggregation = str(aggregation).strip().lower()
+        if aggregation not in AGGREGATIONS:
+            allowed = ", ".join(sorted(AGGREGATIONS))
+            raise ValueError(
+                f"Invalid aggregation {self.aggregation!r} for {self.key}; "
+                f"expected one of: {allowed}"
+            )
+        self.aggregation = aggregation
 
 
 def _p(regex: str, mult: float = 1.0, src: str = "table") -> PatternSpec:
@@ -727,6 +788,7 @@ METRICS: list[MetricDef] = [
         label_es="Deuda Financiera Total",
         section="balance",
         unit="currency",
+        calc="short_term_debt + long_term_debt",
         validate=["net_debt_identity"],
         patterns=[
             _p(r"^\s*(?:Total\s+)?(?:Financial\s+)?Debt\s+({NL}){FN}\s+({NL})".format(NL=_NL, FN=_FN)),
@@ -774,6 +836,23 @@ METRICS: list[MetricDef] = [
             _p(r"^\s*(?:Total\s+)?(?:Shareholders?'?\s+)?Equity\s+"
                r"({NL}){FN}\s+({NL})".format(NL=_NL, FN=_FN)),
             _p(r"^\s*(?:Total\s+)?[Cc]apital\s+[Cc]ontable\s+"
+               r"({NL}){FN}\s+({NL})".format(NL=_NL, FN=_FN)),
+        ],
+    ),
+
+    MetricDef(
+        key="minority_interest",
+        label="Non-controlling Interest",
+        label_es="Participación No Controladora",
+        section="balance",
+        unit="currency",
+        # Tier-1 from XBRL (ifrs-full_NoncontrollingInterests, wired via configs/xbrl_concepts.yaml);
+        # prose/table fallbacks for filings that print it on the equity face.
+        # (Back-ported from the soft fork — its native EV bridge consumes this key.)
+        patterns=[
+            _p(r"^\s*(?:Total\s+)?Non-?controlling\s+[Ii]nterests?\s+"
+               r"({NL}){FN}\s+({NL})".format(NL=_NL, FN=_FN)),
+            _p(r"^\s*Participaci[oó]n\s+(?:no\s+controladora|minoritaria)\s+"
                r"({NL}){FN}\s+({NL})".format(NL=_NL, FN=_FN)),
         ],
     ),
@@ -1064,15 +1143,18 @@ def apply_config(base_metrics: list[MetricDef], config: dict) -> list[MetricDef]
                 source=ep.get("source", "table"),
             ))
 
-        if extra_pats:
-            # Insert at front so company-specific patterns take priority
+        if extra_pats or override.get("calc") or "aggregation" in override:
+            # Insert at front so company-specific patterns take priority. A config
+            # may also set `calc` to enable an identity-derived fallback on a base
+            # metric (e.g. operating_income = ebitda - depreciation for one company).
             metrics[idx] = MetricDef(
                 key=m.key, label=m.label, label_es=m.label_es,
                 section=m.section, unit=m.unit,
                 patterns=extra_pats + m.patterns,
-                calc=m.calc, validate=m.validate,
+                calc=override.get("calc") or m.calc, validate=m.validate,
                 xbrl_concepts=list(m.xbrl_concepts) + override.get("xbrl_concepts", []),
                 aliases=list(m.aliases) + override.get("aliases", []),
+                aggregation=override.get("aggregation", m.aggregation),
             )
 
     for cm in config.get("custom_metrics", []):
@@ -1095,7 +1177,16 @@ def apply_config(base_metrics: list[MetricDef], config: dict) -> list[MetricDef]
             validate=cm.get("validate", []),
             xbrl_concepts=cm.get("xbrl_concepts", []),
             aliases=cm.get("aliases", []),
+            aggregation=cm.get("aggregation"),
         ))
+
+    # Drop base metrics a company never wants extracted (e.g. margins that are
+    # formula-derived in the deliverable). Keeping them only invites mis-grabs that
+    # poison cross-checks (a stray "80" read as ebitda_margin breaks margin_consistency
+    # for revenue/ebitda). `exclude_metrics: [key, ...]` removes them outright.
+    excluded = set(config.get("exclude_metrics", []))
+    if excluded:
+        metrics = [m for m in metrics if m.key not in excluded]
 
     # Attach Tier 1 IFRS concept maps + Tier 2 row-label aliases from the shared
     # registry (configs/xbrl_concepts.yaml), unless a metric already carries them.
@@ -1150,9 +1241,90 @@ def attach_concept_map(
                 calc=m.calc, validate=m.validate,
                 xbrl_concepts=m.xbrl_concepts or list(entry.get("xbrl_concepts", [])),
                 aliases=m.aliases or list(entry.get("aliases", [])),
+                aggregation=m.aggregation,
             )
         out.append(m)
     return out
+
+
+_CALC_NODE_TYPES = (
+    ast.Expression, ast.BinOp, ast.UnaryOp, ast.Name, ast.Load, ast.Constant,
+    ast.Add, ast.Sub, ast.Mult, ast.Div, ast.UAdd, ast.USub,
+)
+_CALC_OPERATORS = {
+    ast.Add: lambda a, b: a + b,
+    ast.Sub: lambda a, b: a - b,
+    ast.Mult: lambda a, b: a * b,
+    ast.Div: lambda a, b: a / b,
+}
+
+
+def parse_metric_calc(expression: str) -> ast.Expression:
+    """Parse and validate a declarative metric calculation.
+
+    Only metric names, numeric literals, and ``+ - * /`` (including unary
+    signs) are accepted.  This
+    AST is shared by the Python fallback evaluator and the Excel compiler, so a
+    config formula cannot execute functions, access attributes, or import code.
+    """
+    try:
+        tree = ast.parse(str(expression), mode="eval")
+    except (SyntaxError, TypeError) as exc:
+        raise ValueError(f"Invalid metric calculation: {expression!r}") from exc
+    for node in ast.walk(tree):
+        if not isinstance(node, _CALC_NODE_TYPES):
+            raise ValueError(
+                f"Unsupported expression in metric calculation: {expression!r}"
+            )
+        if isinstance(node, ast.Constant) and (
+            isinstance(node.value, bool) or not isinstance(node.value, (int, float))
+        ):
+            raise ValueError(
+                f"Only numeric literals are allowed in metric calculations: {expression!r}"
+            )
+    return tree
+
+
+def metric_calc_names(expression: str) -> tuple[str, ...]:
+    """Return metric operands in first-use order after validating ``expression``."""
+    tree = parse_metric_calc(expression)
+    names: list[str] = []
+
+    class _NameVisitor(ast.NodeVisitor):
+        def visit_Name(self, node):  # noqa: N802 - ast visitor API name
+            if node.id not in names:
+                names.append(node.id)
+
+    _NameVisitor().visit(tree)
+    return tuple(names)
+
+
+def evaluate_metric_calc(expression: str, values: dict[str, float]) -> float:
+    """Safely evaluate a validated metric calculation against numeric values."""
+    tree = parse_metric_calc(expression)
+
+    def visit(node):
+        if isinstance(node, ast.Expression):
+            return visit(node.body)
+        if isinstance(node, ast.Name):
+            return float(values[node.id])
+        if isinstance(node, ast.Constant):
+            return float(node.value)
+        if isinstance(node, ast.UnaryOp):
+            value = visit(node.operand)
+            if isinstance(node.op, ast.USub):
+                return -value
+            if isinstance(node.op, ast.UAdd):
+                return value
+            raise ValueError(f"Unsupported metric unary operator: {type(node.op).__name__}")
+        if isinstance(node, ast.BinOp):
+            op = _CALC_OPERATORS.get(type(node.op))
+            if op is None:  # defensive; parse_metric_calc already rejects it
+                raise ValueError(f"Unsupported metric operator: {type(node.op).__name__}")
+            return op(visit(node.left), visit(node.right))
+        raise ValueError(f"Unsupported metric calculation node: {type(node).__name__}")
+
+    return float(visit(tree))
 
 
 def compute_derived_metrics(
@@ -1169,10 +1341,12 @@ def compute_derived_metrics(
         if not mdef.calc or (mdef.key in extracted and not include_existing):
             continue
         try:
-            ns = {m.key: extracted[m.key].current
-                  for m in metric_defs
-                  if m.key in extracted and extracted[m.key].current is not None}
-            val = eval(mdef.calc, {"__builtins__": {}}, ns)  # safe: only arithmetic
+            values = {
+                m.key: extracted[m.key].current
+                for m in metric_defs
+                if m.key in extracted and extracted[m.key].current is not None
+            }
+            val = evaluate_metric_calc(mdef.calc, values)
             derived[mdef.key] = MetricRow(
                 metric=mdef.key,
                 label_es=mdef.label_es,
@@ -1182,7 +1356,7 @@ def compute_derived_metrics(
                 unit=mdef.unit,
                 source_line="[calculated]",
             )
-        except (KeyError, ZeroDivisionError, NameError):
+        except (KeyError, ZeroDivisionError, TypeError, ValueError):
             pass
     return derived
 

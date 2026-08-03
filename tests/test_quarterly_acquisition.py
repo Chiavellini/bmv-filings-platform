@@ -8,10 +8,9 @@ from pathlib import Path
 from types import SimpleNamespace
 import sqlite3
 
-import pytest
-
 from src.acquisition.adapters import (
     BmvXbrlAdapter,
+    IRLayerDiagnostic,
     InvestorRelationsAdapter,
     normalize_period,
 )
@@ -24,10 +23,12 @@ from src.acquisition.models import (
 )
 from src.acquisition.registry import IssuerRegistry
 from src.acquisition.service import (
+    CoverageGap,
     EstateCoverage,
     PDF_DOCUMENT_TYPE,
     QuarterlyAcquisitionService,
     RunReport,
+    SourceDiagnostic,
     SyncFailure,
     XBRL_DOCUMENT_TYPE,
     expected_quarterly_periods,
@@ -362,7 +363,7 @@ def test_ir_sync_excludes_known_periods_but_rechecks_latest(tmp_path):
         bmv=BmvXbrlAdapter(archive_loader=lambda: []),
         ir=ir,
         wayback=NoWayback(),
-        recheck_periods=2,
+        recheck_periods=1,
     )
 
     report = service.sync(as_of=date(2025, 4, 1))
@@ -372,9 +373,184 @@ def test_ir_sync_excludes_known_periods_but_rechecks_latest(tmp_path):
         "2024-1T",
         "2024-2T",
         "2024-3T",
+        "2024-4T",
     }
     assert len(writer.calls) == 1
     assert writer.calls[0][0].source.url == "https://issuer.test/2025-1T.pdf"
+
+
+def test_ir_page_failure_still_attempts_deterministic_period_templates(tmp_path):
+    template_calls = []
+
+    def blocked_page(*_args, **_kwargs):
+        raise RuntimeError("HTTP 403 Forbidden")
+
+    def templates(configured, output_dir, periods, **kwargs):
+        template_calls.append((tuple(configured), set(periods), kwargs))
+        paths = []
+        for period in sorted(periods):
+            path = Path(output_dir) / f"{period}.pdf"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(f"%PDF-1.7 template {period}".encode())
+            paths.append(path)
+        return paths
+
+    source = AcquisitionSource(
+        key="ir",
+        kind="investor_relations",
+        url="https://issuer.test/reports",
+        direct_url_templates=(
+            "https://issuer.test/{year}/results-{quarter}T.pdf",
+        ),
+        delay_ms=0,
+        impersonate="safari",
+    )
+    adapter = InvestorRelationsAdapter(
+        downloader=blocked_page,
+        template_downloader=templates,
+    )
+
+    report = adapter.fetch_incremental_report(
+        issuer("issuer", "ISSUER", source),
+        source,
+        tmp_path,
+        known_periods=set(),
+        recheck_periods=set(),
+        desired_periods={"2025-1T", "2025-2T"},
+    )
+
+    assert template_calls[0][1] == {"2025-1T", "2025-2T"}
+    assert template_calls[0][2]["impersonate"] == "safari"
+    assert [artifact.source.period for artifact in report.artifacts] == [
+        "2025-1T",
+        "2025-2T",
+    ]
+    assert all(
+        artifact.source.metadata["adapter"] == "ir_url_template"
+        for artifact in report.artifacts
+    )
+    assert len(report.issues) == 1
+    assert report.issues[0].retryable is True
+    assert report.issues[0].record.url == source.url
+    assert "HTTP 403 Forbidden" in report.issues[0].error
+    assert report.layers[-1].layer == "primary_page"
+    assert "HTTP 403 Forbidden" in report.layers[-1].note
+
+
+def test_ir_sync_stores_template_success_while_recording_page_failure(tmp_path):
+    def blocked_page(*_args, **_kwargs):
+        raise PermissionError("403 from investor-relations index")
+
+    def templates(_configured, output_dir, periods, **_kwargs):
+        path = Path(output_dir) / f"{sorted(periods)[-1]}.pdf"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"%PDF-1.7 deterministic fallback")
+        return [path]
+
+    source = AcquisitionSource(
+        key="ir",
+        kind="investor_relations",
+        url="https://issuer.test/reports",
+        floor_year=2025,
+        direct_url_templates=(
+            "https://issuer.test/{year}/results-{quarter}T.pdf",
+        ),
+        delay_ms=0,
+    )
+    ledger = FakeLedger()
+    writer = FakeWriter()
+    service = QuarterlyAcquisitionService(
+        IssuerRegistry(1, (issuer("issuer", "ISSUER", source),)),
+        coverage=FakeCoverage(),
+        ledger=ledger,
+        writer=writer,
+        bmv=BmvXbrlAdapter(archive_loader=lambda: []),
+        ir=InvestorRelationsAdapter(
+            downloader=blocked_page,
+            template_downloader=templates,
+        ),
+        wayback=NoWayback(),
+        default_floor_year=2025,
+        recheck_periods=1,
+    )
+
+    report = service.sync(as_of=date(2025, 4, 1))
+
+    assert report.stored == 1
+    assert writer.calls[0][0].source.period == "2025-1T"
+    assert len(ledger.retryable) == 1
+    assert ledger.retryable[0][1].url == source.url
+    assert "403 from investor-relations index" in ledger.retryable[0][2]
+    assert report.diagnostics[-1].layer == "primary_page"
+    assert report.exit_code == 1
+    assert ledger.finished[-1][1] == "partial"
+
+
+def test_template_layer_exception_preserves_primary_and_partial_template_pdfs(
+    tmp_path,
+):
+    def primary(_url, output_dir, **kwargs):
+        path = Path(output_dir) / "2025-1T.pdf"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"%PDF-1.7 primary success")
+        kwargs["detail_sink"].append(SimpleNamespace(
+            url="https://issuer.test/2025-1T.pdf",
+            path=path,
+            filename=path.name,
+            period="2025-1T",
+        ))
+        return [path]
+
+    def failing_templates(_configured, output_dir, periods, **kwargs):
+        assert periods == {"2025-2T"}
+        path = Path(output_dir) / "2025-2T.pdf"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"%PDF-1.7 template success before failure")
+        kwargs["detail_sink"].append(SimpleNamespace(
+            url="https://issuer.test/2025-2T.pdf",
+            path=path,
+            filename=path.name,
+            period="2025-2T",
+        ))
+        raise RuntimeError("template host failed after first success")
+
+    source = AcquisitionSource(
+        key="ir",
+        kind="investor_relations",
+        url="https://issuer.test/reports",
+        direct_url_templates=(
+            "https://issuer.test/{year}/results-{quarter}T.pdf",
+        ),
+        delay_ms=0,
+    )
+    adapter = InvestorRelationsAdapter(
+        downloader=primary,
+        template_downloader=failing_templates,
+    )
+
+    report = adapter.fetch_incremental_report(
+        issuer("issuer", "ISSUER", source),
+        source,
+        tmp_path,
+        known_periods=set(),
+        recheck_periods=set(),
+        desired_periods={"2025-1T", "2025-2T"},
+    )
+
+    assert [artifact.source.period for artifact in report.artifacts] == [
+        "2025-1T",
+        "2025-2T",
+    ]
+    assert len(report.issues) == 1
+    assert report.issues[0].retryable is True
+    assert report.issues[0].record.source_record_id == "issuer:ir-url-templates"
+    assert "template host failed after first success" in report.issues[0].error
+    assert report.layers[-1] == IRLayerDiagnostic(
+        layer="direct_url_templates",
+        candidates=1,
+        selected=1,
+        note="RuntimeError: template host failed after first success",
+    )
 
 
 def test_ir_adapter_quarantines_periodless_and_governance_pdfs(tmp_path):
@@ -501,7 +677,7 @@ def test_bilingual_renditions_are_distinct_but_corrections_version(tmp_path):
         assert correction.supersedes_document_id != spanish.document_id
 
 
-def test_ir_adapter_rejects_conflicting_pdfs_for_same_document_family(
+def test_ir_adapter_quarantines_conflicting_document_family(
     tmp_path,
 ):
     def download(_url, output_dir, **kwargs):
@@ -531,15 +707,158 @@ def test_ir_adapter_rejects_conflicting_pdfs_for_same_document_family(
         url="https://issuer.test/reports",
     )
 
-    with pytest.raises(ValueError, match="ambiguous quarterly PDFs"):
-        adapter.fetch_incremental(
-            issuer("issuer", "ISSUER", source),
-            source,
-            tmp_path,
-            known_periods=set(),
-            recheck_periods=set(),
-            desired_periods={"2025-1T"},
+    report = adapter.fetch_incremental_report(
+        issuer("issuer", "ISSUER", source),
+        source,
+        tmp_path,
+        known_periods=set(),
+        recheck_periods=set(),
+        desired_periods={"2025-1T"},
+    )
+
+    assert report.artifacts == ()
+    assert len(report.issues) == 2
+    assert all(issue.retryable is False for issue in report.issues)
+    assert all(
+        "ambiguous quarterly PDFs" in issue.error
+        for issue in report.issues
+    )
+
+
+def test_ir_sync_stores_clean_family_while_rejecting_conflicting_family(
+    tmp_path,
+):
+    def download(_url, output_dir, **kwargs):
+        paths = []
+        for stem in ("1T25_a", "1T25_b", "2T25"):
+            path = Path(output_dir) / f"{stem}.pdf"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(f"%PDF-1.7 {stem}".encode())
+            paths.append(path)
+            period = "2025-2T" if stem.startswith("2T") else "2025-1T"
+            kwargs["detail_sink"].append(
+                SimpleNamespace(
+                    url=f"https://issuer.test/{stem}.pdf",
+                    path=path,
+                    filename=path.name,
+                    period=period,
+                )
+            )
+        return paths
+
+    source = AcquisitionSource(
+        key="ir",
+        kind="investor_relations",
+        url="https://issuer.test/reports",
+        floor_year=2025,
+        delay_ms=0,
+    )
+    ledger = FakeLedger()
+    writer = FakeWriter()
+    service = QuarterlyAcquisitionService(
+        IssuerRegistry(1, (issuer("issuer", "ISSUER", source),)),
+        coverage=FakeCoverage(),
+        ledger=ledger,
+        writer=writer,
+        bmv=BmvXbrlAdapter(archive_loader=lambda: []),
+        ir=InvestorRelationsAdapter(
+            downloader=download,
+            template_downloader=lambda *_args, **_kwargs: [],
+        ),
+        wayback=NoWayback(),
+        default_floor_year=2025,
+    )
+
+    report = service.sync(as_of=date(2025, 7, 1))
+
+    assert report.exit_code == 1
+    assert report.stored == 1
+    assert [call[0].source.period for call in writer.calls] == ["2025-2T"]
+    assert len(ledger.rejected) == 2
+    assert ledger.retryable == []
+    assert ledger.finished[-1][1] == "partial"
+
+
+def test_ir_sync_keeps_success_and_records_per_url_failure_and_layers(
+    tmp_path,
+):
+    from src.download.downloader import (
+        DiscoveredPdf,
+        DiscoveryLayerDiagnostic,
+        DownloadFailure,
+    )
+
+    def download(_url, output_dir, **kwargs):
+        successful_url = "https://issuer.test/2T25.pdf"
+        failed_url = "https://issuer.test/1T25.pdf"
+        path = Path(output_dir) / "2T25.pdf"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"%PDF-1.7 clean 2T")
+        kwargs["detail_sink"].append(
+            SimpleNamespace(
+                url=successful_url,
+                path=path,
+                filename=path.name,
+                period="2025-2T",
+            )
         )
+        kwargs["candidate_sink"].extend(
+            (
+                DiscoveredPdf(failed_url, "2025-1T", ("static_crawl",)),
+                DiscoveredPdf(successful_url, "2025-2T", ("static_crawl",)),
+            )
+        )
+        kwargs["failure_sink"].append(
+            DownloadFailure(
+                failed_url,
+                "2025-1T",
+                "TimeoutError: issuer timed out",
+            )
+        )
+        kwargs["layer_sink"].append(
+            DiscoveryLayerDiagnostic("static_crawl", candidates=2, selected=2)
+        )
+        return [path]
+
+    source = AcquisitionSource(
+        key="ir",
+        kind="investor_relations",
+        url="https://issuer.test/reports",
+        floor_year=2025,
+        delay_ms=0,
+    )
+    ledger = FakeLedger()
+    writer = FakeWriter()
+    service = QuarterlyAcquisitionService(
+        IssuerRegistry(1, (issuer("issuer", "ISSUER", source),)),
+        coverage=FakeCoverage(),
+        ledger=ledger,
+        writer=writer,
+        bmv=BmvXbrlAdapter(archive_loader=lambda: []),
+        ir=InvestorRelationsAdapter(
+            downloader=download,
+            template_downloader=lambda *_args, **_kwargs: [],
+        ),
+        wayback=NoWayback(),
+        default_floor_year=2025,
+    )
+
+    report = service.sync(as_of=date(2025, 7, 1))
+
+    assert report.exit_code == 1
+    assert report.stored == 1
+    assert len(ledger.retryable) == 1
+    assert ledger.retryable[0][1].url == "https://issuer.test/1T25.pdf"
+    assert report.diagnostics == (
+        SourceDiagnostic(
+            issuer_slug="issuer",
+            source_key="ir",
+            layer="static_crawl",
+            candidates=2,
+            selected=2,
+        ),
+    )
+    assert ledger.finished[-1][1] == "partial"
 
 
 def test_failure_is_isolated_and_applied_failure_returns_nonzero():
@@ -646,6 +965,67 @@ def test_due_missing_period_with_empty_source_fails_coverage_gate():
     assert report.coverage_gaps[0].reason == "due_periods_not_discovered"
     assert report.coverage_gaps[0].periods == ("2025-1T",)
     assert report.failures == ()
+
+
+def test_known_trailing_recheck_with_no_observation_is_explicit_failure(
+    tmp_path,
+):
+    from src.download.downloader import DiscoveryLayerDiagnostic
+
+    def empty_download(_url, _output_dir, **kwargs):
+        kwargs["layer_sink"].append(
+            DiscoveryLayerDiagnostic(
+                "static_crawl",
+                candidates=0,
+                selected=0,
+                note="issuer page returned no quarterly links",
+            )
+        )
+        return []
+
+    source = AcquisitionSource(
+        key="ir",
+        kind="investor_relations",
+        url="https://issuer.test/reports",
+        floor_year=2025,
+    )
+    ledger = FakeLedger()
+    service = QuarterlyAcquisitionService(
+        IssuerRegistry(1, (issuer("issuer", "ISSUER", source),)),
+        coverage=FakeCoverage(
+            {("issuer", PDF_DOCUMENT_TYPE): {"2025-1T"}}
+        ),
+        ledger=ledger,
+        writer=FakeWriter(),
+        bmv=BmvXbrlAdapter(archive_loader=lambda: []),
+        ir=InvestorRelationsAdapter(
+            downloader=empty_download,
+            template_downloader=lambda *_args, **_kwargs: [],
+        ),
+        wayback=NoWayback(),
+        default_floor_year=2025,
+        recheck_periods=1,
+    )
+
+    report = service.sync(as_of=date(2025, 4, 1))
+
+    assert report.exit_code == 1
+    assert report.coverage_gaps == (
+        CoverageGap(
+            issuer_slug="issuer",
+            source_key="ir",
+            document_type=PDF_DOCUMENT_TYPE,
+            reason="recheck_periods_not_observed",
+            periods=("2025-1T",),
+        ),
+    )
+    assert len(report.failures) == 1
+    assert "trailing recheck observed no candidate" in report.failures[0].error
+    assert report.diagnostics[0].note == (
+        "issuer page returned no quarterly links"
+    )
+    assert len(ledger.retryable) == 1
+    assert ledger.finished[-1][1] == "failed"
 
 
 def test_wayback_is_never_called_without_explicit_backfill():

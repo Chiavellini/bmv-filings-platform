@@ -164,6 +164,56 @@ def test_expected_periods_respects_floor():
     assert all(int(p[:4]) >= 2016 for p in periods)
 
 
+def test_fetch_propagates_browser_tls_profile_to_url_templates(
+    monkeypatch,
+    tmp_path,
+):
+    configs = tmp_path / "configs"
+    configs.mkdir()
+    (configs / "soriana.yaml").write_text(
+        """
+ir_website:
+  url: https://issuer.example/quarterlies
+  impersonate: safari
+  direct_url_templates:
+    - https://issuer.example/{year}/{quarter}Q{year2}.pdf
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    observed: dict[str, object] = {}
+
+    def fake_template_download(templates, out_dir, periods, **kwargs):
+        observed.update(
+            templates=templates,
+            out_dir=out_dir,
+            periods=periods,
+            kwargs=kwargs,
+        )
+        return []
+
+    from src.download import downloader
+
+    monkeypatch.setattr(fcr, "ROOT", tmp_path)
+    monkeypatch.setattr(fcr, "download_from_ir", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(fcr, "_expected_periods", lambda _floor: {"2026-2T"})
+    monkeypatch.setattr(
+        downloader,
+        "download_from_url_templates",
+        fake_template_download,
+    )
+
+    fcr.fetch(
+        "soriana",
+        floor_year=2026,
+        use_xbrl=False,
+        use_wayback=False,
+    )
+
+    assert observed["periods"] == {"2026-2T"}
+    assert observed["kwargs"] == {"delay_ms": 300, "impersonate": "safari"}
+
+
 def test_parse_period_spanish_ordinals():
     """parse_period handles LACOMER's Spanish quarter-ordinal filename conventions."""
     from src.eval.compare_extractions import parse_period

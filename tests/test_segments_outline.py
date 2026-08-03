@@ -19,7 +19,7 @@ sys.path.insert(0, str(ROOT))
 
 from src.excel.segments_sheet import (
     RowSpec, parse_outline, build_outline_workbook,
-    NUMFMT_MONEY, NUMFMT_PCT, _BLUE,
+    MetricLayoutMap, NUMFMT_MONEY, NUMFMT_PCT, _BLUE,
 )
 
 OUTLINE = """\
@@ -237,14 +237,20 @@ def test_auto_segment_check_inserted(df_reconciling):
     r = _find(ws, "Check")
     total = _find(ws, "Total")
     mex, usa = _find(ws, "Mexico"), _find(ws, "USA")
-    assert ws[f"C{r}"].value == f"=C{total}-SUM(C{mex},C{usa})"
+    assert ws[f"C{r}"].value == (
+        f'=IF(COUNT(C{total},C{mex},C{usa})=3,'
+        f'C{total}-SUM(C{mex},C{usa}),"N/A")'
+    )
 
 
 def test_auto_identity_check_inserted(df_reconciling):
     ws = _build(df_reconciling)
     r = _find(ws, "Check: Gross = Revenue − COGS")
     gp, rev, cogs = _find(ws, "Gross Profit"), _find(ws, "Total"), _find(ws, "COGS")
-    assert ws[f"C{r}"].value == f"=+C{gp}-(C{rev}-C{cogs})"
+    assert ws[f"C{r}"].value == (
+        f'=IF(COUNT(C{gp},C{rev},C{cogs})=3,'
+        f'C{gp}-(C{rev}-C{cogs}),"N/A")'
+    )
 
 
 def test_auto_checks_kill_switch(df_reconciling):
@@ -261,20 +267,22 @@ def test_declared_check_not_duplicated(df_reconciling):
     assert len(checks) == 1
 
 
-def test_non_reconciling_structure_gets_no_check(df):
-    # Original fixture: revenue ≠ revenue_mexico alone → not a true segmentation.
+def test_non_reconciling_structure_keeps_visible_check(df):
+    # A mismatch is exactly what the structural check is meant to expose.
     rows = parse_outline(OUTLINE, SECTIONS, MAPPING)
     ws = build_outline_workbook("ACME: Co", rows, df,
                                 unit_map={"revenue": "currency"}).active
     labels = {ws[f"B{r}"].value for r in range(6, ws.max_row + 1)}
-    assert "Check" not in labels
+    assert "Check" in labels
 
 
 def test_outline_workbook_fills_data(ws):
     r = _find(ws, "Total")
     assert ws[f"C{r}"].value == 101 and ws[f"H{r}"].value == 111
     assert ws[f"C{r}"].number_format == NUMFMT_MONEY
-    assert ws[f"G{r}"].value == f"=SUM(C{r}:F{r})"      # currency → FY sum
+    assert ws[f"G{r}"].value == (
+        f'=IF(COUNT(C{r}:F{r})=4,SUM(C{r}:F{r}),"N/A")'
+    )
     # A populated keyed row renders its value (and is not pruned).
     rc = _find(ws, "Consolidated")                       # gross_profit, present in df
     assert ws[f"C{rc}"].value is not None
@@ -414,5 +422,271 @@ def test_segment_check_is_section_scoped():
     check_row = next(r for r in range(6, ws.max_row + 1) if ws.cell(r, 2).value == "Check")
     f = ws.cell(check_row, 3).value
     # ns_conservas (Legacy section, also ns_ family) is excluded
-    assert f.startswith("=C") and "SUM(" in f
-    assert f.count(",") == 1            # exactly two segments summed (Domestic, Export)
+    total = _find(ws, "Consolidated Net Sales")
+    domestic, export = _find(ws, "Domestic"), _find(ws, "Export")
+    conservas = _find(ws, "Conservas — Net Sales")
+    assert f == (f'=IF(COUNT(C{total},C{domestic},C{export})=3,'
+                 f'C{total}-SUM(C{domestic},C{export}),"N/A")')
+    assert f"C{conservas}" not in f
+
+
+def test_fy_aggregation_distinguishes_flows_stocks_and_average():
+    rows = [
+        RowSpec("section", "Metrics"),
+        RowSpec("data", "Revenue", key="revenue"),
+        RowSpec("data", "Cash", key="cash"),
+        RowSpec("data", "Average Utilization", key="utilization"),
+    ]
+    df = pd.DataFrame({
+        "period": ["2024-1T", "2024-2T", "2024-3T", "2024-4T"],
+        "revenue": [10.0, 11.0, 12.0, 13.0],
+        "cash": [100.0, 110.0, 120.0, 130.0],
+        "utilization": [0.7, 0.8, 0.9, 1.0],
+    })
+    layout = MetricLayoutMap(
+        {"revenue": "currency", "cash": "currency", "utilization": "pct"},
+        aggregations={"revenue": "sum", "cash": "ending", "utilization": "average"},
+    )
+    ws = build_outline_workbook("T", rows, df, unit_map=layout,
+                                auto_checks=False).active
+    revenue, cash, utilization = (_find(ws, label)
+                                  for label in ("Revenue", "Cash", "Average Utilization"))
+    assert ws[f"G{revenue}"].value == (
+        f'=IF(COUNT(C{revenue}:F{revenue})=4,SUM(C{revenue}:F{revenue}),"N/A")'
+    )
+    assert ws[f"G{cash}"].value == f'=IF(COUNT(F{cash})=1,F{cash},"N/A")'
+    assert ws[f"G{utilization}"].value == (
+        f'=IF(COUNT(C{utilization}:F{utilization})=4,'
+        f'AVERAGE(C{utilization}:F{utilization}),"N/A")'
+    )
+
+
+def test_calculated_sources_compile_but_reported_sources_stay_inputs():
+    rows = [
+        RowSpec("section", "Balance Sheet"),
+        RowSpec("data", "Short-Term Debt", key="short_term_debt"),
+        RowSpec("data", "Long-Term Debt", key="long_term_debt"),
+        RowSpec("data", "Total Debt", key="total_debt"),
+        RowSpec("data", "Cash", key="cash"),
+        RowSpec("data", "Net Debt", key="net_debt"),
+        RowSpec("section", "P&L"),
+        RowSpec("data", "Revenue", key="revenue"),
+        RowSpec("data", "COGS", key="cogs"),
+        RowSpec("data", "Reported Gross Profit", key="gross_profit"),
+    ]
+    df = pd.DataFrame({
+        "period": ["2024-1T"],
+        "short_term_debt": [20.0], "long_term_debt": [80.0],
+        "total_debt": [100.0], "cash": [25.0], "net_debt": [75.0],
+        "revenue": [200.0], "cogs": [120.0], "gross_profit": [80.0],
+    })
+    df.attrs["confidence"] = {
+        ("2024-1T", "total_debt"): {
+            "source": "[statement] gmexico consolidated Deuda corto + largo plazo",
+        },
+        ("2024-1T", "net_debt"): {
+            "source": "[statement] gmexico consolidated total_debt − cash",
+        },
+        ("2024-1T", "gross_profit"): {
+            "source": "[statement] Utilidad bruta",
+        },
+    }
+    layout = MetricLayoutMap(
+        {key: "currency" for key in df.columns if key != "period"},
+        calculations={
+            "total_debt": "short_term_debt + long_term_debt",
+            "net_debt": "total_debt - cash",
+            "gross_profit": "revenue - cogs",
+        },
+    )
+    ws = build_outline_workbook("T", rows, df, unit_map=layout,
+                                auto_checks=False).active
+    total_debt, net_debt = _find(ws, "Total Debt"), _find(ws, "Net Debt")
+    gross_profit = _find(ws, "Reported Gross Profit")
+    assert str(ws[f"C{total_debt}"].value).startswith("=IF(COUNT(")
+    assert str(ws[f"C{net_debt}"].value).startswith("=IF(COUNT(")
+    assert ws[f"C{gross_profit}"].value == 80.0
+
+
+def test_preserve_requested_rows_keeps_missing_and_formula_capable_rows():
+    rows = [
+        RowSpec("section", "Requested P&L"),
+        RowSpec("data", "Revenue", key="revenue"),
+        RowSpec("data", "COGS", key="cogs"),
+        RowSpec("data", "Gross Profit", key="gross_profit"),
+        RowSpec("section", "Requested KPI"),
+        RowSpec("data", "Analyst-only Metric", key="analyst_only"),
+    ]
+    df = pd.DataFrame({"period": ["2024-1T"], "revenue": [100.0], "cogs": [60.0]})
+    layout = MetricLayoutMap(
+        {"revenue": "currency", "cogs": "currency", "gross_profit": "currency",
+         "analyst_only": "currency"},
+        calculations={"gross_profit": "revenue - cogs"},
+    )
+    ws = build_outline_workbook(
+        "T", rows, df, unit_map=layout, auto_checks=False,
+        preserve_requested_rows=True,
+    ).active
+    labels = [ws.cell(r, 2).value for r in range(6, ws.max_row + 1)]
+    assert labels == [
+        "Requested P&L", "Revenue", "COGS", "Gross Profit",
+        "Requested KPI", "Analyst-only Metric",
+    ]
+    revenue, cogs = _find(ws, "Revenue"), _find(ws, "COGS")
+    gross_profit, missing = _find(ws, "Gross Profit"), _find(ws, "Analyst-only Metric")
+    assert ws[f"C{gross_profit}"].value == (
+        f'=IF(COUNT(C{revenue},C{cogs})=2,'
+        f'IFERROR((C{revenue}-C{cogs}),"N/A"),"N/A")'
+    )
+    assert ws[f"C{missing}"].value is None
+    assert ws[f"C{missing}"].fill.fgColor.rgb == "FFF8CBAD"
+    issues = audit_outline(
+        rows, df, unit_map=layout, preserve_requested_rows=True,
+    )
+    assert {issue["label"] for issue in issues} == {"Analyst-only Metric"}
+
+
+def test_delta_metric_is_live_period_over_period_formula():
+    rows = [
+        RowSpec("section", "Stores"),
+        RowSpec("data", "Total Units", key="total_units"),
+        RowSpec("data", "Net New Stores", key="net_new_stores"),
+    ]
+    df = pd.DataFrame({
+        "period": ["2023-4T", "2024-1T"],
+        "total_units": [100.0, 103.0],
+        "net_new_stores": [float("nan"), 3.0],
+    })
+    layout = MetricLayoutMap(
+        {"total_units": "count", "net_new_stores": "count"},
+        aggregations={"total_units": "ending", "net_new_stores": "sum"},
+        delta_metrics={"net_new_stores": "total_units"},
+    )
+    ws = build_outline_workbook("T", rows, df, unit_map=layout,
+                                auto_checks=False).active
+    units, delta = _find(ws, "Total Units"), _find(ws, "Net New Stores")
+    assert ws[f"H{delta}"].value == (
+        f'=IF(COUNT(H{units},F{units})=2,H{units}-F{units},"N/A")'
+    )
+    assert ws[f"L{delta}"].value == (
+        f'=IF(COUNT(H{delta}:K{delta})=4,SUM(H{delta}:K{delta}),"N/A")'
+    )
+
+
+def test_net_debt_and_fcf_checks_are_structural_and_skippable():
+    rows = [
+        RowSpec("section", "Leverage"),
+        RowSpec("data", "Cash", key="cash"),
+        RowSpec("data", "Total Debt", key="total_debt"),
+        RowSpec("data", "Net Debt", key="net_debt"),
+        RowSpec("section", "Cash Flow"),
+        RowSpec("data", "CFO", key="cfo"),
+        RowSpec("data", "Capex", key="capex"),
+        RowSpec("data", "FCF", key="free_cash_flow"),
+    ]
+    # Both identities intentionally disagree: the rows must still be visible.
+    df = pd.DataFrame({
+        "period": ["2024-1T"], "cash": [25.0], "total_debt": [100.0],
+        "net_debt": [999.0], "cfo": [50.0], "capex": [10.0],
+        "free_cash_flow": [999.0],
+    })
+    layout = MetricLayoutMap(
+        {key: "currency" for key in df.columns if key != "period"},
+        skip_rules={"fcf_derivation"},
+    )
+    ws = build_outline_workbook("T", rows, df, unit_map=layout).active
+    labels = {ws.cell(r, 2).value for r in range(6, ws.max_row + 1)}
+    assert "Check: Net debt = Total debt − Cash" in labels
+    assert "Check: FCF = CFO − Capex" not in labels
+    check = _find(ws, "Check: Net debt = Total debt − Cash")
+    assert ws[f"C{check}"].value.startswith("=IF(COUNT(")
+
+
+def test_strict_audit_flags_calc_operands_with_no_period_overlap():
+    rows = [
+        RowSpec("section", "P&L"),
+        RowSpec("data", "Revenue", key="revenue"),
+        RowSpec("data", "COGS", key="cogs"),
+        RowSpec("data", "Gross Profit", key="gross_profit"),
+    ]
+    df = pd.DataFrame({
+        "period": ["2024-1T", "2024-2T"],
+        "revenue": [100.0, float("nan")],
+        "cogs": [float("nan"), 60.0],
+    })
+    layout = MetricLayoutMap(
+        {"revenue": "currency", "cogs": "currency", "gross_profit": "currency"},
+        calculations={"gross_profit": "revenue - cogs"},
+    )
+    issues = audit_outline(
+        rows, df, unit_map=layout, preserve_requested_rows=True,
+    )
+    assert [(issue["label"], issue["reason"]) for issue in issues] == [
+        ("Gross Profit",
+         "calculated metric 'gross_profit' has zero evaluable periods "
+         "(required operands never overlap)"),
+    ]
+
+
+def test_strict_audit_requires_same_quarter_prior_for_yoy_and_overlap_for_margin():
+    rows = [
+        RowSpec("section", "P&L"),
+        RowSpec("data", "Revenue", key="revenue"),
+        RowSpec("derived", "YoY", derived="yoy"),
+        RowSpec("data", "EBITDA", key="ebitda"),
+        RowSpec("derived", "Margin", derived="margin"),
+    ]
+    df = pd.DataFrame({
+        "period": ["2023-1T", "2023-2T", "2024-1T", "2024-2T"],
+        "revenue": [100.0, float("nan"), float("nan"), 110.0],
+        "ebitda": [float("nan"), 40.0, 45.0, float("nan")],
+    })
+    layout = MetricLayoutMap({"revenue": "currency", "ebitda": "currency"})
+    issues = audit_outline(
+        rows, df, unit_map=layout, preserve_requested_rows=True,
+    )
+    assert {issue["label"] for issue in issues} == {"YoY", "Margin"}
+    assert all("zero evaluable periods" in issue["reason"] for issue in issues)
+
+
+def test_strict_audit_accepts_at_least_one_evaluable_formula_period():
+    rows = [
+        RowSpec("section", "P&L"),
+        RowSpec("data", "Revenue", key="revenue"),
+        RowSpec("derived", "YoY", derived="yoy"),
+        RowSpec("data", "EBITDA", key="ebitda"),
+        RowSpec("derived", "Margin", derived="margin"),
+    ]
+    df = pd.DataFrame({
+        "period": ["2023-1T", "2024-1T"],
+        "revenue": [100.0, 110.0],
+        "ebitda": [float("nan"), 45.0],
+    })
+    layout = MetricLayoutMap({"revenue": "currency", "ebitda": "currency"})
+    assert audit_outline(
+        rows, df, unit_map=layout, preserve_requested_rows=True,
+    ) == []
+
+
+def test_latest_unreported_quarters_are_hidden_not_marked_as_missing_data():
+    rows = [RowSpec("section", "P&L"), RowSpec("data", "Revenue", key="revenue")]
+    df = pd.DataFrame({
+        "period": [
+            "2025-1T", "2025-2T", "2025-3T", "2025-4T",
+            "2026-1T", "2026-2T",
+        ],
+        "revenue": [10.0, 11.0, 12.0, 13.0, 14.0, 15.0],
+    })
+    ws = build_outline_workbook(
+        "T",
+        rows,
+        df,
+        unit_map=MetricLayoutMap({"revenue": "currency"}),
+        auto_checks=False,
+    ).active
+
+    assert ws.column_dimensions["H"].hidden is False  # 1Q26
+    assert ws.column_dimensions["I"].hidden is False  # 2Q26
+    assert ws.column_dimensions["J"].hidden is True   # 3Q26, not reported
+    assert ws.column_dimensions["K"].hidden is True   # 4Q26, not reported
+    assert ws.column_dimensions["L"].hidden is True   # FY26, incomplete

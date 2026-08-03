@@ -1,0 +1,17 @@
+company:
+  name: Gentera
+  ticker: GENTERA
+  exchange: BMV
+  language: es
+  currency: MXN
+  unit: millions
+
+ir_website:
+  url: "https://www.gentera.com.mx/gentera/relacion-inversionistas/informacion_trimestral"
+  xbrl_ticker: GENTERA
+  max_reports: 120
+  floor_year: 2016
+  delay_ms: 250
+  # Prefer the narrative result release; the same page also exposes long SIFIC
+  # packages for each quarter, which are redundant and poorer search inputs.
+  pdf_link_pattern: "(?:press\\s*release|reporte\\s*trimestral)"

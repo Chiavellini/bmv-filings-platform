@@ -35,6 +35,7 @@ from src.coverage.native import build_native_pack, filled_cells, merge_packs  # 
 from src.coverage.spec import parse_spec  # noqa: E402
 from src.coverage.valuation import build_model  # noqa: E402
 from src.coverage.validate import validate_model, write_report  # noqa: E402
+from src.shared.paths import REPORTS_DIR  # noqa: E402
 from src.sheets.valuation_sheet import build_valuation_workbook  # noqa: E402
 
 
@@ -162,7 +163,11 @@ def build_one(spec_path: str | Path, *, no_network: bool = False, base_year: int
                   f"({len(subject_fundamentals)} keys)")
 
         config_path = ROOT / "configs" / f"{spec.slug}.yaml"
-        reports_dir = ROOT / "data" / "reports" / spec.slug
+        # REPORTS_DIR is the single deployment-controlled corpus root. In a portable
+        # checkout it defaults to soft/data/reports; when PDFS_REPORTS_DIR points at
+        # the shared estate view, both single-company and master builds consume that
+        # view without copying filings into the source checkout.
+        reports_dir = REPORTS_DIR / spec.slug
         # subject_facts_only skips the subject's MD&A parse (20 × 30 MB for a quarterly reporter) —
         # safe when every fundamental is an XBRL concept (standard industrial/financial); NOT for
         # companies that need prose metrics (WALMEX segments). bank_ratios/fibra_kpis read the raw

@@ -72,10 +72,102 @@ def test_signed_metric_skips_sign_and_magnitude():
     assert compute_cell_suspects(df, ["fx_gain_loss"]) == {}
 
 
+def test_flow_outliers_compare_quarters_and_fy_with_like_periods_only():
+    rows = []
+    for year in range(2020, 2026):
+        for quarter in range(1, 5):
+            rows.append({
+                "period": f"{year}-{quarter}T",
+                "revenue": 2_500.0 + (year - 2020) * 25 + quarter,
+            })
+        rows.append({
+            "period": f"{year}-FY",
+            "revenue": 0.014 if year == 2022 else 10_000.0 + (year - 2020) * 100,
+        })
+
+    suspects = compute_cell_suspects(pd.DataFrame(rows), ["revenue"])
+
+    assert set(suspects) == {("2022-FY", "revenue")}
+    assert "magnitude outlier" in suspects[("2022-FY", "revenue")]
+
+
+def test_flow_fy_current_scale_is_not_flagged_by_older_unit_artifacts():
+    annual = {
+        2021: 0.0148,
+        2022: 0.0139,
+        2023: 0.0144,
+        2024: 10_100.0,
+        2025: 10_300.0,
+    }
+    rows = []
+    for year, fy_value in annual.items():
+        for quarter in range(1, 5):
+            rows.append({"period": f"{year}-{quarter}T", "revenue": 2_500.0})
+        rows.append({"period": f"{year}-FY", "revenue": fy_value})
+
+    suspects = compute_cell_suspects(pd.DataFrame(rows), ["revenue"])
+
+    assert {period for period, key in suspects if key == "revenue"} == {
+        "2021-FY",
+        "2022-FY",
+        "2023-FY",
+    }
+
+
+def test_nonflow_metric_keeps_conservative_mixed_period_comparison():
+    rows = [
+        {"period": period, "cash": value}
+        for period, value in [
+            ("2020-1T", 100.0),
+            ("2020-2T", 101.0),
+            ("2020-3T", 99.0),
+            ("2020-4T", 100.0),
+            ("2020-FY", 1_000.0),
+        ]
+    ]
+
+    suspects = compute_cell_suspects(pd.DataFrame(rows), ["cash"])
+
+    assert ("2020-FY", "cash") in suspects
+
+
 def test_identity_table_evaluates():
     v = {"revenue": 100.0, "cogs": 60.0, "operating_income": 20.0,
-         "depreciation": 5.0, "ebt": 18.0, "tax_expense": 6.0}
+         "depreciation": 5.0, "ebt": 18.0, "tax_expense": 6.0,
+         "total_debt": 80.0, "cash": 30.0, "cfo": 25.0, "capex": 10.0}
     by_target = {ident[0]: ident for ident in IDENTITIES}
     assert identity_expected(v, by_target["gross_profit"]) == 40.0
     assert identity_expected(v, by_target["ebitda"]) == 25.0
     assert identity_expected(v, by_target["net_income"]) == 12.0
+    assert identity_expected(v, by_target["net_debt"]) == 50.0
+    assert identity_expected(v, by_target["free_cash_flow"]) == 15.0
+
+
+def test_validation_report_honors_company_identity_skip_rules():
+    from src.eval.validation_report import build_validation_report
+
+    df = pd.DataFrame([
+        {
+            "period": "2025-1T",
+            "revenue": 100.0,
+            "cogs": 60.0,
+            "gross_profit": 10.0,
+        }
+    ])
+    unfiltered = build_validation_report(
+        df,
+        ["revenue", "cogs", "gross_profit"],
+        name="Test Co",
+        slug="test_co",
+    )
+    assert "Gross = Revenue − COGS" in unfiltered
+
+    filtered = build_validation_report(
+        df,
+        ["revenue", "cogs", "gross_profit"],
+        name="Test Co",
+        slug="test_co",
+        skip_rules={"gross_profit_identity"},
+    )
+    assert "Gross = Revenue − COGS" not in filtered
+    assert "All trusted identities hold" in filtered

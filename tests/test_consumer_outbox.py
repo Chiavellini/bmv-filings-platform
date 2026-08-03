@@ -584,6 +584,68 @@ def test_reregister_disables_event_types_removed_from_contract(tmp_path):
     ]
 
 
+def test_managed_generation_reconciliation_disables_old_prefix_atomically(
+    tmp_path,
+):
+    database = _database(tmp_path)
+    old = Consumer(
+        "root.example.v1:old",
+        ("estate.document.stored",),
+        [],
+    )
+    with OutboxDispatcher(database, [old]):
+        pass
+
+    current = Consumer(
+        "root.example.v1:current",
+        ("estate.document.stored",),
+        [],
+    )
+    with OutboxDispatcher(
+        database,
+        [current],
+        managed_generations={
+            "root.example.v1:": (current.consumer_id,),
+        },
+    ) as dispatcher:
+        assert dispatcher.disabled_consumer_ids == (old.consumer_id,)
+
+    rows = _rows(
+        database,
+        """SELECT consumer_id,enabled FROM outbox_subscriptions
+           WHERE consumer_id LIKE 'root.example.v1:%'
+           ORDER BY consumer_id""",
+    )
+    assert [(row["consumer_id"], row["enabled"]) for row in rows] == [
+        ("root.example.v1:current", 1),
+        ("root.example.v1:old", 0),
+    ]
+
+
+def test_prefix_disable_is_explicit_and_can_preserve_one_generation(tmp_path):
+    database = _database(tmp_path)
+    first = Consumer("alpha.managed:first", ("estate.document.parsed",), [])
+    second = Consumer("alpha.managed:second", ("estate.document.parsed",), [])
+    with OutboxDispatcher(database, [first, second]) as dispatcher:
+        assert dispatcher.disable_prefix(
+            "alpha.managed:",
+            keep_consumer_ids=(second.consumer_id,),
+        ) == (first.consumer_id,)
+        assert dispatcher.disable_prefix("alpha.managed:") == (
+            second.consumer_id,
+        )
+
+    assert [
+        row["enabled"]
+        for row in _rows(
+            database,
+            """SELECT enabled FROM outbox_subscriptions
+               WHERE consumer_id LIKE 'alpha.managed:%'
+               ORDER BY consumer_id""",
+        )
+    ] == [0, 0]
+
+
 def test_persisted_retry_policy_cannot_be_overwritten_by_another_worker(
     tmp_path,
 ):

@@ -43,10 +43,27 @@ def _slug_to_input(slug: str) -> Path:
     return p
 
 
-def cmd_run(slug: str) -> None:
+def cmd_run(
+    slug: str,
+    *,
+    analyst_metrics: str | Path | None = None,
+    analyst_company: str | None = None,
+    analyst_sheet: str | None = None,
+    allow_missing_analyst_sheet: bool = False,
+    allow_stale_estate: bool = False,
+    freshness_hours: float = 24.0,
+) -> bool:
     """Re-extract through build_segments (which runs the gate) and summarize."""
     from scripts.build_segments import run as build_run
-    build_run(_slug_to_input(slug))
+    result = build_run(
+        _slug_to_input(slug),
+        analyst_metrics=analyst_metrics,
+        analyst_company=analyst_company,
+        analyst_sheet=analyst_sheet,
+        require_analyst_sheet=not allow_missing_analyst_sheet,
+        require_fresh_estate=not allow_stale_estate,
+        freshness_hours=freshness_hours,
+    )
     wl = _worklist_path(slug)
     if wl.exists():
         items = json.loads(wl.read_text(encoding="utf-8"))
@@ -57,6 +74,7 @@ def cmd_run(slug: str) -> None:
                 print(f"  [{w['period']:<8} {w['key']:<22}] {v:>14}  — {w['reason']}")
             if len(items) > 20:
                 print(f"  … +{len(items) - 20} more in {wl.relative_to(PROJECT_ROOT)}")
+    return result.published
 
 
 def _worklist_path(slug: str):
@@ -109,17 +127,56 @@ def cmd_apply(slug: str, verdicts_path: str) -> None:
           f"Re-run `verify_extraction.py {slug}` to rebuild.")
 
 
-def main() -> None:
+def main() -> int:
     ap = argparse.ArgumentParser(description="Verification gate driver.")
     ap.add_argument("slug", help="company slug (matches inputs/<slug>.md and configs/<slug>.yaml)")
     ap.add_argument("--apply", metavar="VERDICTS_JSON",
                     help="merge subagent verdicts into data/verified/<slug>.csv (no rebuild)")
+    ap.add_argument(
+        "--analyst-metrics",
+        metavar="PATH",
+        help="original analyst CSV/XLSX metric request (or declare it in the input Markdown)",
+    )
+    ap.add_argument(
+        "--analyst-company",
+        help="company/ticker block marker in a legacy analyst metric sheet",
+    )
+    ap.add_argument(
+        "--analyst-sheet",
+        help="worksheet name when --analyst-metrics points to an XLSX workbook",
+    )
+    ap.add_argument(
+        "--allow-missing-analyst-sheet",
+        action="store_true",
+        help="exploratory candidate build without the original analyst metric sheet",
+    )
+    ap.add_argument(
+        "--allow-stale-estate",
+        action="store_true",
+        help="offline/exploratory build without a recent successful acquisition receipt",
+    )
+    ap.add_argument(
+        "--freshness-hours",
+        type=float,
+        default=24.0,
+        help="maximum age of the required successful company sync (default: 24)",
+    )
     args = ap.parse_args()
     if args.apply:
         cmd_apply(args.slug, args.apply)
+        return 0
     else:
-        cmd_run(args.slug)
+        published = cmd_run(
+            args.slug,
+            analyst_metrics=args.analyst_metrics,
+            analyst_company=args.analyst_company,
+            analyst_sheet=args.analyst_sheet,
+            allow_missing_analyst_sheet=args.allow_missing_analyst_sheet,
+            allow_stale_estate=args.allow_stale_estate,
+            freshness_hours=args.freshness_hours,
+        )
+        return 0 if published else 3
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

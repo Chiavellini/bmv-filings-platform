@@ -16,6 +16,10 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.shared.paths import REPORTS_DIR  # noqa: E402
 
 MACRO = [
     ("Mexico GDP growth, %", "gdp_growth"),
@@ -47,13 +51,19 @@ _RAW_XBRL_SUFFIXES = (".json.gz", ".json")
 
 
 def has_cached_xbrl(slug: str) -> bool:
-    """True when ``data/reports/<slug>/xbrl/`` holds at least one raw BMV XBRL filing (excluding the
-    ``_facts.json`` / ``_mdna`` extraction artifacts)."""
-    xd = ROOT / "data" / "reports" / slug / "xbrl"
+    """True when ``REPORTS_DIR/<slug>/xbrl/`` holds raw XBRL or canonical facts.
+
+    A shared estate is allowed to retain only the root-produced ``*_facts.json``
+    derivative in this view; that is a complete structured source for Soft and
+    must remove the issuer from the declared-absent/Yahoo-only bucket.
+    """
+    xd = REPORTS_DIR / slug / "xbrl"
     if not xd.is_dir():
         return False
     for p in xd.iterdir():
         n = p.name
+        if n.endswith("_facts.json"):
+            return True
         if "_facts" in n or "_mdna" in n:
             continue
         if n.endswith(_RAW_XBRL_SUFFIXES):
@@ -62,11 +72,11 @@ def has_cached_xbrl(slug: str) -> bool:
 
 
 def has_local_reports(slug: str) -> bool:
-    """True when ``data/reports/<slug>/`` holds top-level quarterly-report PDFs/markdown — the
+    """True when ``REPORTS_DIR/<slug>/`` holds top-level quarterly-report PDFs/markdown — the
     IR-page-download corpus that feeds the tiered PDF cascade (the ``run()`` branch in
     load_fundamentals). Mirrors fundamentals._has_local_reports without importing across the
     coverage boundary."""
-    rd = ROOT / "data" / "reports" / slug
+    rd = REPORTS_DIR / slug
     if not rd.is_dir():
         return False
     return any(rd.glob("*.md")) or any(rd.glob("*.pdf"))

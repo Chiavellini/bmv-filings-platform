@@ -92,6 +92,20 @@ def _straggler_indices(rows) -> list[int]:
     return [i for i, r in enumerate(rows) if r[4] is None]
 
 
+def _regenerate_dense_matrix() -> tuple[int, int]:
+    """Rebuild the required dense deliverable or propagate its failure.
+
+    ``build_dense.emit`` invalidates stale success artifacts and writes a FAILED
+    marker before raising. The scheduler must therefore fail as well, instead of
+    claiming a successful refresh with no trustworthy dense matrix.
+    """
+    from scripts import build_dense
+
+    out = ROOT / "outputs" / "_master"
+    rows, metrics = build_dense.emit(list(build_dense.DENSE_METRICS), out)
+    return len(rows), len(metrics)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -212,17 +226,20 @@ def main() -> None:
     except Exception as e:  # non-fatal
         print(f"[refresh] master rebuild failed (non-fatal): {type(e).__name__}: {e}")
 
-    # Dense block — the genuine-100% deliverable (every cell a real value). Recompute the qualifying
-    # company set from the freshest master; non-fatal.
+    # Dense block — the genuine-100% deliverable (every cell a real value). This
+    # is a required scheduled output, so failure propagates to the scheduler.
     try:
-        from scripts import build_dense
-        _drows, _dm = build_dense.build(list(build_dense.DENSE_METRICS))
-        out = ROOT / "outputs" / "_master"
-        build_dense._write_csv(out / "soft_coverage_dense.csv", _drows, _dm)
-        build_dense._write_html(out / "soft_coverage_dense.html", _drows, _dm)
-        print(f"[refresh] dense block regenerated ({len(_drows)} companies × {len(_dm)} metrics, 100% real)")
-    except Exception as e:  # non-fatal
-        print(f"[refresh] dense rebuild failed (non-fatal): {type(e).__name__}: {e}")
+        n_dense_companies, n_dense_metrics = _regenerate_dense_matrix()
+    except Exception as exc:
+        print(
+            f"[refresh] dense rebuild FAILED: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        raise RuntimeError("required dense matrix regeneration failed") from exc
+    print(
+        f"[refresh] dense block regenerated "
+        f"({n_dense_companies} companies × {n_dense_metrics} metrics, 100% real)"
+    )
 
     # Publish the freshest dense + core matrices to GitHub Pages — the autonomous, self-updating URL
     # (a headless job can't push a claude.ai Artifact). GUARDED on SOFT_PUBLISH=1 (set by the scheduled

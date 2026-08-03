@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import hashlib
 from pathlib import Path
 
 EARNINGS_ROOT = Path(__file__).resolve().parents[1]
@@ -91,7 +92,7 @@ def facts_vintage() -> set[tuple[str, str]]:
     """Frozen (slug, period) facts universe for the dev sample (v3 reads).
 
     Pinned by scripts/pin_facts_vintage.py from the certified artifacts; keeps
-    post-freeze soft additions (xbrl backfill, new filings) out of dev rebuilds.
+    post-freeze XBRL backfills and new filings out of development rebuilds.
     """
     global _VINTAGE
     if _VINTAGE is None:
@@ -107,103 +108,123 @@ def facts_vintage() -> set[tuple[str, str]]:
     return _VINTAGE
 
 
-def _is_soft_facts(p: Path) -> bool:
-    """True when an estate-view symlink resolves to soft's facts tree.
-
-    The view holds every project's artifacts: soft facts under the soft slug
-    dirs, ROOT-engine facts under root slug dirs (plain-named there — the
-    ``__root`` suffix only marks same-directory collisions). The study's facts
-    universe is soft's, so estate reads must filter by symlink target, not name.
-    """
-    try:
-        target = p.resolve()
-    except OSError:
-        return False
-    return "/soft/data/reports/" in str(target)
-
-
 import re as _re
 
-# view names: <TICKER>_<PERIOD>_facts.json, plus per-project collision variants
-# <TICKER>_<PERIOD>_facts__soft.json / _facts__root.json (whichever project
-# linked second gets suffixed, per directory). Period extraction must therefore
-# parse up to "_facts", never slice a fixed suffix.
-_FACTS_NAME_RE = _re.compile(r"^(?P<ticker>.+?)_(?P<period>\d{4}-(?:[1-4]T|FY))_facts")
+# Canonical root view names normally use <TICKER>_<PERIOD>_facts.json.  An
+# immutable collision-safe route can insert one or two discriminators before
+# the period; historical views can instead append a project suffix after
+# "_facts".  The period nearest the terminal facts marker is authoritative.
+_FACTS_NAME_RE = _re.compile(
+    r"_(?P<period>\d{4}-(?:[1-4]T|FY))_facts(?:__[^.]*)?\.json$"
+)
 
 
 def facts_period(path: Path, ticker: str) -> str | None:
     """Period label from a facts filename (view or mirror naming)."""
-    m = _FACTS_NAME_RE.match(path.name)
-    if m and m.group("ticker") == ticker:
+    if not path.name.startswith(f"{ticker}_"):
+        return None
+    m = _FACTS_NAME_RE.search(path.name)
+    if m:
         return m.group("period")
     return None
 
 
-def _estate_soft_facts(d: Path, ticker: str) -> dict[str, Path]:
-    """period -> soft-project facts symlink in one estate view xbrl dir.
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
-    Selects by symlink TARGET (soft's tree), never by name: the plain name may
-    belong to either project depending on import order, with the loser suffixed
-    ``__soft``/``__root``. Stale " 2"-suffixed duplicates are skipped.
+
+def _canonical_root_facts(
+    company: str | None = None,
+) -> dict[tuple[str, str], Path]:
+    """Catalog-authorized canonical facts, keyed by (company, period).
+
+    V3 treats the estate catalog—not a symlink target or a copied Soft tree—as
+    the source of truth.  Hashes are retained so a stale or colliding report
+    view entry cannot be mistaken for the root-owned derivative.
     """
+    from src.shared.document_estate import EstateReader
+
+    if not ESTATE_BRIDGE.catalog_path.is_file():
+        return {}
+    with EstateReader(ESTATE_BRIDGE.catalog_path) as reader:
+        companies = (
+            (reader.resolve_company(company),)
+            if company is not None
+            else tuple(reader.companies())
+        )
+        out: dict[tuple[str, str], Path] = {}
+        for canonical in companies:
+            refs = reader.artifacts(
+                canonical,
+                project="root",
+                role="xbrl_facts",
+                fmt="json",
+            )
+            hashes = {ref.path: ref.sha256 for ref in refs}
+            current = reader.xbrl_facts_map(
+                canonical,
+                project="root",
+                role="xbrl_facts",
+            )
+            for period, path in current.items():
+                expected_hash = hashes.get(path)
+                if (
+                    expected_hash is not None
+                    and path.is_file()
+                    and _file_sha256(path) == expected_hash
+                ):
+                    out[(canonical, period)] = path
+        return out
+
+
+def _estate_root_facts(slug: str, ticker: str) -> dict[str, Path]:
+    """period -> verified root-owned canonical facts for one issuer."""
     out: dict[str, Path] = {}
-    for p in d.glob(f"{ticker}_*_facts*.json"):
-        if " " in p.name or not _is_soft_facts(p):
-            continue
-        period = facts_period(p, ticker)
-        if period is None:
-            continue
-        # prefer the plain name when several soft-target links exist
-        if period not in out or len(p.name) < len(out[period].name):
-            out[period] = p
+    for (company, period), path in _canonical_root_facts(slug).items():
+        if company == slug and facts_period(path, ticker) == period:
+            out[period] = path
     return out
 
 
 def facts_glob(slug: str, ticker: str) -> list[Path]:
-    """Quarterly ``*_facts.json`` files for one company (soft project's facts).
+    """Quarterly ``*_facts.json`` files for one company.
 
-    v3: the shared estate view filtered to soft-project targets AND the frozen
-    facts vintage; default: the frozen data/soft mirror (which can itself drift
-    — the vintage pin is what keeps v3 reproducible).
+    v3: root-owned canonical derivatives from the shared estate, verified
+    against catalog role and hash, AND the frozen facts vintage.  Default:
+    the historical frozen data/soft mirror.
     """
     if V3:
         vintage = facts_vintage()
-        by_period = _estate_soft_facts(ESTATE_VIEW_DIR / slug / "xbrl", ticker)
+        by_period = _estate_root_facts(slug, ticker)
         return [by_period[k] for k in sorted(by_period)
-                if (slug, k) in vintage or k.endswith("-FY")]
+                if (slug, k) in vintage]
     return sorted((SOFT_ROOT / "data" / "reports" / slug / "xbrl")
                   .glob(f"{ticker}_*_facts.json"))
 
 
 def facts_exists(slug: str, ticker: str, period: str) -> bool:
-    """Whether the soft facts file for one (company, period) is available."""
+    """Whether facts for one (company, period) are available."""
     if V3:
         if (slug, period) not in facts_vintage():
             return False
-        d = ESTATE_VIEW_DIR / slug / "xbrl"
-        return any(
-            _is_soft_facts(p) and " " not in p.name
-            for p in d.glob(f"{ticker}_{period}_facts*.json")
-        )
+        return period in _estate_root_facts(slug, ticker)
     return (SOFT_ROOT / "data" / "reports" / slug / "xbrl"
             / f"{ticker}_{period}_facts.json").exists()
 
 
 def facts_root_glob(pattern: str = "*/xbrl/*_facts.json") -> list[Path]:
-    """All soft facts files across companies under the active mode."""
+    """All facts files across companies under the active mode."""
     if V3:
         vintage = facts_vintage()
-        seen = []
-        for p in ESTATE_VIEW_DIR.glob("*/xbrl/*_facts*.json"):
-            if " " in p.name or not _FACTS_NAME_RE.match(p.name):
-                continue
-            m = _FACTS_NAME_RE.match(p.name)
-            slug = p.parents[1].name
-            if (slug, m.group("period")) not in vintage:
-                continue
-            if _is_soft_facts(p):
-                seen.append(p)
-        return sorted(seen)
+        return sorted(
+            path
+            for key, path in _canonical_root_facts().items()
+            if key in vintage
+        )
     return sorted((SOFT_ROOT / "data" / "reports").glob(pattern))
 
 

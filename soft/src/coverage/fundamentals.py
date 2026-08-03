@@ -8,7 +8,12 @@ We only classify each metric (flow vs. stock) and roll quarters up to LTM and fi
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
+import json
+import os
 from pathlib import Path
+import re
+import sqlite3
 
 from src.model.financial_model import METRICS as _BASE_METRICS, apply_config, load_config
 
@@ -66,6 +71,17 @@ def _period_label(filename: str) -> str:
         if name.endswith(suf):
             name = name[: -len(suf)]
             break
+    # The shared estate publishes canonical extraction artifacts as
+    # ``<TICKER>_<PERIOD>_facts.json``. They represent the filing period itself,
+    # not a synthetic ``<PERIOD>_facts`` period.
+    if name.endswith("_facts"):
+        name = name[:-len("_facts")]
+    # Root may add an immutable document/hash discriminator before the period
+    # when two documents would otherwise claim the same compatibility path.
+    # Always take the terminal filing-period token in that case.
+    period_match = re.search(r"(20\d{2}(?:-[1-4]T|-FY)?)$", name, re.IGNORECASE)
+    if period_match:
+        return period_match.group(1).upper()
     return name.split("_", 1)[-1]
 
 
@@ -135,6 +151,124 @@ def _has_local_reports(reports_dir: Path) -> bool:
     return d.is_dir() and (any(d.glob("*.md")) or any(d.glob("*.pdf")))
 
 
+def _estate_catalog_for_reports(reports_dir: Path) -> Path | None:
+    """Locate the shared catalog associated with one ``views/reports/<slug>`` path."""
+    company_dir = Path(reports_dir).expanduser().resolve()
+    configured_root = os.environ.get("PDFS_DOCUMENT_ESTATE")
+    candidates: list[Path] = []
+    if configured_root:
+        candidates.append(Path(configured_root).expanduser().resolve() / "catalog.db")
+    reports_root = company_dir.parent
+    if reports_root.name == "reports" and reports_root.parent.name == "views":
+        candidates.append(reports_root.parent.parent / "catalog.db")
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _catalog_current_facts(reports_dir: Path) -> dict[str, Path] | None:
+    """Current canonical facts by period, or ``None`` when no managed catalog is available.
+
+    Currentness is selected from the highest ``source_record_versions.version``
+    in each document family, then joined to that version's root ``xbrl_facts``
+    artifact. If a newer raw version has not produced facts yet, an older facts
+    artifact is intentionally not returned.
+    """
+    company_dir = Path(reports_dir).expanduser().resolve()
+    xdir = (company_dir / "xbrl").resolve()
+    catalog = _estate_catalog_for_reports(company_dir)
+    if catalog is None:
+        return None
+    try:
+        uri = f"file:{catalog.as_posix()}?mode=ro"
+        with sqlite3.connect(uri, uri=True) as connection:
+            connection.row_factory = sqlite3.Row
+            tables = {
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+            required = {"source_record_versions", "documents", "artifacts"}
+            if not required <= tables:
+                return {}
+            rows = connection.execute(
+                """
+                WITH latest AS (
+                    SELECT document_family_id, MAX(version) AS version
+                    FROM source_record_versions
+                    GROUP BY document_family_id
+                )
+                SELECT d.period, a.path, a.sha256, v.stored_at, a.created_at
+                FROM latest
+                JOIN source_record_versions v
+                  ON v.document_family_id=latest.document_family_id
+                 AND v.version=latest.version
+                JOIN documents d ON d.document_id=v.document_id
+                JOIN artifacts a ON a.document_id=v.document_id
+                WHERE a.project='root' AND a.role='xbrl_facts'
+                ORDER BY d.period, v.stored_at DESC, a.created_at DESC
+                """
+            ).fetchall()
+    except sqlite3.Error:
+        # A catalog was found, so this is a managed estate. Never downgrade a
+        # schema/query failure into filename guessing that can resurrect v1.
+        return {}
+
+    selected: dict[str, Path] = {}
+    estate_root = catalog.parent.resolve()
+    for row in rows:
+        period = str(row["period"] or "").strip()
+        raw_path = Path(str(row["path"])).expanduser()
+        path = (raw_path if raw_path.is_absolute() else estate_root / raw_path).resolve()
+        if not period or not path.is_file() or path.parent != xdir:
+            continue
+        expected_hash = str(row["sha256"] or "").lower()
+        actual_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+        if not re.fullmatch(r"[0-9a-f]{64}", expected_hash) or actual_hash != expected_hash:
+            continue
+        selected.setdefault(period, path)
+    return selected
+
+
+def _selected_canonical_facts(
+    reports_dir: Path,
+) -> tuple[dict[str, Path], bool]:
+    """Return ``({period: facts_path}, catalog_managed)``.
+
+    The catalog is authoritative when present. A standalone Soft cache has no
+    ledger, so its deterministic compatibility fallback is newest mtime per
+    period (with filename only as a final tie-breaker).
+    """
+    company_dir = Path(reports_dir)
+    xdir = company_dir / "xbrl"
+    catalog_selected = _catalog_current_facts(company_dir)
+    if catalog_selected is not None:
+        return catalog_selected, True
+    grouped: dict[str, list[Path]] = {}
+    if xdir.is_dir():
+        for path in xdir.glob("*_facts.json"):
+            grouped.setdefault(_period_label(path.name), []).append(path)
+    selected = {
+        period: max(paths, key=lambda path: (path.stat().st_mtime_ns, path.name))
+        for period, paths in grouped.items()
+    }
+    return selected, False
+
+
+def _selected_canonical_fact_files(reports_dir: Path) -> list[Path]:
+    """Canonical facts, one current artifact per filing period, chronologically."""
+    selected, _managed = _selected_canonical_facts(Path(reports_dir))
+    return [
+        path
+        for _period, path in sorted(
+            selected.items(),
+            key=lambda item: (_period_year_q(item[0]) or (0, 0), item[0]),
+        )
+    ]
+
+
 def _xbrl_period_sources(ticker: str, reports_dir: Path, max_reports: int,
                          offline: bool = False, facts_only: bool = False) -> dict:
     """Download BMV XBRL for ``ticker`` → {period: PeriodSource}. Tries quarterly first; if empty
@@ -153,24 +287,51 @@ def _xbrl_period_sources(ticker: str, reports_dir: Path, max_reports: int,
     from src.extract.tiered_extract import PeriodSource, period_end_from_label
 
     xdir = Path(reports_dir)
-    paths = []
+    # (period, raw filing path if present, canonical facts artifact if present).
+    # The canonical artifact is authoritative for structured facts; a raw sibling
+    # remains useful for MD&A text and is the backward-compatible fallback.
+    sources: list[tuple[str, Path | None, Path | None]] = []
     if offline:
-        # Only the raw filing JSONs (TICKER_PERIOD.json). Exclude the *_facts.json / *_mdna
-        # extraction artifacts: passing a _facts.json to _load_facts regenerates a deeper
-        # _facts_facts.json (a re-entrant naming bug) which pollutes the cache and, treated as its
-        # own period, corrupts the reshape. Also cuts offline reads ~15× (raw files vs. all artifacts).
+        # Prefer the root estate's canonical ``*_facts.json`` derivative. Never
+        # pass that artifact back into ``_load_facts``: doing so creates a bogus
+        # ``*_facts_facts.json`` sibling. Raw JSON remains supported for standalone
+        # Soft caches and supplies MD&A text when it is available alongside facts.
         xd = xdir / "xbrl"
-        # Raw filings are stored gzip-compressed (*.json.gz); accept a legacy
-        # plaintext *.json too. Exclude the *_facts.json extraction artifacts.
-        paths = sorted(
-            p for p in xd.iterdir()
-            if "_facts" not in p.name and (p.name.endswith(".json.gz") or p.name.endswith(".json"))
-        ) if xd.is_dir() else []
+        by_period: dict[str, dict[str, Path]] = {}
+        if xd.is_dir():
+            for p in sorted(xd.iterdir()):
+                if "_facts" not in p.name and (
+                    p.name.endswith(".json.gz") or p.name.endswith(".json")
+                ):
+                    period_parts = by_period.setdefault(_period_label(p.name), {})
+                    existing = period_parts.get("raw")
+                    if existing is None or (
+                        p.stat().st_mtime_ns, p.name
+                    ) > (
+                        existing.stat().st_mtime_ns, existing.name
+                    ):
+                        period_parts["raw"] = p
+        selected_facts, catalog_managed = _selected_canonical_facts(xdir)
+        for period, path in selected_facts.items():
+            by_period.setdefault(period, {})["facts"] = path
+        if catalog_managed:
+            # A compatibility raw filename may name a superseded version. The
+            # catalog-selected facts remain usable, but do not pair them with
+            # filesystem-guessed narrative from another immutable version.
+            by_period = {
+                period: {"facts": parts["facts"]}
+                for period, parts in by_period.items()
+                if "facts" in parts
+            }
+        sources = [
+            (period, parts.get("raw"), parts.get("facts"))
+            for period, parts in sorted(by_period.items())
+        ]
         # facts_only callers (peers, fast subject) only need recent periods for LTM + latest annual;
-        # each _facts.json is up to ~1 MB and this sandbox reads them slowly, so cap to the most
+        # each facts artifact is up to ~1 MB and this sandbox reads them slowly, so cap to the most
         # recent few. Full history (all periods) is kept only for the prose-parsing subject path.
-        if facts_only and len(paths) > _FACTS_ONLY_PERIODS:
-            paths = paths[-_FACTS_ONLY_PERIODS:]
+        if facts_only and len(sources) > _FACTS_ONLY_PERIODS:
+            sources = sources[-_FACTS_ONLY_PERIODS:]
     else:
         from src.download.bmv_xbrl import download_ticker
         # Pull BOTH quarterly and annual filings and UNION them. The old code broke on the first
@@ -189,18 +350,28 @@ def _xbrl_period_sources(ticker: str, reports_dir: Path, max_reports: int,
                 if p not in seen:
                     seen.add(p)
                     paths.append(p)
+        sources = [(_period_label(path.name), path, None) for path in paths]
 
     docs: dict = {}
-    for path in paths:
-        period = _period_label(path.name)  # GBM_2025-FY.json.gz → 2025-FY ; GMEXICO_2026-1T → 2026-1T
-        if facts_only:
+    for period, raw_path, facts_path in sources:
+        if facts_only or raw_path is None:
             text = ""  # skip the 30 MB MD&A parse — peers only need the XBRL facts
         else:
             try:
-                text = load_mdna_text(path) or ""
+                text = load_mdna_text(raw_path) or ""
             except Exception:
                 text = ""
-        facts = _load_facts(path)
+        if facts_path is not None:
+            try:
+                payload = json.loads(facts_path.read_text(encoding="utf-8"))
+                facts = payload.get("facts") if isinstance(payload, dict) else None
+                facts = facts if isinstance(facts, dict) and facts else None
+            except (OSError, ValueError):
+                facts = None
+            if facts is None and raw_path is not None:
+                facts = _load_facts(raw_path)
+        else:
+            facts = _load_facts(raw_path) if raw_path is not None else None
         # Annual labels (YYYY-FY / YYYY) have no quarter → derive a year-end period_end so XBRL
         # DURATION facts (income statement) can be selected, not just instant balance-sheet facts.
         pe = period_end_from_label(period)

@@ -56,12 +56,15 @@ python3 scripts/check_estate_connection.py --json
   extraction pipeline, and segment-sheet generation. News remains catalogued and searchable but
   is intentionally excluded from this extraction view.
 
-The catalog still stores absolute artifact paths so local subprojects can query
-the same database. New acquisition content also has a portable
+New acquisition and derivative rows store estate-relative `artifacts.path`
+values, so every subproject resolves the same catalog path against the
+configured estate root. Content also has a portable
 `content_objects.object_key` of the form `blobs/<sha-prefix>/<sha256>`.
-`content_objects.blob_path` and `artifacts.path` remain absolute compatibility
-paths. Portable object keys are the intended backend-independent identity, but
-no PostgreSQL/object-storage implementation or cross-backend contract suite is
+`content_objects.blob_path` remains an absolute local-filesystem locator in the
+current SQLite implementation; it is not the durable content identity. Legacy
+catalog rows may still contain absolute artifact paths and must be migrated
+before that catalog is attached read-write on another host. No
+PostgreSQL/object-storage implementation or cross-backend contract suite is
 present yet.
 
 Set `PDFS_DOCUMENT_ESTATE` to relocate the local estate and
@@ -124,18 +127,29 @@ key, and source-record ID.
 `src/consumers/outbox.py` implements independent durable receipts in
 `outbox_deliveries`, with consumer subscriptions, append-only attempt history,
 heartbeat-renewed fenced claims, bounded crash retries, fair consumer
-scheduling, and explicit dead-letter replay. The first root consumer verifies
+scheduling, and explicit dead-letter replay. The root document consumer verifies
 the original hash, parses PDF or derives Markdown from HTML/text, records
-processor-version lineage, and emits `estate.document.parsed`. Same-hash
-project or membership changes emit a routing revision, so an already-derived
-document can be adopted by Alpha later. The optional Alpha consumer projects
-parsed documents whose current estate pins include that project.
+processor-version lineage, and emits `estate.document.parsed`. The root XBRL
+consumer accepts raw JSON or JSON.GZ, creates a portable root-owned
+`xbrl_facts` artifact and immutable lineage, and emits
+`estate.document.facts_extracted`. Same-hash project or membership changes emit
+a routing revision. The always-enabled publication verifier validates both
+derived events against their portable path, content hash/blob, catalog
+ownership, and immutable derivation before its terminal receipt succeeds. The
+optional Alpha consumer projects parsed documents whose current estate pins
+include that project.
 
-This is an implemented delivery path, not a live deployment. The current
-catalog has not been migrated, no worker is scheduled, Soft and Earnings have
-no equivalent consumers, and XBRL derivation is not implemented. Extraction
-and indexing must therefore not be documented as automatic consequences of an
-estate commit.
+Canonical consumers resolve facts with
+`EstateReader.xbrl_facts_map(company, project="root", role="xbrl_facts")`.
+When a corrected acquisition version exists, the map only returns facts owned
+by the latest document in that filing family. It returns no value while the
+current derivative is missing rather than silently falling back to superseded
+facts; legacy unversioned catalog periods retain their historical behavior.
+
+This is an implemented delivery path, not proof that a continuous worker is
+running. Extraction and indexing are automatic consequences of an estate commit
+only when the outbox worker is scheduled and its independent delivery receipts
+succeed.
 
 ```bash
 # Strictly read-only; does not create or migrate tables.

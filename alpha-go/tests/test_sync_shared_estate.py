@@ -214,6 +214,124 @@ def test_same_estate_event_twice_is_unchanged(projection):
     assert _logical_index(projection["index"]) == before_index
 
 
+def test_broad_reconcile_removes_shared_row_when_search_artifact_is_missing(
+    projection,
+):
+    _sync(projection, "estate-v1")
+    (projection["tmp"] / "estate-v1.md").unlink()
+
+    result = _sync(projection)
+
+    assert result.eligible == 0
+    assert result.removed == 1
+    assert load_manifest(projection["corpus"]).documents == []
+    connection = sqlite3.connect(projection["index"])
+    assert connection.execute("SELECT COUNT(*) FROM documents").fetchone()[0] == 0
+    assert connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0] == 0
+    assert connection.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0] == 0
+    connection.close()
+
+
+def test_read_only_projection_audit_counts_index_drift(projection):
+    _sync(projection, "estate-v1")
+    healthy = sync_module.audit_shared_estate_projection(
+        estate=projection["estate"],
+        corpus=projection["corpus"],
+        db=projection["index"],
+    )
+    assert healthy.healthy
+    assert healthy.eligible_families == 1
+    assert healthy.indexed_eligible_documents == 1
+
+    connection = sqlite3.connect(projection["index"])
+    connection.execute("DELETE FROM embeddings")
+    connection.execute("DELETE FROM chunks_fts")
+    connection.execute("DELETE FROM chunks")
+    connection.execute("DELETE FROM document_companies")
+    connection.execute("DELETE FROM documents")
+    connection.commit()
+    connection.close()
+
+    drift = sync_module.audit_shared_estate_projection(
+        estate=projection["estate"],
+        corpus=projection["corpus"],
+        db=projection["index"],
+    )
+    assert not drift.healthy
+    assert drift.missing_from_index == 1
+    assert drift.samples["missing_from_index"]
+
+
+def test_search_rows_require_verified_markdown_not_raw_artifact(tmp_path):
+    estate_path = tmp_path / "estate.db"
+    connection = _create_estate(estate_path)
+    raw = tmp_path / "filing.json"
+    raw.write_text('{"facts": []}', encoding="utf-8")
+    connection.execute(
+        """INSERT INTO documents(
+               document_id,company,period,doc_type,title,language,source_url
+           ) VALUES(?,?,?,?,?,?,?)""",
+        (
+            "raw-xbrl",
+            "gap",
+            "2025-1T",
+            "regulatory_filing",
+            "Raw XBRL",
+            "es",
+            "https://example.test/xbrl",
+        ),
+    )
+    connection.execute(
+        """INSERT INTO artifacts(
+               artifact_id,document_id,project,role,format,path,sha256
+           ) VALUES(?,?,?,?,?,?,?)""",
+        (
+            "artifact-raw",
+            "raw-xbrl",
+            "acquisition",
+            "raw_xbrl",
+            "json",
+            str(raw),
+            hashlib.sha256(raw.read_bytes()).hexdigest(),
+        ),
+    )
+    connection.execute(
+        "INSERT INTO memberships(document_id,company,industry) VALUES(?,?,?)",
+        ("raw-xbrl", "gap", "airports"),
+    )
+    connection.commit()
+    assert sync_module._rows(estate_path) == []
+
+    markdown = tmp_path / "filing.md"
+    markdown.write_text("searchable filing", encoding="utf-8")
+    connection.execute(
+        """INSERT INTO artifacts(
+               artifact_id,document_id,project,role,format,path,sha256
+           ) VALUES(?,?,?,?,?,?,?)""",
+        (
+            "artifact-md",
+            "raw-xbrl",
+            "root",
+            "search_text",
+            "md",
+            str(markdown),
+            "0" * 64,
+        ),
+    )
+    connection.commit()
+    assert sync_module._rows(estate_path) == []
+
+    connection.execute(
+        "UPDATE artifacts SET sha256=? WHERE artifact_id='artifact-md'",
+        (hashlib.sha256(markdown.read_bytes()).hexdigest(),),
+    )
+    connection.commit()
+    connection.close()
+    assert [row.document_id for row in sync_module._rows(estate_path)] == [
+        "raw-xbrl"
+    ]
+
+
 def test_explicit_missing_document_is_not_a_successful_noop(
     projection, capsys
 ):

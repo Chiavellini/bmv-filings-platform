@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import csv
 import html as _html
+import math
 import statistics
 import sys
 from pathlib import Path
@@ -44,21 +45,30 @@ DENSE_METRICS = ["P/E", "EV/EBITDA", "P/BV", "Div yield", "ROE", "ROIC", "EBITDA
 _META = {c[3]: (c[0], c[4], c[5]) for c in COLUMNS}
 
 
+class DenseMatrixError(ValueError):
+    """The requested dense block cannot produce a non-empty, truthful matrix."""
+
+
 def _num(v):
     try:
-        return float(v)
+        value = float(v)
     except (TypeError, ValueError):
         return None
+    return value if math.isfinite(value) else None
 
 
 def build(metrics: list[str]) -> tuple[list[dict], list[str]]:
     """Return (kept_rows, metrics) — companies whose EVERY selected metric is a real number."""
+    if not metrics:
+        raise DenseMatrixError("at least one metric is required; a zero-column block is not dense")
     rows = list(csv.reader(MASTER_CSV.open(encoding="utf-8")))
+    if not rows:
+        raise DenseMatrixError(f"master CSV is empty: {MASTER_CSV}")
     hdr = rows[0]
     idx = {h: i for i, h in enumerate(hdr)}
     for m in metrics:
         if m not in idx:
-            raise SystemExit(f"metric {m!r} not in master columns {hdr[4:]}")
+            raise DenseMatrixError(f"metric {m!r} not in master columns {hdr[4:]}")
     kept = []
     for r in rows[1:]:
         if len(r) < len(hdr):
@@ -67,6 +77,10 @@ def build(metrics: list[str]) -> tuple[list[dict], list[str]]:
         if any(v is None for v in vals.values()):
             continue                                    # a hole → drop this company
         kept.append({"name": r[0], "sector": r[1], "template": r[2], "clave": r[3], "vals": vals})
+    if not kept:
+        raise DenseMatrixError(
+            f"no company has a real value for every selected metric ({', '.join(metrics)})"
+        )
     return kept, metrics
 
 
@@ -159,6 +173,56 @@ def _write_html(path: Path, rows: list[dict], metrics: list[str]) -> None:
     path.write_text(doc, encoding="utf-8")
 
 
+def _invalidate_outputs(out_dir: Path, reason: str) -> None:
+    """Remove stale success artifacts and leave an explicit failure marker."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for name in ("soft_coverage_dense.csv", "soft_coverage_dense.html"):
+        path = out_dir / name
+        if path.exists():
+            path.unlink()
+    (out_dir / "soft_coverage_dense_FAILED.txt").write_text(
+        f"Dense matrix was not emitted: {reason}\n", encoding="utf-8"
+    )
+
+
+def emit(metrics: list[str], out_dir: Path | None = None) -> tuple[list[dict], list[str]]:
+    """Build and atomically emit a non-empty dense matrix.
+
+    Any build/write failure invalidates prior success artifacts so an old matrix
+    cannot masquerade as the result of the current refresh.
+    """
+    target_dir = out_dir or (ROOT / "outputs" / "_master")
+    csv_path = target_dir / "soft_coverage_dense.csv"
+    html_path = target_dir / "soft_coverage_dense.html"
+    fail_path = target_dir / "soft_coverage_dense_FAILED.txt"
+    csv_tmp = target_dir / ".soft_coverage_dense.csv.tmp"
+    html_tmp = target_dir / ".soft_coverage_dense.html.tmp"
+    try:
+        rows, selected = build(metrics)
+        total = len(rows) * len(selected)
+        real = sum(
+            1 for row in rows for metric in selected
+            if isinstance(row["vals"][metric], (int, float))
+        )
+        if total <= 0 or real != total:
+            raise DenseMatrixError(f"dense block is not non-empty and 100% real: {real}/{total}")
+
+        target_dir.mkdir(parents=True, exist_ok=True)
+        _write_csv(csv_tmp, rows, selected)
+        _write_html(html_tmp, rows, selected)
+        csv_tmp.replace(csv_path)
+        html_tmp.replace(html_path)
+        if fail_path.exists():
+            fail_path.unlink()
+        return rows, selected
+    except Exception as exc:
+        for tmp in (csv_tmp, html_tmp):
+            if tmp.exists():
+                tmp.unlink()
+        _invalidate_outputs(target_dir, str(exc))
+        raise
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -167,18 +231,19 @@ def main() -> None:
     args = ap.parse_args()
     metrics = [m.strip() for m in args.metrics.split(",")] if args.metrics else list(DENSE_METRICS)
 
-    rows, metrics = build(metrics)
     out_dir = ROOT / "outputs" / "_master"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = out_dir / "soft_coverage_dense.csv"
-    html_path = out_dir / "soft_coverage_dense.html"
-    _write_csv(csv_path, rows, metrics)
-    _write_html(html_path, rows, metrics)
+    try:
+        rows, metrics = emit(metrics, out_dir)
+    except (DenseMatrixError, OSError) as exc:
+        print(f"[dense] ERROR: {exc}", file=sys.stderr)
+        print(f"[dense] stale outputs removed; see "
+              f"{out_dir / 'soft_coverage_dense_FAILED.txt'}", file=sys.stderr)
+        raise SystemExit(1) from exc
 
-    # HARD assertion: the block must be 100% real.
     total = len(rows) * len(metrics)
     real = sum(1 for r in rows for m in metrics if isinstance(r["vals"][m], (int, float)))
-    assert real == total, f"dense block not 100% real: {real}/{total}"
+    csv_path = out_dir / "soft_coverage_dense.csv"
+    html_path = out_dir / "soft_coverage_dense.html"
     print(f"[dense] {len(rows)} companies × {len(metrics)} metrics = {total} cells · {real}/{total} "
           f"REAL (100.0%) · 0 N/A · 0 blank")
     print(f"[dense] kept metrics: {', '.join(metrics)}")

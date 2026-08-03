@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import time
 from typing import Any, Callable, Iterable
+from urllib.parse import urlparse
 
 from src.acquisition.models import (
     AcquisitionSource,
@@ -73,6 +74,35 @@ class DiscoveredRecord:
 
     record: SourceRecord
     native: Any = None
+
+
+@dataclass(frozen=True, slots=True)
+class IRLayerDiagnostic:
+    """Adapter-neutral copy of one downloader discovery-layer result."""
+
+    layer: str
+    candidates: int = 0
+    selected: int = 0
+    note: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class IRFetchIssue:
+    """One quarantined record or retryable transport failure."""
+
+    record: SourceRecord
+    error: str
+    retryable: bool
+
+
+@dataclass(frozen=True, slots=True)
+class IRFetchReport:
+    """Structured incremental result while preserving the legacy tuple API."""
+
+    artifacts: tuple[FetchedArtifact, ...]
+    candidate_periods: tuple[str, ...] = ()
+    layers: tuple[IRLayerDiagnostic, ...] = ()
+    issues: tuple[IRFetchIssue, ...] = ()
 
 
 class BmvXbrlAdapter:
@@ -272,6 +302,29 @@ class InvestorRelationsAdapter:
         recheck_periods: set[str],
         desired_periods: set[str],
     ) -> tuple[FetchedArtifact, ...]:
+        """Compatibility wrapper returning only successful artifacts."""
+
+        return self.fetch_incremental_report(
+            issuer,
+            source,
+            staging_dir,
+            known_periods=known_periods,
+            recheck_periods=recheck_periods,
+            desired_periods=desired_periods,
+        ).artifacts
+
+    def fetch_incremental_report(
+        self,
+        issuer: IssuerSpec,
+        source: AcquisitionSource,
+        staging_dir: Path,
+        *,
+        known_periods: set[str],
+        recheck_periods: set[str],
+        desired_periods: set[str],
+    ) -> IRFetchReport:
+        """Return clean artifacts plus discovery and quarantine diagnostics."""
+
         if not source.url:
             raise ValueError(f"{issuer.slug}/{source.key}: IR source has no URL")
 
@@ -279,12 +332,19 @@ class InvestorRelationsAdapter:
         recheck = {period for value in recheck_periods if (period := normalize_period(value))}
         excluded = known - recheck
         details: list[Any] = []
+        candidates: list[Any] = []
+        download_failures: list[Any] = []
+        layer_details: list[Any] = []
         kwargs: dict[str, Any] = {
             "max_reports": source.max_reports or 120,
             "floor_year": source.floor_year,
             "delay_ms": source.delay_ms if source.delay_ms is not None else 500,
             "exclude_periods": excluded,
             "detail_sink": details,
+            "desired_periods": set(desired_periods),
+            "candidate_sink": candidates,
+            "failure_sink": download_failures,
+            "layer_sink": layer_details,
         }
         if source.pdf_link_pattern:
             kwargs["file_pattern"] = source.pdf_link_pattern
@@ -300,7 +360,27 @@ class InvestorRelationsAdapter:
             if key in source.options:
                 kwargs[key] = source.options[key]
 
-        returned = self._downloader(source.url, staging_dir, **kwargs)
+        primary_issues: list[IRFetchIssue] = []
+        try:
+            returned = self._downloader(source.url, staging_dir, **kwargs)
+        except Exception as exc:
+            # The index page is only one discovery layer. Configured direct URL
+            # templates are deterministic per-period fallbacks and must still be
+            # attempted when that page is bot-blocked or otherwise unavailable.
+            # Preserve the page failure as durable retryable evidence instead of
+            # allowing it to discard successful template PDFs.
+            returned = ()
+            primary_issues.append(
+                _ir_primary_page_issue(issuer, source, exc)
+            )
+            layer_details.append(
+                IRLayerDiagnostic(
+                    layer="primary_page",
+                    candidates=0,
+                    selected=0,
+                    note=f"{type(exc).__name__}: {exc}",
+                )
+            )
         artifacts: list[FetchedArtifact] = []
         detailed_paths: set[Path] = set()
         for detail in details:
@@ -354,6 +434,7 @@ class InvestorRelationsAdapter:
         # Deterministic URL templates are an incremental fallback for periods
         # that the live page did not return. They receive only desired, still
         # absent periods (including the bounded restatement recheck window).
+        template_issues: list[IRFetchIssue] = []
         if source.direct_url_templates:
             fetched_periods = {
                 period
@@ -369,18 +450,62 @@ class InvestorRelationsAdapter:
             }
             template_dir = staging_dir / "templates"
             template_dir.mkdir(parents=True, exist_ok=True)
-            paths = self._template_downloader(
-                list(source.direct_url_templates),
-                template_dir,
-                template_targets,
-                delay_ms=source.delay_ms if source.delay_ms is not None else 300,
-                verify_ssl=bool(source.options.get("verify_ssl", True)),
-            )
+            template_details: list[Any] = []
+            try:
+                paths = self._template_downloader(
+                    list(source.direct_url_templates),
+                    template_dir,
+                    template_targets,
+                    delay_ms=(
+                        source.delay_ms if source.delay_ms is not None else 300
+                    ),
+                    verify_ssl=bool(source.options.get("verify_ssl", True)),
+                    impersonate=source.impersonate,
+                    detail_sink=template_details,
+                )
+            except Exception as exc:
+                # This fallback is an independent discovery/fetch layer. Its
+                # failure must not erase valid artifacts already accumulated
+                # from the primary page. Preserve any template successes that
+                # reported detail before the exception, and retain the failure
+                # as retryable run evidence.
+                partial_paths: list[Path] = []
+                for detail in template_details:
+                    detail_path = getattr(detail, "path", None)
+                    if detail_path is None:
+                        continue
+                    candidate = Path(detail_path)
+                    if candidate.is_file():
+                        partial_paths.append(candidate)
+                paths = tuple(partial_paths)
+                template_issues.append(
+                    _ir_template_layer_issue(
+                        issuer,
+                        source,
+                        template_targets,
+                        exc,
+                    )
+                )
+                layer_details.append(
+                    IRLayerDiagnostic(
+                        layer="direct_url_templates",
+                        candidates=len(template_targets),
+                        selected=len(paths),
+                        note=f"{type(exc).__name__}: {exc}",
+                    )
+                )
+            template_url_by_path: dict[Path, str] = {}
+            for detail in template_details:
+                detail_path = getattr(detail, "path", None)
+                detail_url = str(getattr(detail, "url", "") or "").strip()
+                if detail_path is not None and detail_url:
+                    template_url_by_path[Path(detail_path).resolve()] = detail_url
             for path_value in paths:
                 path = Path(path_value)
                 period = normalize_period(infer_period_label(path.stem))
+                selected_url = template_url_by_path.get(path.resolve())
                 if not _safe_quarterly_candidate(
-                    url=None,
+                    url=selected_url,
                     filename=path.name,
                     period=period,
                 ):
@@ -390,19 +515,56 @@ class InvestorRelationsAdapter:
                         issuer,
                         source,
                         path,
-                        url=None,
+                        url=selected_url,
                         period=period,
                         adapter="ir_url_template",
                         metadata={
                             "url_templates": list(source.direct_url_templates),
-                            "provenance_warning": (
-                                "legacy template downloader does not expose the selected URL"
-                            ),
+                            **({} if selected_url else {
+                                "provenance_warning": (
+                                    "legacy template downloader does not expose the selected URL"
+                                ),
+                            }),
                         },
                     )
                 )
 
-        return _one_artifact_per_family(_dedupe_artifacts(artifacts))
+        deduped = _dedupe_artifacts(artifacts)
+        selected, conflicts = _partition_artifacts_by_family(deduped)
+        issues = list(primary_issues)
+        issues.extend(
+            _download_failure_issue(issuer, source, failure)
+            for failure in download_failures
+        )
+        issues.extend(template_issues)
+        issues.extend(conflicts)
+        candidate_periods = {
+            period
+            for candidate in candidates
+            if (period := normalize_period(getattr(candidate, "period", None)))
+        }
+        candidate_periods.update(
+            period
+            for artifact in deduped
+            if (period := normalize_period(artifact.source.period)) is not None
+        )
+        layers = tuple(
+            IRLayerDiagnostic(
+                layer=str(getattr(item, "layer", "unknown")),
+                candidates=int(getattr(item, "candidates", 0)),
+                selected=int(getattr(item, "selected", 0)),
+                note=str(getattr(item, "note", "")),
+            )
+            for item in layer_details
+        )
+        return IRFetchReport(
+            artifacts=selected,
+            candidate_periods=tuple(
+                sorted(candidate_periods, key=period_sort_key)
+            ),
+            layers=layers,
+            issues=tuple(issues),
+        )
 
 
 class WaybackBackfillAdapter:
@@ -586,18 +748,135 @@ def _dedupe_artifacts(
     )
 
 
-def _one_artifact_per_family(
+def _download_failure_issue(
+    issuer: IssuerSpec,
+    source: AcquisitionSource,
+    failure: Any,
+) -> IRFetchIssue:
+    """Convert a downloader URL failure into a durable source-record identity."""
+
+    url = str(getattr(failure, "url", "") or source.url or "")
+    period = normalize_period(getattr(failure, "period", None))
+    year, quarter = period_parts(period)
+    filename = Path(urlparse(url).path).name
+    language, rendition = _infer_pdf_rendition(
+        issuer,
+        source,
+        url=url,
+        filename=filename,
+    )
+    record = SourceRecord(
+        source_key=source.key,
+        source_record_id=url or f"{issuer.slug}:download:{period or 'unknown'}",
+        issuer_slug=issuer.slug,
+        url=url or None,
+        document_type="quarterly_release",
+        title=f"{issuer.name} {period or 'quarterly'} download attempt",
+        period_year=year,
+        period_quarter=quarter,
+        language=language,
+        rendition=rendition,
+        metadata={
+            "adapter": InvestorRelationsAdapter.kind,
+            "period": period,
+            "transport_failure": True,
+        },
+    )
+    return IRFetchIssue(
+        record=record,
+        error=str(getattr(failure, "error", "PDF download failed")),
+        retryable=True,
+    )
+
+
+def _ir_primary_page_issue(
+    issuer: IssuerSpec,
+    source: AcquisitionSource,
+    exc: Exception,
+) -> IRFetchIssue:
+    """Represent an index-page failure without suppressing other IR layers."""
+
+    url = str(source.url or "")
+    record = SourceRecord(
+        source_key=source.key,
+        source_record_id=f"{issuer.slug}:ir-page:{url}",
+        issuer_slug=issuer.slug,
+        url=url or None,
+        document_type="quarterly_release",
+        title=f"{issuer.name} investor-relations page discovery",
+        language=issuer.language if issuer.language in {"en", "es"} else None,
+        rendition="default",
+        metadata={
+            "adapter": InvestorRelationsAdapter.kind,
+            "discovery_layer": "primary_page",
+            "transport_failure": True,
+            "direct_url_templates_configured": bool(source.direct_url_templates),
+        },
+    )
+    return IRFetchIssue(
+        record=record,
+        error=f"{type(exc).__name__}: {exc}",
+        retryable=True,
+    )
+
+
+def _ir_template_layer_issue(
+    issuer: IssuerSpec,
+    source: AcquisitionSource,
+    target_periods: Iterable[str],
+    exc: Exception,
+) -> IRFetchIssue:
+    """Represent a deterministic-template layer failure without losing PDFs."""
+
+    periods = tuple(sorted(
+        {
+            period
+            for value in target_periods
+            if (period := normalize_period(value)) is not None
+        },
+        key=period_sort_key,
+    ))
+    record = SourceRecord(
+        source_key=source.key,
+        source_record_id=f"{issuer.slug}:ir-url-templates",
+        issuer_slug=issuer.slug,
+        document_type="quarterly_release",
+        title=f"{issuer.name} deterministic report URL discovery",
+        language=issuer.language if issuer.language in {"en", "es"} else None,
+        rendition="default",
+        metadata={
+            "adapter": "ir_url_template",
+            "discovery_layer": "direct_url_templates",
+            "transport_failure": True,
+            "target_periods": list(periods),
+            "url_templates": list(source.direct_url_templates),
+        },
+    )
+    return IRFetchIssue(
+        record=record,
+        error=f"{type(exc).__name__}: {exc}",
+        retryable=True,
+    )
+
+
+def _partition_artifacts_by_family(
     artifacts: Iterable[FetchedArtifact],
-) -> tuple[FetchedArtifact, ...]:
-    """Fail closed when one run yields conflicting bytes for one filing family."""
+) -> tuple[tuple[FetchedArtifact, ...], tuple[IRFetchIssue, ...]]:
+    """Quarantine conflicting families while retaining every clean family."""
 
     grouped: dict[str, list[FetchedArtifact]] = {}
+    issues: list[IRFetchIssue] = []
     for artifact in artifacts:
         family = artifact.source.document_family_id
         if family is None:
-            raise ValueError(
-                "quarterly PDF artifact is missing a document family"
+            issues.append(
+                IRFetchIssue(
+                    record=artifact.source,
+                    error="quarterly PDF artifact is missing a document family",
+                    retryable=False,
+                )
             )
+            continue
         grouped.setdefault(family, []).append(artifact)
 
     selected: list[FetchedArtifact] = []
@@ -610,17 +889,26 @@ def _one_artifact_per_family(
                 candidate.source.source_record_id
                 for candidate in candidates
             )
-            raise ValueError(
+            error = (
                 "ambiguous quarterly PDFs for "
                 f"{family}: {', '.join(identities)}"
             )
+            issues.extend(
+                IRFetchIssue(
+                    record=candidate.source,
+                    error=error,
+                    retryable=False,
+                )
+                for candidate in candidates
+            )
+            continue
         selected.append(
             min(
                 candidates,
                 key=lambda item: item.source.source_record_id,
             )
         )
-    return tuple(
+    selected_artifacts = tuple(
         sorted(
             selected,
             key=lambda item: (
@@ -631,6 +919,18 @@ def _one_artifact_per_family(
             ),
         )
     )
+    return selected_artifacts, tuple(issues)
+
+
+def _one_artifact_per_family(
+    artifacts: Iterable[FetchedArtifact],
+) -> tuple[FetchedArtifact, ...]:
+    """Compatibility helper retaining the historical fail-closed behavior."""
+
+    selected, issues = _partition_artifacts_by_family(artifacts)
+    if issues:
+        raise ValueError(issues[0].error)
+    return selected
 
 
 def _parse_bmv_datetime(value: str | None) -> datetime | None:
@@ -655,6 +955,9 @@ def _published_rank(discovered: DiscoveredRecord) -> tuple[str, str]:
 __all__ = [
     "BmvXbrlAdapter",
     "DiscoveredRecord",
+    "IRFetchIssue",
+    "IRFetchReport",
+    "IRLayerDiagnostic",
     "InvestorRelationsAdapter",
     "WaybackBackfillAdapter",
     "normalize_bmv_ticker",

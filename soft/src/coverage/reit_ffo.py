@@ -21,11 +21,19 @@ cap to compute a multiple with.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
+import re
 
 import yaml
 
+from src.coverage.fundamentals import (
+    _catalog_current_facts,
+    _period_label,
+    _selected_canonical_fact_files,
+)
 from src.extract.xbrl_facts import _has_dimensions, _parse_iso, _span_days
+from src.shared.paths import REPORTS_DIR
 
 _ROOT = Path(__file__).resolve().parents[2]
 _CONCEPTS_PATH = _ROOT / "configs" / "reit_ffo_concepts.yaml"
@@ -148,19 +156,36 @@ _ANNUAL_MARKERS = ("-4T", "-FY")
 
 def _latest_annual_filing(slug: str) -> tuple[Path, int] | None:
     """(path, year) for the most recent cached annual XBRL filing for ``slug``, or None."""
-    xdir = _ROOT / "data" / "reports" / slug / "xbrl"
+    xdir = REPORTS_DIR / slug / "xbrl"
     if not xdir.is_dir():
         return None
-    candidates: list[tuple[int, Path]] = []
-    for marker in _ANNUAL_MARKERS:
-        for p in xdir.glob(f"*{marker}.json.gz"):
-            token = p.name.split("_")[-1].split(marker)[0]
-            if token.isdigit():
-                candidates.append((int(token), p))
-    if not candidates:
-        return None
-    year, path = max(candidates, key=lambda t: t[0])
-    return path, year
+    canonical: list[tuple[int, Path]] = []
+    for path in _selected_canonical_fact_files(REPORTS_DIR / slug):
+        period = _period_label(path.name)
+        if period.endswith(("-4T", "-FY")):
+            canonical.append((int(period[:4]), path))
+    if canonical:
+        year, path = max(canonical, key=lambda item: item[0])
+        return path, year
+    if _catalog_current_facts(REPORTS_DIR / slug) is not None:
+        return None  # managed estate: never fall back to a superseded raw alias
+
+    # Standalone legacy cache without canonical facts: newest mtime per year.
+    candidates: dict[int, Path] = {}
+    annual_name = re.compile(r"(20\d{2})(?:-4T|-FY)\.json(?:\.gz)?$")
+    for path in xdir.iterdir():
+        match = annual_name.search(path.name)
+        if not match:
+            continue
+        year = int(match.group(1))
+        existing = candidates.get(year)
+        if existing is None or (
+            path.stat().st_mtime_ns, path.name
+        ) > (
+            existing.stat().st_mtime_ns, existing.name
+        ):
+            candidates[year] = path
+    return (candidates[max(candidates)], max(candidates)) if candidates else None
 
 
 def _load_slug_config(slug: str) -> dict:
@@ -185,7 +210,14 @@ def ffo_for_slug(slug: str) -> FfoResult | None:
     if found is None:
         return None
     path, year = found
-    facts = _load_facts(path)
+    if path.name.endswith("_facts.json"):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            facts = payload.get("facts") if isinstance(payload, dict) else None
+        except (OSError, ValueError):
+            facts = None
+    else:
+        facts = _load_facts(path)
     if not facts:
         return None
     result = compute_ffo(facts, year)

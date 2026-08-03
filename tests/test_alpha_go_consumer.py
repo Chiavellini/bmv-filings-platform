@@ -20,12 +20,14 @@ def _consumer(
     document_ids: tuple[str, ...] = ("acq:one",),
     index_name: str = "index.db",
     eligible: int = 1,
+    response_status: str = "succeeded",
 ):
     project = tmp_path / "alpha-go"
     (project / "scripts").mkdir(parents=True, exist_ok=True)
     (project / "scripts" / "sync_shared_estate.py").write_text("# fixture\n")
     config = project / "runtime.yaml"
     config.write_text("index: {}\n")
+    (tmp_path / index_name).touch()
     estate = tmp_path / "catalog.db"
     connection = sqlite3.connect(estate)
     connection.execute(
@@ -51,7 +53,7 @@ def _consumer(
                 json.dumps(
                     {
                         "schema_version": 1,
-                        "status": "succeeded",
+                        "status": response_status,
                         "result": {
                             "eligible": eligible,
                             "changed": 1,
@@ -62,7 +64,7 @@ def _consumer(
                         },
                     }
                 )
-                if returncode == 0
+                if returncode in {0, 4}
                 else ""
             ),
             stderr="model mismatch" if returncode else "",
@@ -101,9 +103,12 @@ def test_projection_invokes_alpha_owned_narrow_command(tmp_path):
     assert "--apply" in command
     assert kwargs["cwd"].name == "alpha-go"
     assert kwargs["check"] is False
+    assert consumer.consumer_id.startswith("alpha-go.search-projection.v2:")
 
 
-def test_projection_skips_unpinned_or_unrelated_events(tmp_path):
+def test_projection_indexes_unpinned_estate_document_and_skips_unrelated_event(
+    tmp_path,
+):
     calls = []
     consumer = _consumer(tmp_path, calls, pinned=False)
 
@@ -118,15 +123,12 @@ def test_projection_skips_unpinned_or_unrelated_events(tmp_path):
         {"event_type": "estate.document.stored", "aggregate_id": "acq:one"}
     )
 
-    assert (unpinned.status, unpinned.reason) == (
-        "skipped",
-        "project_not_pinned",
-    )
+    assert (unpinned.status, unpinned.reason) == ("succeeded", None)
     assert (unrelated.status, unrelated.reason) == (
         "skipped",
         "unsupported_event",
     )
-    assert calls == []
+    assert len(calls) == 1
 
 
 def test_projection_failure_is_retryable_by_dispatcher(tmp_path):
@@ -156,6 +158,41 @@ def test_projection_rejects_success_exit_without_verified_document(tmp_path):
                 "payload": {"document_id": "acq:one"},
             }
         )
+
+
+def test_whole_estate_reconcile_allows_an_empty_searchable_estate(tmp_path):
+    calls = []
+    consumer = _consumer(tmp_path, calls, eligible=0)
+
+    detail = consumer.reconcile()
+
+    command, _kwargs = calls[0]
+    assert "--document-id" not in command
+    assert detail["requested_documents"] == 0
+    assert detail["result"]["eligible"] == 0
+
+
+def test_projection_audit_is_read_only_and_reports_healthy_or_drift(tmp_path):
+    healthy_calls = []
+    healthy = _consumer(
+        tmp_path,
+        healthy_calls,
+        response_status="healthy",
+    )
+    result = healthy.audit()
+    command, _kwargs = healthy_calls[0]
+    assert result["healthy"] is True
+    assert "--audit-index" in command
+    assert "--apply" not in command
+
+    drift = _consumer(
+        tmp_path,
+        [],
+        returncode=4,
+        response_status="drift",
+        index_name="drift.db",
+    )
+    assert drift.audit()["healthy"] is False
 
 
 def test_alpha_projection_batches_receipts_into_bounded_processes(tmp_path):
@@ -248,3 +285,56 @@ def test_new_alpha_target_generation_backfills_historical_events(tmp_path):
     with OutboxDispatcher(database, [second]) as dispatcher:
         assert dispatcher.run().succeeded == 1
     assert (len(first_calls), len(second_calls)) == (1, 1)
+
+
+def test_estate_wide_v2_backfills_receipt_completed_by_old_pinned_generation(
+    tmp_path,
+):
+    calls = []
+    current = _consumer(tmp_path, calls, pinned=False)
+    database = tmp_path / "catalog.db"
+
+    class LegacyPinnedProjection:
+        consumer_id = current.consumer_id.replace(
+            "search-projection.v2", "search-projection.v1"
+        )
+        event_types = ("estate.document.parsed",)
+
+        def handle(self, event, context):
+            del event, context
+            return None
+
+    with OutboxDispatcher(database, [LegacyPinnedProjection()]) as dispatcher:
+        connection = sqlite3.connect(database)
+        now = "2026-07-28T00:00:00+00:00"
+        connection.execute(
+            """INSERT INTO outbox(
+                   event_id,event_type,aggregate_id,dedupe_key,payload_json,
+                   created_at,available_at
+               ) VALUES(?,?,?,?,?,?,?)""",
+            (
+                "parsed-unpinned",
+                "estate.document.parsed",
+                "acq:one",
+                "parsed-unpinned",
+                json.dumps(
+                    {"schema_version": 1, "document_id": "acq:one"}
+                ),
+                now,
+                now,
+            ),
+        )
+        connection.commit()
+        connection.close()
+        assert dispatcher.run().succeeded == 1
+
+    with OutboxDispatcher(database, [current]) as dispatcher:
+        assert dispatcher.run().succeeded == 1
+    assert len(calls) == 1
+    connection = sqlite3.connect(database)
+    assert connection.execute(
+        """SELECT enabled FROM outbox_subscriptions
+           WHERE consumer_id=?""",
+        (LegacyPinnedProjection.consumer_id,),
+    ).fetchone()[0] == 0
+    connection.close()

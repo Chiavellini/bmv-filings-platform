@@ -14,14 +14,25 @@ from pathlib import Path
 import sys
 
 from src.consumers.alpha_go import AlphaGoProjectionConsumer
-from src.consumers.derivatives import PdfMarkdownDerivativeConsumer
+from src.consumers.derivatives import (
+    PdfMarkdownDerivativeConsumer,
+    XbrlFactsDerivativeConsumer,
+)
 from src.consumers.outbox import OutboxDispatcher
+from src.consumers.publication import DerivativePublicationVerifier
 from src.shared.paths import DOCUMENT_ESTATE_DB, DOCUMENT_ESTATE_DIR, PROJECT_ROOT
 
 
 DEFAULT_ALPHA_ROOT = PROJECT_ROOT / "alpha-go"
+# Preserve the current certified manifest location for interactive/manual runs.
+# Deployment must pass an explicit absolute corpus path; a portable estate can
+# use its root only after that manifest has been seeded or fully reconciled.
 DEFAULT_ALPHA_CORPUS = DEFAULT_ALPHA_ROOT / "data" / "corpus"
 DEFAULT_ALPHA_CONFIG = DEFAULT_ALPHA_ROOT / "configs" / "alpha_go.yaml"
+_PDF_CONSUMER_PREFIX = "root.pdf-markdown.v1:"
+_XBRL_CONSUMER_PREFIX = "root.xbrl-facts.v1:"
+_ALPHA_V1_CONSUMER_PREFIX = "alpha-go.search-projection.v1:"
+_ALPHA_V2_CONSUMER_PREFIX = "alpha-go.search-projection.v2:"
 
 
 def _add_catalog_arguments(parser: argparse.ArgumentParser) -> None:
@@ -41,6 +52,54 @@ def _add_catalog_arguments(parser: argparse.ArgumentParser) -> None:
         "--json",
         action="store_true",
         help="emit machine-readable JSON",
+    )
+
+
+def _add_alpha_arguments(
+    parser: argparse.ArgumentParser,
+    *,
+    index_required: bool,
+) -> None:
+    parser.add_argument(
+        "--alpha-root",
+        type=Path,
+        default=DEFAULT_ALPHA_ROOT,
+        help="Alpha Go project root",
+    )
+    parser.add_argument(
+        "--alpha-corpus",
+        type=Path,
+        default=DEFAULT_ALPHA_CORPUS,
+        help="Alpha Go corpus projection directory",
+    )
+    parser.add_argument(
+        "--alpha-index",
+        type=Path,
+        required=index_required,
+        help="Alpha Go SQLite index target",
+    )
+    parser.add_argument(
+        "--alpha-config",
+        type=Path,
+        default=DEFAULT_ALPHA_CONFIG,
+        help="Alpha Go runtime/index configuration",
+    )
+    parser.add_argument(
+        "--alpha-target-id",
+        help=(
+            "stable deployment generation for delivery receipts; change it "
+            "when rebuilding a target in place"
+        ),
+    )
+    parser.add_argument(
+        "--alpha-python",
+        default=sys.executable,
+        help="Python executable for the isolated Alpha Go projection",
+    )
+    parser.add_argument(
+        "--alpha-timeout-seconds",
+        type=int,
+        default=1800,
     )
 
 
@@ -82,50 +141,52 @@ def build_parser() -> argparse.ArgumentParser:
         help="root PDF parser contract version",
     )
     run.add_argument(
+        "--xbrl-processor-version",
+        default="1",
+        help="root BMV XBRL-to-facts processor contract version",
+    )
+    alpha_mode = run.add_mutually_exclusive_group()
+    alpha_mode.add_argument(
         "--enable-alpha-go",
         action="store_true",
         help="also deliver parsed documents into an Alpha Go index",
     )
-    run.add_argument(
-        "--alpha-root",
-        type=Path,
-        default=DEFAULT_ALPHA_ROOT,
-        help="Alpha Go project root",
-    )
-    run.add_argument(
-        "--alpha-corpus",
-        type=Path,
-        default=DEFAULT_ALPHA_CORPUS,
-        help="Alpha Go corpus projection directory",
-    )
-    run.add_argument(
-        "--alpha-index",
-        type=Path,
-        help="Alpha Go SQLite index; required with --enable-alpha-go",
-    )
-    run.add_argument(
-        "--alpha-config",
-        type=Path,
-        default=DEFAULT_ALPHA_CONFIG,
-        help="Alpha Go runtime/index configuration",
-    )
-    run.add_argument(
-        "--alpha-target-id",
+    alpha_mode.add_argument(
+        "--disable-alpha-go",
+        action="store_true",
         help=(
-            "stable deployment generation for delivery receipts; change it "
-            "when rebuilding a target in place"
+            "explicitly disable all previously registered managed Alpha Go "
+            "projection generations"
         ),
     )
+    _add_alpha_arguments(run, index_required=False)
     run.add_argument(
-        "--alpha-python",
-        default=sys.executable,
-        help="Python executable for the isolated Alpha Go projection",
+        "--require-drained",
+        action="store_true",
+        help=(
+            "exit nonzero if any enabled receipt remains pending, running, "
+            "retryable, dead, missing, or unpublished after this bounded run"
+        ),
     )
-    run.add_argument(
-        "--alpha-timeout-seconds",
-        type=int,
-        default=1800,
+
+    reconcile = commands.add_parser(
+        "reconcile-alpha",
+        help="reconcile every searchable estate document into one Alpha target",
     )
+    _add_catalog_arguments(reconcile)
+    reconcile.add_argument(
+        "--apply",
+        action="store_true",
+        help="required acknowledgement that this command writes Alpha's target",
+    )
+    _add_alpha_arguments(reconcile, index_required=True)
+
+    audit_alpha = commands.add_parser(
+        "audit-alpha",
+        help="read-only coverage check for eligible estate families and Alpha",
+    )
+    _add_catalog_arguments(audit_alpha)
+    _add_alpha_arguments(audit_alpha, index_required=True)
 
     requeue = commands.add_parser(
         "requeue",
@@ -166,10 +227,17 @@ def _status(args: argparse.Namespace) -> int:
     deliveries = status.get("deliveries", {})
     return int(
         bool(
-            deliveries.get("dead")
-            or status.get("ready_receipts")
-            or status.get("expired_running_receipts")
+            any(
+                deliveries.get(delivery_status)
+                for delivery_status in (
+                    "pending",
+                    "running",
+                    "retryable",
+                    "dead",
+                )
+            )
             or status.get("missing_receipts")
+            or status.get("unpublished_events")
         )
     )
 
@@ -185,28 +253,52 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     database = _database(args)
     estate_root = Path(args.estate_root)
     with ExitStack() as stack:
+        pdf_consumer = stack.enter_context(
+            PdfMarkdownDerivativeConsumer(
+                database,
+                estate_root,
+                parser_version=args.parser_version,
+            )
+        )
+        xbrl_consumer = stack.enter_context(
+            XbrlFactsDerivativeConsumer(
+                database,
+                estate_root,
+                processor_version=args.xbrl_processor_version,
+            )
+        )
+        publication_verifier = DerivativePublicationVerifier(
+            database, estate_root
+        )
         consumers: list[object] = [
-            stack.enter_context(
-                PdfMarkdownDerivativeConsumer(
-                    database,
-                    estate_root,
-                    parser_version=args.parser_version,
-                )
-            )
+            pdf_consumer,
+            xbrl_consumer,
+            publication_verifier,
         ]
+        managed_generations: dict[str, tuple[str, ...]] = {
+            _PDF_CONSUMER_PREFIX: (pdf_consumer.consumer_id,),
+            _XBRL_CONSUMER_PREFIX: (xbrl_consumer.consumer_id,),
+        }
+        alpha_consumer: AlphaGoProjectionConsumer | None = None
         if args.enable_alpha_go:
-            consumers.append(
-                AlphaGoProjectionConsumer(
-                    database,
-                    project_root=args.alpha_root,
-                    corpus=args.alpha_corpus,
-                    index_db=args.alpha_index,
-                    config=args.alpha_config,
-                    target_id=args.alpha_target_id,
-                    python_executable=args.alpha_python,
-                    timeout_seconds=args.alpha_timeout_seconds,
-                )
+            alpha_consumer = AlphaGoProjectionConsumer(
+                database,
+                project_root=args.alpha_root,
+                corpus=args.alpha_corpus,
+                index_db=args.alpha_index,
+                config=args.alpha_config,
+                target_id=args.alpha_target_id,
+                python_executable=args.alpha_python,
+                timeout_seconds=args.alpha_timeout_seconds,
             )
+            consumers.append(alpha_consumer)
+            managed_generations[_ALPHA_V1_CONSUMER_PREFIX] = ()
+            managed_generations[_ALPHA_V2_CONSUMER_PREFIX] = (
+                alpha_consumer.consumer_id,
+            )
+        elif args.disable_alpha_go:
+            managed_generations[_ALPHA_V1_CONSUMER_PREFIX] = ()
+            managed_generations[_ALPHA_V2_CONSUMER_PREFIX] = ()
         dispatcher = stack.enter_context(
             OutboxDispatcher(
                 database,
@@ -215,11 +307,82 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
                 max_attempts=args.max_attempts,
                 retry_base_seconds=args.retry_base_seconds,
                 retry_max_seconds=args.retry_max_seconds,
+                managed_generations=managed_generations,
             )
         )
         report = dispatcher.run(max_deliveries=args.max_deliveries)
-    _print(report.as_dict(), as_json=args.json)
-    return report.exit_code
+        disabled_consumer_ids = dispatcher.disabled_consumer_ids
+    payload = report.as_dict()
+    payload["disabled_consumer_ids"] = list(disabled_consumer_ids)
+    exit_code = report.exit_code
+    if args.require_drained:
+        status = OutboxDispatcher.read_status(database)
+        deliveries = status.get("deliveries", {})
+        blocking_states = {
+            state: int(deliveries.get(state) or 0)
+            for state in ("pending", "running", "retryable", "dead")
+        }
+        drained = bool(status.get("initialized")) and not any(
+            (
+                *blocking_states.values(),
+                int(status.get("missing_receipts") or 0),
+                int(status.get("unpublished_events") or 0),
+            )
+        )
+        payload.update(
+            {
+                "drained": drained,
+                "drain_blockers": blocking_states,
+                "delivery_status": status,
+            }
+        )
+        if not drained and exit_code == 0:
+            exit_code = 2
+    _print(payload, as_json=args.json)
+    return exit_code
+
+
+def _reconcile_alpha(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+) -> int:
+    if not args.apply:
+        parser.error("reconcile-alpha writes Alpha's target; pass --apply to proceed")
+    consumer = AlphaGoProjectionConsumer(
+        _database(args),
+        project_root=args.alpha_root,
+        corpus=args.alpha_corpus,
+        index_db=args.alpha_index,
+        config=args.alpha_config,
+        target_id=args.alpha_target_id,
+        python_executable=args.alpha_python,
+        timeout_seconds=args.alpha_timeout_seconds,
+    )
+    detail = consumer.reconcile()
+    _print(
+        {"status": "succeeded", **detail},
+        as_json=args.json,
+    )
+    return 0
+
+
+def _audit_alpha(args: argparse.Namespace) -> int:
+    consumer = AlphaGoProjectionConsumer(
+        _database(args),
+        project_root=args.alpha_root,
+        corpus=args.alpha_corpus,
+        index_db=args.alpha_index,
+        config=args.alpha_config,
+        target_id=args.alpha_target_id,
+        python_executable=args.alpha_python,
+        timeout_seconds=args.alpha_timeout_seconds,
+    )
+    detail = consumer.audit()
+    _print(
+        {"status": "healthy" if detail["healthy"] else "drift", **detail},
+        as_json=args.json,
+    )
+    return 0 if detail["healthy"] else 1
 
 
 def _requeue(
@@ -255,6 +418,10 @@ def main(argv: list[str] | None = None) -> int:
         return _status(args)
     if args.command == "requeue":
         return _requeue(args, parser)
+    if args.command == "reconcile-alpha":
+        return _reconcile_alpha(args, parser)
+    if args.command == "audit-alpha":
+        return _audit_alpha(args)
     return _run(args, parser)
 
 
