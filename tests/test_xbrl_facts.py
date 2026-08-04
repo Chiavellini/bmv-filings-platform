@@ -16,7 +16,15 @@ ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
 from src.model.financial_model import METRICS, MetricDef, PatternSpec, attach_concept_map
-from src.extract.xbrl_facts import extract_from_xbrl, _scale, _pick_entry
+from src.extract.tiered_extract import PeriodSource, extract_metrics_tiered
+from src.extract.xbrl_facts import (
+    extract_comparative_observations_from_xbrl,
+    extract_from_xbrl,
+    fact_value_divisor_for,
+    pesos_per_unit_for_facts,
+    _scale,
+    _pick_entry,
+)
 
 
 def _defs(*keys):
@@ -45,6 +53,71 @@ def test_monetary_value_scaled_to_miles():
 def test_non_monetary_value_not_scaled():
     assert _scale(_entry(9.3, unit="pure"), "ratio") == 9.3
     assert _scale(_entry(49.0, unit="pure"), "count") == 49.0
+
+
+def test_native_usd_facts_already_in_millions_are_not_divided_again():
+    facts = {
+        "ifrs-full_Assets": [_entry(32_668.23, instant="2022-12-31", unit="ISO4217:USD")],
+        "ifrs-full_Revenue": [
+            _entry(13_870.3, start="2022-01-01", end="2022-12-31", unit="ISO4217:USD"),
+        ],
+    }
+    cfg = {"company": {"currency": "USD", "unit": "millions"}}
+
+    divisor = fact_value_divisor_for(cfg, facts, currency_mode="native")
+
+    assert divisor == 1.0
+    assert _scale(facts["ifrs-full_Revenue"][0], "currency", divisor) == 13_870.3
+
+
+def test_native_full_unit_quarterly_facts_keep_configured_scaling():
+    facts = {
+        "ifrs-full_Revenue": [
+            _entry(
+                589_053_000.0,
+                start="2026-01-01",
+                end="2026-03-31",
+            ),
+        ],
+    }
+    cfg = {"company": {"currency": "MXN", "unit": "miles"}}
+
+    divisor = fact_value_divisor_for(cfg, facts, currency_mode="native")
+
+    assert divisor == 1e3
+    assert _scale(facts["ifrs-full_Revenue"][0], "currency", divisor) == 589_053.0
+
+
+def test_convert_to_mxn_applies_fx_once_for_already_million_usd_facts():
+    facts = {
+        "ifrs-full_Assets": [_entry(32_668.23, instant="2022-12-31", unit="ISO4217:USD")],
+        "ifrs-full_Revenue": [
+            _entry(13_870.3, start="2022-01-01", end="2022-12-31", unit="ISO4217:USD"),
+        ],
+    }
+    cfg = {"company": {"currency": "USD", "unit": "millions"}}
+
+    divisor = pesos_per_unit_for_facts(cfg, facts)
+
+    assert _scale(facts["ifrs-full_Revenue"][0], "currency", divisor) == 259_374.61
+
+
+def test_convert_to_mxn_keeps_full_unit_fx_scaling():
+    facts = {
+        "ifrs-full_Revenue": [
+            _entry(
+                13_870_300_000.0,
+                start="2022-10-01",
+                end="2022-12-31",
+                unit="ISO4217:USD",
+            ),
+        ],
+    }
+    cfg = {"company": {"currency": "USD", "unit": "millions"}}
+
+    divisor = pesos_per_unit_for_facts(cfg, facts)
+
+    assert _scale(facts["ifrs-full_Revenue"][0], "currency", divisor) == 259_374.61
 
 
 # ---------------------------------------------------------------------------
@@ -143,3 +216,113 @@ def test_no_period_end_picks_latest():
     }
     rows = extract_from_xbrl(facts, _defs("revenue"))
     assert rows["revenue"].current == 589_053.0
+
+
+# ---------------------------------------------------------------------------
+# Typed later-filing comparatives / restatements
+# ---------------------------------------------------------------------------
+
+def test_later_xbrl_filing_emits_unambiguous_prior_quarter_observation():
+    facts = {
+        "ifrs-full_Revenue": [
+            _entry(260_000_000.0, start="2024-10-01", end="2024-12-31"),
+            _entry(205_000_000.0, start="2024-07-01", end="2024-09-30"),
+        ]
+    }
+
+    observations = extract_comparative_observations_from_xbrl(
+        facts,
+        _defs("revenue"),
+        report_period="2024-4T",
+        period_end="2024-12-31",
+        pesos_per_unit=1e6,
+        expected_currency="MXN",
+        source_document_id="q4-doc",
+    )
+
+    assert len(observations) == 1
+    observation = observations[0]
+    assert observation.observed_period == "2024-3T"
+    assert observation.report_period == "2024-4T"
+    assert observation.value == 205.0
+    assert observation.source_tier == "xbrl"
+    assert observation.trusted is True
+    assert observation.source_document_id == "q4-doc"
+
+
+def test_comparative_observation_skips_ytd_and_conflicting_duplicate_contexts():
+    facts = {
+        "ifrs-full_Revenue": [
+            _entry(260_000_000.0, start="2024-10-01", end="2024-12-31"),
+            # Same Q3 context disagrees inside one filing: unsafe, so no Q3 assertion.
+            _entry(205_000_000.0, start="2024-07-01", end="2024-09-30"),
+            _entry(206_000_000.0, start="2024-07-01", end="2024-09-30"),
+            # Nine-month YTD must never be projected onto the Q3 workbook cell.
+            _entry(600_000_000.0, start="2024-01-01", end="2024-09-30"),
+        ]
+    }
+
+    observations = extract_comparative_observations_from_xbrl(
+        facts,
+        _defs("revenue"),
+        report_period="2024-4T",
+        period_end="2024-12-31",
+        pesos_per_unit=1e6,
+        expected_currency="MXN",
+    )
+
+    assert observations == []
+
+
+def test_later_annual_xbrl_filing_emits_typed_fy_comparative():
+    facts = {
+        "ifrs-full_Revenue": [
+            _entry(1_100_000_000.0, start="2024-01-01", end="2024-12-31"),
+            _entry(1_005_000_000.0, start="2023-01-01", end="2023-12-31"),
+        ]
+    }
+
+    observations = extract_comparative_observations_from_xbrl(
+        facts,
+        _defs("revenue"),
+        report_period="2024-FY",
+        period_end="2024-12-31",
+        pesos_per_unit=1e6,
+        expected_currency="MXN",
+    )
+
+    assert [(item.observed_period, item.period_kind.value, item.value)
+            for item in observations] == [("2023-FY", "fy", 1005.0)]
+
+
+def test_gmexico_production_fy_comparative_keeps_native_usd_millions():
+    # Values and contexts from GMEXICO_2023-FY_facts.json. The generated facts
+    # artifact is estate data (not a test fixture), so pin its production-shaped
+    # records here to keep this regression test clean-clone deterministic.
+    facts = {
+        "ifrs-full_Revenue": [
+            _entry(14_776.8, start="2021-01-01", end="2021-12-31", unit="ISO4217:USD"),
+            _entry(13_870.3, start="2022-01-01", end="2022-12-31", unit="ISO4217:USD"),
+            _entry(14_366.9, start="2023-01-01", end="2023-12-31", unit="ISO4217:USD"),
+        ],
+    }
+    cfg = {"company": {"currency": "USD", "unit": "millions"}}
+
+    result = extract_metrics_tiered(
+        PeriodSource(
+            period="2023-FY",
+            period_end="2023-12-31",
+            facts=facts,
+            facts_document_id="GMEXICO_2023-FY_facts.json",
+        ),
+        _defs("revenue"),
+        cfg,
+        tiers={"xbrl"},
+    )
+
+    revenue_observations = [
+        (item.observed_period, item.value)
+        for item in result.observations
+        if item.metric == "revenue"
+    ]
+    assert revenue_observations == [("2021-FY", 14_776.8), ("2022-FY", 13_870.3)]

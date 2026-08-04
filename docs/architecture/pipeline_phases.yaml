@@ -114,7 +114,7 @@ product_phases:
         contract: "configs/metric_search.yaml deterministic semantic aliases for table/evidence matching"
     outputs:
       - name: extracted_metrics
-        contract: "dict[str, MetricRow] for one period or pandas.DataFrame for batches"
+        contract: "dict[str, MetricRow]/ExtractionBatch for one filing or pandas.DataFrame for batches, with revision audit and exact selected input paths in attrs"
         artifacts:
           - outputs/<Company>/csv/<company>_metrics.csv
     upstream:
@@ -141,6 +141,8 @@ product_phases:
       - "Semantic search dictionary stays deterministic and provider-free."
       - "Semantic search changes must be measured with scripts/measure_semantic_search.py against data/ground_truth before being claimed as extraction improvements."
       - "Tier-2 table value selection is header/period-aware (src.extract.table_periods) and must fall back to positional selection when the period or column header cannot be parsed, so tables without period headers behave as before."
+      - "Restatements may supersede only a compatible typed series (period kind, basis, currency, unit, dimensions); unsafe conflicts remain auditable."
+      - "Text/PDF and facts for a period must share compatible catalog/version lineage."
 
   - id: generate_excel
     ordinal: 4
@@ -163,6 +165,8 @@ product_phases:
           segments_sheet.parse_outline. The legacy configs/<company>_segments.yaml
           format is still honored but covers only 4 of 21 configured companies; an
           inline config segments block is also accepted.
+      - name: analyst_metric_sheet
+        contract: "Original analyst CSV/XLSX; ordered labels, row roles, and any declared keys must match the executable outline"
     outputs:
       - name: workbook
         contract: "openpyxl.Workbook with a Segments sheet"
@@ -180,7 +184,8 @@ product_phases:
       - tests/test_segments_outline.py
       - tests/test_segments_orchestrators.py
     quality_gates:
-      - "Workbook must contain one Segments sheet and preserve formula rows."
+      - "Workbook must contain exactly one visible Segments sheet, a very-hidden build-provenance sheet, and preserve live formula rows."
+      - "A requested formula with zero evaluable periods blocks publication."
 
   - id: cli
     ordinal: 5
@@ -197,6 +202,10 @@ product_phases:
     inputs:
       - name: company_markdown
         contract: "Markdown with an H1 company name, an http(s) IR link, and a metric list"
+      - name: analyst_metric_sheet
+        contract: "Original CSV/XLSX metric request, supplied by CLI or Markdown metadata"
+      - name: acquisition_publication_receipt
+        contract: "Fresh strict company sync bound to the hashes and current catalog lineage of the exact effective extraction inputs"
       - name: phase_facades
         contract: "Stable functions from download, parse, extract, and excel phases"
     outputs:
@@ -208,6 +217,14 @@ product_phases:
         contract: "outputs/latest/ contains exactly one .xlsx: the newest successful build"
         artifacts:
           - "outputs/latest/<Company>.xlsx"
+      - name: latest_publication_receipt
+        contract: "Atomic receipt binding the published workbook SHA-256 and build ID"
+        artifacts:
+          - "outputs/latest_manifest.json"
+      - name: archived_analyst_workbooks
+        contract: "Prior published deliverables moved out of outputs/latest/ during a successful swap"
+        artifacts:
+          - "outputs/archive/deliverables/<timestamp>_<Company>/"
     upstream:
       - download
       - parse
@@ -220,7 +237,8 @@ product_phases:
       - tests/test_build_segments.py
     quality_gates:
       - "The CLI orchestrates the phase facades instead of reimplementing pipeline logic."
-      - "The previous latest workbook remains available if the new workbook cannot be copied."
+      - "The previous latest workbook remains available if workbook or receipt publication fails; interrupted swaps are recovered on the next serialized publication."
+      - "Review candidates return status 3 and cannot replace outputs/latest/."
 
 quality_gates:
   - id: validate

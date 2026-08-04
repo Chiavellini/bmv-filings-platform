@@ -7,12 +7,14 @@ Wants=network-online.target
 Type=simple
 User=bmv-airflow
 Group=bmv-airflow
-WorkingDirectory=/opt/bmv-filings
 EnvironmentFile=/etc/bmv-filings/airflow.env
-ExecStart=/opt/bmv-filings/.airflow-venv/bin/airflow %i
+# Repository and virtual-environment paths come from the generated environment
+# rather than being compiled into this unit.
+ExecStart=/usr/bin/env --chdir=${PDFS_PROJECT_ROOT} ${PDFS_AIRFLOW_VENV}/bin/airflow %i
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=60
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target

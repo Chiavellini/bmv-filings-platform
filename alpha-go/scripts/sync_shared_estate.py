@@ -82,6 +82,33 @@ class SyncResult:
     manifest_changed: bool
 
 
+@dataclass(frozen=True)
+class ProjectionAudit:
+    eligible_families: int
+    manifest_shared_documents: int
+    indexed_eligible_documents: int
+    missing_from_manifest: int
+    stale_in_manifest: int
+    manifest_hash_mismatches: int
+    missing_from_index: int
+    stale_in_index: int
+    index_hash_mismatches: int
+    samples: dict[str, tuple[str, ...]]
+
+    @property
+    def healthy(self) -> bool:
+        return not any(
+            (
+                int(self.missing_from_manifest),
+                int(self.stale_in_manifest),
+                int(self.manifest_hash_mismatches),
+                int(self.missing_from_index),
+                int(self.stale_in_index),
+                int(self.index_hash_mismatches),
+            )
+        )
+
+
 class ProjectionResolutionError(RuntimeError):
     """An explicitly requested estate event cannot be projected."""
 
@@ -89,6 +116,14 @@ class ProjectionResolutionError(RuntimeError):
 def _estate_artifact_path(estate_path: Path, raw: str | Path) -> Path:
     path = Path(raw)
     return path if path.is_absolute() else estate_path.parent / path
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 @contextmanager
@@ -339,6 +374,12 @@ def _rows(
                 row["markdown_path"],
             )
             if not markdown_path.is_file():
+                continue
+            # Search eligibility requires the catalogued immutable bytes, not
+            # merely a path ending in .md. A mutated legacy artifact is omitted
+            # and surfaces as unresolved/drift instead of being indexed under
+            # a false content hash.
+            if _file_sha256(markdown_path) != str(row["sha256"]):
                 continue
             family, version, supersedes = version_by_document.get(
                 document_id, (document_id, 1, None)
@@ -717,6 +758,99 @@ def _index_write_needed(
         conn.close()
 
 
+def audit_shared_estate_projection(
+    *,
+    estate: Path = DOCUMENT_ESTATE_DB,
+    corpus: Path = ROOT / "data" / "corpus",
+    db: Path,
+    sample_limit: int = 20,
+) -> ProjectionAudit:
+    """Read-only proof that every eligible estate family is in Alpha's index."""
+
+    estate = Path(estate).resolve()
+    corpus = Path(corpus)
+    db_path = Path(db)
+    if not db_path.is_absolute():
+        db_path = ROOT / db_path
+    if not db_path.is_file():
+        raise FileNotFoundError(f"Alpha Go index not found: {db_path}")
+    if sample_limit < 0:
+        raise ValueError("sample_limit cannot be negative")
+
+    rows = _rows(estate)
+    expected = {
+        _stable_search_doc_id(row.document_family_id, row.document_id): row.sha256
+        for row in rows
+    }
+    manifest = load_manifest(corpus)
+    manifest_shared = {
+        document.doc_id: document.content_sha256
+        for document in manifest.documents
+        if document.extra.get("shared_estate")
+    }
+
+    connection = sqlite3.connect(
+        f"file:{db_path.resolve()}?mode=ro",
+        uri=True,
+    )
+    connection.row_factory = sqlite3.Row
+    try:
+        if not _table_exists(connection, "documents"):
+            raise RuntimeError(f"Alpha Go index has no documents table: {db_path}")
+        indexed = {
+            str(row["doc_id"]): row["content_sha256"]
+            for row in connection.execute(
+                "SELECT doc_id,content_sha256 FROM documents"
+            )
+        }
+    finally:
+        connection.close()
+
+    expected_ids = set(expected)
+    manifest_ids = set(manifest_shared)
+    index_ids = set(indexed)
+    missing_manifest = expected_ids - manifest_ids
+    stale_manifest = manifest_ids - expected_ids
+    manifest_hash = {
+        document_id
+        for document_id in expected_ids & manifest_ids
+        if manifest_shared[document_id] != expected[document_id]
+    }
+    missing_index = expected_ids - index_ids
+    # Alpha is the whole-estate search projection. Any index-only document is
+    # drift, including a legacy/private row that bypassed estate registration.
+    stale_index = index_ids - expected_ids
+    index_hash = {
+        document_id
+        for document_id in expected_ids & index_ids
+        if indexed[document_id] != expected[document_id]
+    }
+    discrepancies = {
+        "missing_from_manifest": missing_manifest,
+        "stale_in_manifest": stale_manifest,
+        "manifest_hash_mismatches": manifest_hash,
+        "missing_from_index": missing_index,
+        "stale_in_index": stale_index,
+        "index_hash_mismatches": index_hash,
+    }
+    return ProjectionAudit(
+        eligible_families=len(expected),
+        manifest_shared_documents=len(manifest_shared),
+        indexed_eligible_documents=len(expected_ids & index_ids),
+        missing_from_manifest=len(missing_manifest),
+        stale_in_manifest=len(stale_manifest),
+        manifest_hash_mismatches=len(manifest_hash),
+        missing_from_index=len(missing_index),
+        stale_in_index=len(stale_index),
+        index_hash_mismatches=len(index_hash),
+        samples={
+            name: tuple(sorted(values)[:sample_limit])
+            for name, values in discrepancies.items()
+            if values
+        },
+    )
+
+
 def _sync_shared_estate_locked(
     *,
     estate: Path = DOCUMENT_ESTATE_DB,
@@ -1010,6 +1144,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--apply", action="store_true", help="write manifest and optional index")
     parser.add_argument(
+        "--audit-index",
+        action="store_true",
+        help="read-only comparison of eligible estate families, manifest, and index",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="emit one machine-readable result object",
@@ -1018,7 +1157,30 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+    parser = _parser()
+    args = parser.parse_args(argv)
+    if args.audit_index:
+        if args.apply:
+            parser.error("--audit-index is read-only and cannot be combined with --apply")
+        if args.document_id:
+            parser.error("--audit-index is a whole-estate check; omit --document-id")
+        if args.db is None:
+            parser.error("--audit-index requires --db")
+        audit = audit_shared_estate_projection(
+            estate=args.estate,
+            corpus=args.corpus,
+            db=args.db,
+        )
+        payload = {
+            "schema_version": 1,
+            "status": "healthy" if audit.healthy else "drift",
+            "result": asdict(audit),
+        }
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        else:
+            print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0 if audit.healthy else 4
     if args.json:
         diagnostics = io.StringIO()
         try:

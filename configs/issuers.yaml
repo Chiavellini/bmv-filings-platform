@@ -657,6 +657,48 @@ overlays:
       use_playwright: false
       direct_url_templates:
         - https://www.bb.com.mx/cs/BanBajio/home/Inversionistas/Informaci%C3%B3n%20Financiera/{quarter}T{year2}/Quarterly-Report-{quarter}Q{year2}.pdf
+  cemex:
+    name: CEMEX
+    market_ticker: CEMEXCPO
+    language: en
+    unit: millions
+    ir:
+      # The index page enumerates only the current quarter, so static discovery
+      # stalls at `needs_second_sample`. Document URLs are deterministic and
+      # extensionless (`_verify_pdf_url` confirms them by magic bytes):
+      # 2026-2T/1T and 2025-4T/3T verified 2026-08-04; 2024-2T 404s, so this
+      # naming scheme only goes back so far. Deliberately NO floor_year: that
+      # bounds the issuer's *expected* periods, not the template's validity —
+      # setting it to 2025 hid cemex's 14 pre-2025 MD&A periods and dropped
+      # reported coverage from 20 to 6. The template simply misses on older
+      # periods, which costs one HEAD request each.
+      url: https://www.cemex.com/investors/reports/quarterly-reports
+      max_reports: 120
+      delay_ms: 500
+      xbrl_ticker: CEMEX
+      direct_url_templates:
+        - https://www.cemex.com/documents/d/cemex/{quarter}q{year2}-report-eng
+      live_verified_period: 2026-2T
+      live_verified_on: '2026-08-04'
+      live_verified_url: https://www.cemex.com/documents/d/cemex/2q26-report-eng
+  gcc:
+    name: Grupo Cementos de Chihuahua
+    market_ticker: GCC
+    language: en
+    unit: millions
+    ir:
+      # investorcloud CDN serves a fully deterministic path; all five probed
+      # periods (2026-2T/1T, 2025-4T/3T, 2024-2T) verified 2026-08-04. The
+      # index page itself only exposes the current quarter.
+      url: https://ir.gcc.com/
+      max_reports: 120
+      delay_ms: 500
+      xbrl_ticker: GCC
+      direct_url_templates:
+        - https://cdn.investorcloud.net/gcc/InformacionFinanciera/InformacionTrimestral/GCC-{quarter}T{year}-en.pdf
+      live_verified_period: 2026-2T
+      live_verified_on: '2026-08-04'
+      live_verified_url: https://cdn.investorcloud.net/gcc/InformacionFinanciera/InformacionTrimestral/GCC-2T2026-en.pdf
   becle:
     name: Becle (Jose Cuervo)
     market_ticker: CUERVO
@@ -807,6 +849,12 @@ overlays:
       url: https://www.kimberly-clark.com.mx/finanzas/reportes-trimestrales
       pdf_link_pattern: '(?i)\.pdf'
       use_playwright: true
+      # ⚠️ IR index returns HTTP 403 to the acquisition adapter as of the
+      # 2026-08-04 canary. curl_cffi Chrome impersonation (the soriana remedy,
+      # forwarded by adapters.py:357) does NOT clear it, so the block is not
+      # TLS-fingerprint based. Local corpus is complete through 2026-2T;
+      # refresh is what's broken. Needs a browser-context fetch or a direct
+      # URL template before this binding can be trusted again.
       max_reports: 120
       delay_ms: 500
       xbrl_ticker: KIMBER
@@ -854,6 +902,9 @@ overlays:
       use_playwright: true
       max_reports: 120
       delay_ms: 500
+      live_verified_period: 2026-2T
+      live_verified_on: 2026-08-01
+      live_verified_url: https://www.elpuertodeliverpool.mx/docs/informes-trimestrales/2026/2TXBRL2026.pdf
   orbia:
     name: Orbia Advance Corporation
     market_ticker: ORBIA
@@ -874,10 +925,15 @@ overlays:
     unit: millions
     ir:
       url: https://qinversionistas.qualitas.com.mx/ES/reportes-trimestrales
+      pdf_link_pattern: '(?i)/storage/informes/20\d{2}/trimestral/[1-4]T/mx/Q(?:%20|\s|-).*Reporte(?:%20|\s|-).*Trimestral.*\.pdf'
+      strict_pdf_link_pattern: true
       xbrl_ticker: Q
       max_reports: 120
       floor_year: 2016
       delay_ms: 250
+      live_verified_period: 2026-2T
+      live_verified_on: 2026-08-01
+      live_verified_url: https://qinversionistas.qualitas.com.mx/storage/informes/2026/trimestral/2T/mx/Q%20-%20Reporte%20Trimestral%202T26%20VFF2.pdf
   regional:
     market_ticker: R
     language: es
@@ -944,5 +1000,34 @@ overlays:
     unit: millions
     ir:
       url: https://www.walmex.mx/en/financial-information/quarterly.html
-      pdf_link_pattern: '(?:reporte|report|trimest|quarter|result|earning).*\.pdf'
+      pdf_link_pattern: '(?i)/walmex(?:(?:%20)|[ _-])[^/?]*(?:earnings(?:(?:%20)|[ _-])*release|release)[^/?]*\.pdf(?:[?#]|$)'
+      strict_pdf_link_pattern: true
+      coverage_from_period: 2025-1T
       xbrl_ticker: WALMEX
+      live_verified_period: 2026-2T
+      live_verified_on: 2026-08-01
+      live_verified_url: https://files.walmex.mx/upload/files/2026/EN/Quarterly/2Q26/Walmex%202Q26%20Earnings%20Release.pdf
+  nemak:
+    ir:
+      coverage_from_period: 2026-1T
+      live_verified_on: '2026-08-04'
+      live_verified_period: 2026-2T
+      live_verified_url: https://cdn.investorcloud.net/nemak/InformacionFinanciera/ReportesTrimestrales/2026-2T26-en.pdf
+      max_reports: 120
+      pdf_link_pattern: (?i)(?:results?|resultados|earnings?|quarter(?:ly)?|trimestr(?:e|al)|report(?:e|es)?|informe|comunicado|press[-_
+        ]?release|(?:^|[/_.-])[1-4][tq](?:20)?\d{2}|(?:^|[/_.-])q[1-4](?:20)?\d{2})[^?#]*\.pdf(?:[?#]|$)
+      strict_pdf_link_pattern: true
+      url: https://investors.nemak.com/
+      use_playwright: false
+  autlan:
+    ir:
+      coverage_from_period: 2025-4T
+      live_verified_on: '2026-08-04'
+      live_verified_period: 2026-2T
+      live_verified_url: https://www.autlan.com.mx/wp-content/uploads/2026/07/Reporte-2T26-XBRL.pdf
+      max_reports: 120
+      pdf_link_pattern: (?i)(?:results?|resultados|earnings?|quarter(?:ly)?|trimestr(?:e|al)|report(?:e|es)?|informe|comunicado|press[-_
+        ]?release|(?:^|[/_.-])[1-4][tq](?:20)?\d{2}|(?:^|[/_.-])q[1-4](?:20)?\d{2})[^?#]*\.pdf(?:[?#]|$)
+      strict_pdf_link_pattern: true
+      url: https://www.autlan.com.mx/inversionistas/reportes-financieros/
+      use_playwright: false

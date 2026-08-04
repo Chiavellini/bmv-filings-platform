@@ -27,6 +27,7 @@ Source and configuration:
 - all `configs/*.yaml` except obsolete `configs/her.yaml`;
 - `deploy/airflow/dags/quarterly_estate.py`;
 - `deploy/airflow/native/.env.example`;
+- `deploy/airflow/native/launchd/com.bmv.airflow.COMPONENT.plist.template`;
 - `deploy/airflow/native/systemd/bmv-airflow@.service`;
 - all `inputs/*.md`;
 - `requirements/acquisition-worker.txt` and
@@ -38,6 +39,7 @@ Source and configuration:
 
 ```text
 scripts/_regen_baseline.py
+scripts/airflow_native_status.py
 scripts/audit_git_payload.py
 scripts/audit_primary_pdf_sources.py
 scripts/audit_soft_quarterly_coverage.py
@@ -53,6 +55,7 @@ scripts/expand_soft_quarterlies.py
 scripts/fetch_company_reports.py
 scripts/fetch_regional_reports.py
 scripts/install_airflow_native.sh
+scripts/run_airflow_native.sh
 scripts/measure_semantic_search.py
 scripts/parse_reports_for_search.py
 scripts/pipeline_scorecard.py

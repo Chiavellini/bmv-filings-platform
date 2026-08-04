@@ -15,6 +15,8 @@ from pathlib import Path
 import sqlite3
 from typing import Any, Iterable
 
+from estate_volume import inspect_estate_environment
+
 
 BRIDGE_VERSION = 1
 BRIDGE_ENV = "PDFS_ESTATE_BRIDGE"
@@ -72,6 +74,9 @@ class EstateBridge:
         timeout: float = 30.0,
     ) -> sqlite3.Connection:
         """Open the estate catalog with consistent SQLite settings."""
+        status = inspect_estate_environment(self.estate_root)
+        if not status.healthy:
+            raise EstateBridgeError("; ".join(status.problems))
         if read_only:
             uri = f"file:{self.catalog_path.as_posix()}?mode=ro"
             connection = sqlite3.connect(uri, uri=True, timeout=timeout)
@@ -286,7 +291,8 @@ class EstateBridge:
             problems.append(
                 f"Alpha Go index does not exist: {self.alpha_go_index_path}"
             )
-        return problems
+        problems.extend(inspect_estate_environment(self.estate_root).problems)
+        return list(dict.fromkeys(problems))
 
     def as_dict(self) -> dict[str, str | int]:
         """Serializable diagnostics for setup screens and support reports."""

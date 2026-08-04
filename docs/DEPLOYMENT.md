@@ -80,13 +80,14 @@ version (`root.pdf-markdown.v1:<contract-hash>`):
 - explicitly skips raw XBRL, which still needs a facts consumer.
 
 Alpha Go projection is disabled by default. With `--enable-alpha-go`, the
-target-specific `alpha-go.search-projection.v1:<target-hash>` subscription
-accepts parsed events currently pinned to Alpha Go. It projects up to 64
-receipts in one subprocess/model load and holds an Alpha-owned file lock around
-manifest/index replacement. `--alpha-index` is required. A new target path gets
-a new receipt generation automatically; pass and deliberately change
-`--alpha-target-id` when rebuilding a target in place. Soft and Earnings
-consumers are not implemented.
+target-specific `alpha-go.search-projection.v2:<target-hash>` subscription
+accepts every parsed estate document, regardless of the legacy project pin. It
+projects up to 64 receipts in one subprocess/model load and holds an
+Alpha-owned file lock around manifest/index replacement. `--alpha-index` is
+required. The `v2` generation backfills events previously skipped by the old
+pin-filtered consumer. A new target path gets a new receipt generation
+automatically; pass and deliberately change `--alpha-target-id` when rebuilding
+a target in place. Soft and Earnings consumers are not implemented.
 
 Do not use the following commands on the live estate until the rollout checklist
 below has been completed:
@@ -102,12 +103,36 @@ python3 scripts/process_estate_outbox.py run --apply \
 
 # Bounded derivative and Alpha Go projection batch.
 python3 scripts/process_estate_outbox.py run --apply \
-  --estate-root data/document_estate --max-deliveries 100 \
+  --estate-root data/document_estate --max-deliveries 10000 \
+  --require-drained \
   --enable-alpha-go \
-  --alpha-index alpha-go/data/index/alpha_go_expanded_hashing.db \
-  --alpha-target-id expanded-multilingual-v1 \
+  --alpha-corpus data/document_estate/projections/alpha-go \
+  --alpha-index data/document_estate/indexes/alpha_go.db \
+  --alpha-target-id portable-estate-v1 \
   --alpha-config alpha-go/configs/alpha_go.yaml --json
+
+# Periodic authoritative safety net for legacy/no-event writes and removals.
+python3 scripts/process_estate_outbox.py reconcile-alpha --apply \
+  --estate-root data/document_estate \
+  --alpha-corpus data/document_estate/projections/alpha-go \
+  --alpha-index data/document_estate/indexes/alpha_go.db \
+  --alpha-target-id portable-estate-v1 \
+  --alpha-config alpha-go/configs/alpha_go.yaml --json
+
+# Read-only equality proof: eligible estate == manifest == matching index rows.
+python3 scripts/process_estate_outbox.py audit-alpha \
+  --estate-root data/document_estate \
+  --alpha-corpus data/document_estate/projections/alpha-go \
+  --alpha-index data/document_estate/indexes/alpha_go.db --json
 ```
+
+`--require-drained` makes a bounded worker invocation fail when it leaves any
+active, dead, missing, or unpublished receipt. Broad reconciliation is
+idempotent and removes stale shared-estate rows from Alpha. `audit-alpha` hashes
+the selected Markdown artifacts and exits nonzero on missing, stale, or
+hash-divergent manifest/index rows. See
+[ALPHA_GO_ESTATE_SYNC.md](ALPHA_GO_ESTATE_SYNC.md) for lifecycle and scheduler
+details.
 
 Claims are fenced, heartbeat-renewed, and reclaimable. One active batch per
 consumer is allowed across workers, while different consumers can advance

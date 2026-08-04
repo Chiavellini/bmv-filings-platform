@@ -11,11 +11,15 @@ on:
       - "scripts/configure_airflow.py"
       - "scripts/install_airflow_native.sh"
       - "src/acquisition/**"
+      - "src/consumers/**"
       - "src/deployment/airflow_task.py"
       - "src/download/**"
       - "src/shared/**"
       - "tests/test_airflow_deployment.py"
       - "tests/test_acquisition_registry.py"
+      - "tests/test_acquisition_to_alpha_e2e.py"
+      - "tests/test_alpha_go_consumer.py"
+      - "tests/test_consumer_outbox.py"
       - "tests/test_quarterly_acquisition.py"
       - "estate.json"
       - "estate_bridge.py"
@@ -57,6 +61,9 @@ jobs:
           "${PDFS_AIRFLOW_VENV}/bin/python" -m pytest -q
           tests/test_airflow_deployment.py
           tests/test_acquisition_registry.py
+          tests/test_acquisition_to_alpha_e2e.py
+          tests/test_alpha_go_consumer.py
+          tests/test_consumer_outbox.py
           tests/test_quarterly_acquisition.py
       - run: mkdir -p "${PDFS_DOCUMENT_ESTATE}"
       - run: >-
@@ -64,6 +71,9 @@ jobs:
       - run: >-
           "${PDFS_AIRFLOW_VENV}/bin/airflow"
           dags list --local --output plain
+      - run: >-
+          test "$("${PDFS_AIRFLOW_VENV}/bin/airflow"
+          dags list --local --output plain | grep -c '^quarterly_estate_')" -eq 4
       - run: >-
           "${PDFS_AIRFLOW_VENV}/bin/airflow"
           dags list-import-errors --local --output json

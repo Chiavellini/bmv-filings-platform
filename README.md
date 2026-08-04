@@ -39,7 +39,7 @@ compatible.
 | Acquisition | `.venv` | `.venv/bin/refresh-quarterly-estate audit --json` |
 | Estate | `.venv` | `.venv/bin/python scripts/check_estate_connection.py` |
 | Outbox delivery | `.venv` | `.venv/bin/process-estate-outbox status --database data/document_estate/catalog.db --json` |
-| Extractor | `.venv` | `.venv/bin/python scripts/build_segments.py inputs/<company>.md` |
+| Extractor | `.venv` | `.venv/bin/python scripts/build_segments.py inputs/<company>.md --analyst-metrics <request.xlsx>` |
 | Alpha Go | `alpha-go/.venv312` | `cd alpha-go && .venv312/bin/python -m streamlit run app/streamlit_app.py` |
 | Soft | `soft/.venv` (Python 3.11.13) | `cd soft && .venv/bin/python -m pytest -q -m "not network and not model"` |
 | Earnings | `earnings/.venv` (Python 3.11.13) | `cd earnings && .venv/bin/python -m pytest -q -m "not network and not model"` |
@@ -69,26 +69,39 @@ estate-v1/
   manifest.json
 ```
 
-After placing the bundle anywhere, change only `estate_root`:
+For a transferred USB, keep the checked-in bridge relative and create an
+untracked `.env` from `.env.example`:
 
-```json
-{
-  "bridge_version": 1,
-  "estate_root": "/mnt/bmv-estate-v1"
-}
+```bash
+cp .env.example .env
+# Set the destination computer's actual values in .env:
+# PDFS_ESTATE_MOUNT_ROOT=<mounted USB root>
+# PDFS_DOCUMENT_ESTATE=<mounted USB root>/bmv-estate-v1
+# PDFS_ESTATE_ID=<ID from .bmv-estate-volume.json>
+set -a
+. ./.env
+set +a
 ```
 
 Every other key has a portable default and is containment-checked against
 `estate_root`. `PDFS_ESTATE_BRIDGE` selects a different bridge file and
-`PDFS_DOCUMENT_ESTATE` overrides the root for automation; normal use needs
-neither.
+`PDFS_DOCUMENT_ESTATE` overrides the relative development root. Mount-aware
+automation must set all three Estate variables; it refuses a missing mount,
+missing sentinel, or wrong Estate ID before opening SQLite.
 
 Verify a connection, including a relocated bundle, without writing anything:
 
 ```bash
 .venv/bin/python scripts/check_estate_connection.py
-.venv/bin/python scripts/check_estate_connection.py --verify-relocated /path/to/estate-v1
+.venv/bin/python scripts/check_portable_estate.py \
+  --estate-root "$PDFS_DOCUMENT_ESTATE" \
+  --mount-root "$PDFS_ESTATE_MOUNT_ROOT" \
+  --estate-id "$PDFS_ESTATE_ID"
 ```
+
+That gate is sufficient for acquisition, extraction, onboarding, and workbook
+generation. After Alpha's semantic index has been built and certified, repeat
+it with `--require-alpha-index` before enabling Alpha consumers.
 
 The repository works with **no estate attached** — the bridge resolves paths,
 reports what is missing, and estate-dependent tests skip rather than fail.
@@ -100,7 +113,8 @@ required. Airflow runs the same fleet-level `refresh-quarterly-estate` CLI used
 locally; it does not create a different downloader or DAG for every company.
 Airflow keeps scheduling state in its own local database (or PostgreSQL for an
 always-on installation), while the document catalog and downloaded objects
-remain on the user's external disk.
+remain on the user's external disk. New documents flow through the durable
+outbox into verified Markdown and the estate-wide Alpha Go search index.
 
 On the second computer, create a Python 3.13 Airflow virtual environment, then
 connect its external estate:
@@ -114,15 +128,18 @@ set +a
 .airflow-venv/bin/airflow db migrate
 .airflow-venv/bin/airflow pools set \
   estate_writer 1 "Single SQLite estate mutation slot"
+# Disposable import/UI trial only; always-on deployment uses the documented
+# api-server, scheduler, and dag-processor services.
 .airflow-venv/bin/airflow standalone
 ```
 
-The weekday audit DAG starts enabled and is read-only. The six-hour freshness
-DAG is paused on creation and also refuses to write while
-`PDFS_AIRFLOW_SYNC_ENABLED=false`. Start with a scoped canary by setting
-`PDFS_AIRFLOW_ONLY=femsa`, changing that gate to `true`, restarting Airflow,
-and then manually triggering the still-paused DAG. Installation, PostgreSQL,
-native-service, and migration details are in
+There are four DAGs: weekday read-only acquisition audit; six-hour strict
+acquisition followed by Alpha drain; 15-minute outbox drain; and daily full
+Alpha reconcile/hash audit. The three writers are paused on creation and refuse
+to run until acquisition/Alpha gates and absolute Alpha target paths are
+configured. Start with a scoped disposable-estate canary; do not unpause the
+fleet schedule merely because the DAG files exist. Installation, PostgreSQL,
+native-service, launchd, health, and migration details are in
 [`docs/deployment/AIRFLOW_PORTABILITY.md`](docs/deployment/AIRFLOW_PORTABILITY.md).
 
 ## Tests
@@ -169,10 +186,12 @@ matrix is documented in
 [the acquisition coverage runbook](docs/acquisition/PRIMARY_PDF_ACQUISITION.md).
 
 A bounded per-consumer outbox dispatcher, a PDF/HTML/text-to-Markdown derivative
-consumer, and an optional Alpha Go projection consumer exist, with triggered
+consumer, and an optional estate-wide Alpha Go projection consumer exist, with triggered
 receipts, append-only attempt history, fenced heartbeat leases, bounded batches,
-and dead-letter replay. **None of it has been applied to the live catalog or put
-on a schedule.** Soft and Earnings have no equivalent consumers.
+dead-letter replay, fail-closed draining, and broad idempotent reconciliation.
+**Code availability is not proof that the live catalog has been migrated or the
+worker schedule enabled.** Soft and Earnings have no equivalent consumers. See
+[the Alpha automatic-sync contract](docs/ALPHA_GO_ESTATE_SYNC.md).
 
 Do not schedule `sync --apply` for production. Deployment is gated on
 primary-source and issuer-lifecycle enrichment, consumer writer cutover, a

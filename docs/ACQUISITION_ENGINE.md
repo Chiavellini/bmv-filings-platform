@@ -51,9 +51,12 @@ stable slug, ticker, display name, sector, project memberships, and source bindi
 Detailed IR crawler options may be overlaid from the root `configs/<slug>.yaml`
 configuration while that legacy layout is being migrated.
 
-Project membership selects consumers; it does not create another document:
+Project membership records application coverage; it does not create another
+document. Alpha Go's `v2` consumer is deliberately estate-wide, so its legacy
+pin is not an ingestion filter:
 
-- `alpha_go`: issuer documents may be included in Alpha Go estate releases.
+- `alpha_go`: legacy Alpha product-coverage metadata; whole-estate search does
+  not require it.
 - `soft`: issuer data may feed Soft coverage and valuation.
 - `earnings`: issuer documents may enter event-study releases.
 
@@ -125,8 +128,8 @@ dead receipt remains visible as a failure even though it is terminal, so
 The derivative verifies the original SHA-256, parses PDF or converts HTML/text
 to immutable content-addressed Markdown, records processor lineage, and emits
 `estate.document.parsed`. Same-hash project/facet changes emit a routing event,
-so a later Alpha adoption is delivered. The optional Alpha consumer projects
-eligible receipts in batches of up to 64 through
+so updated memberships are delivered. The optional estate-wide Alpha consumer
+projects parsed receipts in batches of up to 64 through
 `alpha-go/scripts/sync_shared_estate.py`; target generations have distinct
 receipt identities and Alpha holds a file lock over manifest/index
 replacement. It is not enabled by default. XBRL events are explicitly skipped
@@ -272,10 +275,25 @@ python3 scripts/process_estate_outbox.py run --apply \
 
 # Controlled derivative + Alpha Go projection batch.
 python3 scripts/process_estate_outbox.py run --apply \
-  --estate-root data/document_estate --max-deliveries 100 \
+  --estate-root data/document_estate --max-deliveries 10000 \
+  --require-drained \
   --enable-alpha-go \
-  --alpha-index alpha-go/data/index/alpha_go_expanded_hashing.db \
-  --alpha-target-id expanded-multilingual-v1 --json
+  --alpha-corpus data/document_estate/projections/alpha-go \
+  --alpha-index data/document_estate/indexes/alpha_go.db \
+  --alpha-target-id portable-estate-v1 --json
+
+# Authoritative periodic reconciliation for searchable legacy/no-event writes.
+python3 scripts/process_estate_outbox.py reconcile-alpha --apply \
+  --estate-root data/document_estate \
+  --alpha-corpus data/document_estate/projections/alpha-go \
+  --alpha-index data/document_estate/indexes/alpha_go.db \
+  --alpha-target-id portable-estate-v1 --json
+
+# Read-only coverage proof after the drain and reconciliation.
+python3 scripts/process_estate_outbox.py audit-alpha \
+  --estate-root data/document_estate \
+  --alpha-corpus data/document_estate/projections/alpha-go \
+  --alpha-index data/document_estate/indexes/alpha_go.db --json
 ```
 
 After correcting the underlying fault, a dead receipt can be explicitly
@@ -293,6 +311,9 @@ receipts, and may create derivatives or update the selected Alpha Go index.
 These examples document the command contract; do not run them against the live
 catalog until the production preflight findings and rollout plan have been
 reviewed. See [DEPLOYMENT.md](DEPLOYMENT.md).
+The exact automatic-search contract, including status codes, supersessions,
+cache refresh, and the current raw-XBRL limitation, is in
+[ALPHA_GO_ESTATE_SYNC.md](ALPHA_GO_ESTATE_SYNC.md).
 
 ## Migration rule for consumers
 

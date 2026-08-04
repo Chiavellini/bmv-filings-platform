@@ -20,6 +20,7 @@ import re
 import statistics
 
 _PERIOD_RE = re.compile(r"(\d{4})-(\d)[TQ]", re.IGNORECASE)
+_FY_PERIOD_RE = re.compile(r"(\d{4})-FY", re.IGNORECASE)
 
 # Metrics that can legitimately be negative — exempt from the sign check, and
 # from the magnitude check (they swing around zero; a small value isn't an error).
@@ -42,7 +43,20 @@ IDENTITIES = [
     ("gross_profit", "revenue", "-", "cogs", "Gross = Revenue − COGS"),
     ("ebitda", "operating_income", "+", "depreciation", "EBITDA = Operating income + D&A"),
     ("net_income", "ebt", "-", "tax_expense", "Net income = Pre-tax − Tax"),
+    ("net_debt", "total_debt", "-", "cash", "Net debt = Total debt − Cash"),
+    ("free_cash_flow", "cfo", "-", "capex", "FCF = CFO − Capex"),
 ]
+
+# Validator rule names corresponding to each declarative identity.  Workbook
+# auto-checks use this registry to honor company-level ``validator.skip_rules``
+# without duplicating accounting semantics in the Excel layer.
+IDENTITY_RULES = {
+    "gross_profit": "gross_profit_identity",
+    "ebitda": "ebitda_derivation",
+    "net_income": "net_income_identity",
+    "net_debt": "net_debt_identity",
+    "free_cash_flow": "fcf_derivation",
+}
 
 
 def identity_expected(values: dict, identity) -> float:
@@ -54,6 +68,28 @@ def identity_expected(values: dict, identity) -> float:
 def _period_key(p) -> tuple[int, int] | None:
     m = _PERIOD_RE.match(str(p))
     return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def _series_period_key(period: str) -> tuple[int, int, str]:
+    """Chronological key that places FY after Q4 of the same calendar year."""
+    text = str(period)
+    quarter = _PERIOD_RE.fullmatch(text)
+    if quarter:
+        return (int(quarter.group(1)), int(quarter.group(2)), text)
+    annual = _FY_PERIOD_RE.fullmatch(text)
+    if annual:
+        return (int(annual.group(1)), 5, text)
+    return (9999, 99, text)
+
+
+def _period_kind(period: str) -> str:
+    """Coarse comparison bucket used only for sum/flow magnitude checks."""
+    text = str(period)
+    if _FY_PERIOD_RE.fullmatch(text):
+        return "fy"
+    if _PERIOD_RE.fullmatch(text):
+        return "quarter"
+    return "other"
 
 
 def in_window(period: str, window: str | None) -> bool:
@@ -72,7 +108,8 @@ def in_window(period: str, window: str | None) -> bool:
 
 
 def magnitude_breaks(series: list[tuple[str, float]], *, ratio: float = RATIO,
-                     neighbors: int = NEIGHBORS) -> dict[str, str]:
+                     neighbors: int = NEIGHBORS,
+                     separate_period_kinds: bool = False) -> dict[str, str]:
     """Return ``{period: reason}`` for values that break from their neighborhood.
 
     Each value is compared to the median of its nearest non-zero neighbors (up
@@ -86,8 +123,48 @@ def magnitude_breaks(series: list[tuple[str, float]], *, ratio: float = RATIO,
     are unit artifacts (×10³/×10⁶) and wrong-row/period grabs, which are
     *factor*-off — those exceed the ratio while a secular trend, compared to
     its local neighborhood rather than the global median, does not.
+
+    When ``separate_period_kinds`` is true, quarter and FY observations form
+    independent peer groups. Callers enable this only for sum/flow metrics;
+    stocks, averages, ratios, and unknown metrics preserve the legacy mixed-
+    period comparison.
     """
-    pts = sorted(series, key=lambda pv: (_period_key(pv[0]) or (0, 0), str(pv[0])))
+    pts = sorted(series, key=lambda pv: _series_period_key(pv[0]))
+    if separate_period_kinds:
+        groups: dict[str, list[tuple[str, float]]] = {}
+        for period, value in pts:
+            groups.setdefault(_period_kind(period), []).append((period, value))
+        out: dict[str, str] = {}
+        for kind, group in groups.items():
+            group_breaks = magnitude_breaks(
+                group,
+                ratio=ratio,
+                neighbors=neighbors,
+                separate_period_kinds=False,
+            )
+            if kind == "fy" and group_breaks:
+                # Annual extraction can contain a run of historical unit-scale
+                # artifacts followed by a stable corrected basis. A symmetric
+                # local median would mark both clusters. Confirm FY candidates
+                # against the median scale of the latest three non-zero FY peers:
+                # an isolated newest artifact is still rejected, while a stable
+                # current annual regime is not condemned by older bad history.
+                recent = [abs(value) for _, value in group if value != 0][-_MIN_NEIGHBORS:]
+                if len(recent) >= _MIN_NEIGHBORS:
+                    current_med = statistics.median(recent)
+                    if current_med:
+                        values = {period: value for period, value in group}
+                        group_breaks = {
+                            period: reason
+                            for period, reason in group_breaks.items()
+                            if (
+                                abs(values[period]) / current_med > ratio
+                                or abs(values[period]) / current_med < 1.0 / ratio
+                            )
+                        }
+            out.update(group_breaks)
+        return dict(sorted(out.items(), key=lambda item: _series_period_key(item[0])))
+
     nonzero = [abs(v) for _, v in pts if v != 0]
     if len(nonzero) < _MIN_POINTS:
         return {}
@@ -123,6 +200,9 @@ def compute_cell_suspects(df, keys, expectations: dict | None = None,
     expectations = expectations or {}
     if conf is None:
         conf = getattr(df, "attrs", {}).get("confidence", {}) or {}
+    aggregation_map = (
+        getattr(df, "attrs", {}).get("metric_aggregations", {}) or {}
+    )
     periods = [str(p) for p in df["period"]] if "period" in df.columns else []
 
     val_at: dict[tuple[str, str], float] = {}
@@ -144,7 +224,19 @@ def compute_cell_suspects(df, keys, expectations: dict | None = None,
         signed = exp.get("sign") == "any" or (exp.get("sign") != "positive" and k in SIGNED_DEFAULT)
         rng = exp.get("range")
         lo, hi = rng if isinstance(rng, (list, tuple)) else (None, None)
-        breaks = {} if signed else magnitude_breaks(present)
+        aggregation = exp.get("aggregation") or aggregation_map.get(k)
+        if aggregation is None:
+            try:
+                from src.model.financial_model import METRIC_BY_KEY
+                metric = METRIC_BY_KEY.get(k)
+                aggregation = metric.aggregation if metric is not None else None
+            except Exception:  # pragma: no cover - conservative standalone fallback
+                aggregation = None
+        aggregation_kind = str(aggregation or "").strip().lower()
+        breaks = {} if signed else magnitude_breaks(
+            present,
+            separate_period_kinds=(aggregation_kind == "sum"),
+        )
         for p, v in present:
             src = (conf.get((p, k), {}) or {}).get("source", "") or ""
             if "[verified]" in src:

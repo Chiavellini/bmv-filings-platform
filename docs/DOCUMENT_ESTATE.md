@@ -1,8 +1,10 @@
 # Shared document estate
 
-The monorepo-wide source of truth is `data/document_estate/catalog.db`. It catalogs documents and
-their physical artifacts across the root extraction project, `alpha-go`, and `soft` without
-copying or moving the existing corpora.
+The configured estate's `catalog.db` is the monorepo-wide source of truth. The
+fresh-clone default is `data/document_estate`, while a portable deployment sets
+`PDFS_DOCUMENT_ESTATE` to the transferred bundle. The catalog covers documents
+and their physical artifacts across the root extraction project, Alpha Go,
+Soft, and Earnings.
 
 The current implementation is SQLite plus the local filesystem. The new root
 acquisition writer adds immutable content objects, portable object keys,
@@ -27,21 +29,30 @@ manifest.json
 user/
 ```
 
-Moving an exported bundle therefore requires changing only `estate_root`.
-Relative roots resolve from the bridge file; absolute roots support an estate
-on an external disk or elsewhere in the user's home directory. The bridge also
-owns consistent read-only/read-write SQLite connection setup and rejects object
-keys that escape the estate root.
+Relative roots resolve from the bridge file. On a transferred external disk,
+leave the tracked bridge unchanged and set `PDFS_DOCUMENT_ESTATE` in an
+untracked `.env` or service environment. The bridge owns consistent
+read-only/read-write SQLite connection setup and rejects object keys that
+escape the estate root.
 
 `PDFS_ESTATE_BRIDGE` and `PDFS_DOCUMENT_ESTATE` remain supported for CI and
-worker automation. They are overrides, not additional user configuration
-files.
+worker automation. Native writers additionally require
+`PDFS_ESTATE_MOUNT_ROOT` and `PDFS_ESTATE_ID`. The latter pair validates a real
+mount point plus `.bmv-estate-volume.json`; a missing USB or mismatched ID fails
+before SQLite is opened.
 
 After changing `estate_root`, run the read-only connection check:
 
 ```bash
 python3 scripts/check_estate_connection.py --json
+python3 scripts/check_portable_estate.py \
+  --estate-root "$PDFS_DOCUMENT_ESTATE" \
+  --mount-root "$PDFS_ESTATE_MOUNT_ROOT" \
+  --estate-id "$PDFS_ESTATE_ID"
 ```
+
+Add `--require-alpha-index` only for an Alpha-enabled host. The base Estate
+gate is sufficient for extraction and workbook consumers.
 
 ## Storage contract
 
@@ -56,16 +67,37 @@ python3 scripts/check_estate_connection.py --json
   extraction pipeline, and segment-sheet generation. News remains catalogued and searchable but
   is intentionally excluded from this extraction view.
 
-The catalog still stores absolute artifact paths so local subprojects can query
-the same database. New acquisition content also has a portable
-`content_objects.object_key` of the form `blobs/<sha-prefix>/<sha256>`.
-`content_objects.blob_path` and `artifacts.path` remain absolute compatibility
-paths. Portable object keys are the intended backend-independent identity, but
-no PostgreSQL/object-storage implementation or cross-backend contract suite is
-present yet.
+An exported estate stores artifact and object locations as bundle-relative
+paths. Every content object has an `object_key` of the form
+`blobs/<sha-prefix>/<sha256>`; compatibility artifacts are hard links to those
+objects when their content matches. Readers resolve both paths against the
+runtime estate root, so moving the complete bundle requires no catalog rewrite.
 
 Set `PDFS_DOCUMENT_ESTATE` to relocate the local estate and
 `PDFS_REPORTS_DIR` to explicitly point a project at a reports-compatible view.
+
+## Portable export and certification
+
+The exporter never overwrites a destination and does nothing without the
+explicit `--apply` acknowledgement. It takes a consistent SQLite backup,
+rewrites paths relative to the new root, hard-links compatible artifacts,
+generates the sentinel and manifest, then runs full SHA-256 verification before
+atomically publishing the destination:
+
+```bash
+python3 scripts/export_portable_estate.py \
+  --source <existing-estate> --destination <new-estate> \
+  --estate-id <uuid> --apply
+
+python3 scripts/check_portable_estate.py \
+  --estate-root <new-estate> --estate-id <uuid> \
+  --full-hashes --require-alpha-index
+```
+
+The checker is read-only. It verifies the sentinel/ID, manifest and catalog
+checksum, SQLite quick/foreign-key checks, catalog/object equality, relative
+paths, missing and wrong-size blobs, optional full blob hashes, hard-link
+counts, and Alpha index integrity/counts.
 
 ## Refresh
 
@@ -93,7 +125,8 @@ the view.)
 
 Alpha Go can import current parsed estate documents, including quarterly and
 annual reports, press releases, and news. The sync is content-hash deduplicated,
-retains the shared absolute source path, and never copies or downloads a report:
+resolves portable artifact paths against the estate root, and never copies or
+downloads a report:
 
 ```bash
 # Audit only
@@ -101,7 +134,9 @@ python3 alpha-go/scripts/sync_shared_estate.py
 
 # Update Alpha's manifest and the currently selected index
 python3 alpha-go/scripts/sync_shared_estate.py \
-  --apply --db data/index/alpha_go_expanded_hashing.db
+  --estate "$PDFS_DOCUMENT_ESTATE/catalog.db" \
+  --corpus "$PDFS_DOCUMENT_ESTATE/projections/alpha-go" \
+  --apply --db "$PDFS_DOCUMENT_ESTATE/indexes/alpha_go.db"
 ```
 
 Repeated runs are idempotent. Missing source paths are excluded, and stale estate-managed manifest
@@ -110,8 +145,12 @@ records are removed during an applied sync.
 This script remains the Alpha-owned projection boundary. The root
 `AlphaGoProjectionConsumer` invokes it for a bounded group of parsed receipts.
 Target generations have independent receipts, and the Alpha-owned file lock
-serializes manifest/index replacement. Projection is still optional and no live
-worker or schedule has been installed.
+serializes manifest/index replacement. The `v2` consumer is estate-wide: a
+legacy `alpha_go` project pin is not required once a verified parsed-text
+artifact exists. A periodic broad reconciliation covers legacy writers and
+stale/missing artifacts that have no event. See
+[ALPHA_GO_ESTATE_SYNC.md](ALPHA_GO_ESTATE_SYNC.md) for the exact scheduler
+contract. No live worker installation is implied by the code.
 
 ## Acquisition events
 
@@ -128,14 +167,15 @@ scheduling, and explicit dead-letter replay. The first root consumer verifies
 the original hash, parses PDF or derives Markdown from HTML/text, records
 processor-version lineage, and emits `estate.document.parsed`. Same-hash
 project or membership changes emit a routing revision, so an already-derived
-document can be adopted by Alpha later. The optional Alpha consumer projects
-parsed documents whose current estate pins include that project.
+document can receive updated memberships later. The optional Alpha consumer
+projects every parsed estate document into the selected target; project pins
+remain application metadata and do not limit whole-estate search.
 
-This is an implemented delivery path, not a live deployment. The current
-catalog has not been migrated, no worker is scheduled, Soft and Earnings have
-no equivalent consumers, and XBRL derivation is not implemented. Extraction
-and indexing must therefore not be documented as automatic consequences of an
-estate commit.
+This is an implemented delivery path, not proof of a live deployment. The
+current catalog must be migrated and the drain/reconcile/status tasks must be
+enabled before indexing can be described as an automatic consequence of an
+estate commit. Soft and Earnings have no equivalent consumers, and raw XBRL
+text derivation is not implemented.
 
 ```bash
 # Strictly read-only; does not create or migrate tables.

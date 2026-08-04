@@ -49,11 +49,12 @@ extracted, and then rendered into CSV and Excel outputs.
 - `configs/`: company configs, segment outlines, XBRL concept mappings, and the deterministic metric search dictionary.
 - `data/document_estate/`: canonical shared catalog, immutable originals, and compatibility views.
 - `data/reports/`: transitional local cache and parsed markdown; not the canonical durable-original store.
-- `data/ground_truth/`: comparison baselines.
+- `data/ground_truth/`: optional private comparison baselines (external to Git).
 - `outputs/latest/`: analyst handoff; exactly one workbook from the newest completed onboarding build.
 - `outputs/<Company>/`: technical CSV, workbook, and validation artifacts retained for review.
 - `downloads/`, `excels/`: legacy generated-artifact locations.
-- `docs/handoffs/` and top-level handoff docs: historical context, not live contracts.
+- Historical handoffs are intentionally excluded from the release payload; Git
+  source, current docs, tests, and manifests are the live contracts.
 - `archive/`: retired or duplicate artifacts; do not treat as active pipeline input unless a task explicitly says so.
 
 ## Agent Workflow

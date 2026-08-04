@@ -1,8 +1,8 @@
-"""Airflow-safe process boundary for the quarterly acquisition CLI.
+"""Airflow-safe process boundary for acquisition and search projection.
 
 The Airflow DAG calls this wrapper as a subprocess.  This module deliberately
-does not import acquisition internals: it validates deployment settings and
-then replaces itself with the public ``refresh-quarterly-estate`` executable.
+does not import acquisition or consumer internals: it validates deployment
+settings and then replaces itself with the appropriate public executable.
 """
 
 from __future__ import annotations
@@ -15,8 +15,15 @@ import shutil
 import sys
 from typing import Mapping, Sequence
 
+from estate_volume import inspect_estate_environment
+
 
 _ISSUER_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+_TARGET_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+_ACQUISITION_MODES = frozenset({"audit", "sync"})
+_CONSUMER_MODES = frozenset(
+    {"drain", "reconcile", "alpha-audit", "consumer-status"}
+)
 _TRUE = frozenset({"1", "true", "yes", "on"})
 _FALSE = frozenset({"0", "false", "no", "off"})
 
@@ -83,19 +90,104 @@ def _trigger_part(value: str, *, field: str) -> str:
     return normalized[:160]
 
 
+def _required_absolute_path(
+    environment: Mapping[str, str],
+    name: str,
+    *,
+    kind: str,
+) -> Path:
+    raw = environment.get(name, "").strip()
+    if not raw:
+        raise AirflowTaskConfigurationError(f"{name} is required")
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        raise AirflowTaskConfigurationError(f"{name} must be an absolute path")
+    path = path.resolve()
+    valid = {
+        "directory": path.is_dir(),
+        "file": path.is_file(),
+        "executable": path.is_file() and os.access(path, os.X_OK),
+    }.get(kind)
+    if valid is None:
+        raise ValueError(f"unsupported path kind: {kind}")
+    if not valid:
+        raise AirflowTaskConfigurationError(
+            f"{name} is not an existing {kind}: {path}"
+        )
+    return path
+
+
+def _alpha_settings(
+    environment: Mapping[str, str],
+    *,
+    estate_root: Path,
+) -> dict[str, str]:
+    if not _boolean(
+        environment,
+        "PDFS_AIRFLOW_ALPHA_ENABLED",
+        default=False,
+    ):
+        raise AirflowTaskConfigurationError(
+            "Alpha estate projection is disabled; set "
+            "PDFS_AIRFLOW_ALPHA_ENABLED=true only after every Alpha path is verified"
+        )
+    target_id = environment.get("PDFS_ALPHA_TARGET_ID", "").strip()
+    if not _TARGET_TOKEN.fullmatch(target_id):
+        raise AirflowTaskConfigurationError(
+            "PDFS_ALPHA_TARGET_ID must be a stable 1-128 character token"
+        )
+    settings = {
+        "root": str(
+            _required_absolute_path(
+                environment, "PDFS_ALPHA_ROOT", kind="directory"
+            )
+        ),
+        "corpus": str(
+            _required_absolute_path(
+                environment, "PDFS_ALPHA_CORPUS", kind="directory"
+            )
+        ),
+        "index": str(
+            _required_absolute_path(environment, "PDFS_ALPHA_INDEX", kind="file")
+        ),
+        "config": str(
+            _required_absolute_path(environment, "PDFS_ALPHA_CONFIG", kind="file")
+        ),
+        "python": str(
+            _required_absolute_path(
+                environment, "PDFS_ALPHA_PYTHON", kind="executable"
+            )
+        ),
+        "target_id": target_id,
+    }
+    if Path(settings["corpus"]) == estate_root.resolve():
+        raise AirflowTaskConfigurationError(
+            "PDFS_ALPHA_CORPUS must be an explicit projection directory, not "
+            "the document-estate root"
+        )
+    if Path(settings["index"]) == (estate_root / "catalog.db").resolve():
+        raise AirflowTaskConfigurationError(
+            "PDFS_ALPHA_INDEX must not point at the estate catalog"
+        )
+    return settings
+
+
 def build_command(
     mode: str,
     *,
     dag_id: str,
     run_id: str,
     environment: Mapping[str, str] | None = None,
-    executable: str = "refresh-quarterly-estate",
+    executable: str | None = None,
 ) -> list[str]:
     """Build the exact public-CLI argument vector for one Airflow task."""
 
     env = os.environ if environment is None else environment
-    if mode not in {"audit", "sync"}:
-        raise AirflowTaskConfigurationError("mode must be audit or sync")
+    if mode not in _ACQUISITION_MODES | _CONSUMER_MODES:
+        raise AirflowTaskConfigurationError(
+            "mode must be audit, sync, drain, reconcile, alpha-audit, or "
+            "consumer-status"
+        )
 
     root = Path(env.get("PDFS_DOCUMENT_ESTATE", "/estate")).expanduser()
     if not root.is_absolute():
@@ -106,26 +198,90 @@ def build_command(
         raise AirflowTaskConfigurationError(
             f"estate mount is not a directory: {root}"
         )
+    volume = inspect_estate_environment(root, dict(env))
+    if not volume.healthy:
+        raise AirflowTaskConfigurationError("; ".join(volume.problems))
 
-    recheck = _bounded_integer(
-        env,
-        "PDFS_AIRFLOW_RECHECK_LATEST",
-        default=2,
-        minimum=0,
-        maximum=8,
-    )
-    command = [
-        executable,
-        mode,
-        "--estate-root",
-        str(root),
-        "--db",
-        str(root / "catalog.db"),
-        "--recheck-latest",
-        str(recheck),
-    ]
-    for issuer in _issuer_scope(env):
-        command.extend(("--only", issuer))
+    if mode in _ACQUISITION_MODES:
+        recheck = _bounded_integer(
+            env,
+            "PDFS_AIRFLOW_RECHECK_LATEST",
+            default=2,
+            minimum=0,
+            maximum=8,
+        )
+        command = [
+            executable or "refresh-quarterly-estate",
+            mode,
+            "--estate-root",
+            str(root),
+            "--db",
+            str(root / "catalog.db"),
+            "--recheck-latest",
+            str(recheck),
+        ]
+        for issuer in _issuer_scope(env):
+            command.extend(("--only", issuer))
+    else:
+        # Generic outbox status is deliberately inspectable even when Alpha is
+        # disabled or misconfigured.  Mutating and Alpha-specific modes remain
+        # gated and validate the complete target before constructing argv.
+        alpha = (
+            _alpha_settings(env, estate_root=root)
+            if mode != "consumer-status"
+            else None
+        )
+        if not (root / "catalog.db").is_file():
+            raise AirflowTaskConfigurationError(
+                f"estate catalog is missing: {root / 'catalog.db'}"
+            )
+        command = [
+            executable or "process-estate-outbox",
+            (
+                "run"
+                if mode == "drain"
+                else "reconcile-alpha"
+                if mode == "reconcile"
+                else "audit-alpha"
+                if mode == "alpha-audit"
+                else "status"
+            ),
+            "--estate-root",
+            str(root),
+            "--database",
+            str(root / "catalog.db"),
+        ]
+        if mode in {"drain", "reconcile"}:
+            command.extend(("--apply",))
+        if mode == "drain":
+            maximum = _bounded_integer(
+                env,
+                "PDFS_AIRFLOW_MAX_DELIVERIES",
+                default=500,
+                minimum=1,
+                maximum=10_000,
+            )
+            command.extend(("--max-deliveries", str(maximum), "--enable-alpha-go"))
+        if mode in {"drain", "reconcile", "alpha-audit"}:
+            assert alpha is not None
+            command.extend(
+                (
+                    "--alpha-root",
+                    alpha["root"],
+                    "--alpha-corpus",
+                    alpha["corpus"],
+                    "--alpha-index",
+                    alpha["index"],
+                    "--alpha-config",
+                    alpha["config"],
+                    "--alpha-target-id",
+                    alpha["target_id"],
+                    "--alpha-python",
+                    alpha["python"],
+                )
+            )
+        if mode == "drain":
+            command.append("--require-drained")
 
     if mode == "sync":
         if not _boolean(
@@ -150,7 +306,7 @@ def build_command(
         if _boolean(
             env,
             "PDFS_AIRFLOW_ALLOW_COVERAGE_GAPS",
-            default=True,
+            default=False,
         ):
             command.append("--allow-coverage-gaps")
 
@@ -161,9 +317,21 @@ def build_command(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="airflow-quarterly-estate",
-        description="Validate Airflow settings and invoke the acquisition CLI.",
+        description=(
+            "Validate Airflow settings and invoke acquisition/search CLIs."
+        ),
     )
-    parser.add_argument("mode", choices=("audit", "sync"))
+    parser.add_argument(
+        "mode",
+        choices=(
+            "audit",
+            "sync",
+            "drain",
+            "reconcile",
+            "alpha-audit",
+            "consumer-status",
+        ),
+    )
     parser.add_argument("--dag-id", required=True)
     parser.add_argument("--run-id", required=True)
     parser.add_argument(

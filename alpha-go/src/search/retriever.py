@@ -89,6 +89,11 @@ class HybridRetriever:
         self._vector_cache: "tuple[list[str], object] | None" = None  # (ids, normalized matrix)
         self._id_index: "dict[str, int] | None" = None      # chunk_id -> matrix row (built with cache)
         self._boiler_cache = None                            # CorpusBoilerplate, built once per index
+        # SQLite increments ``data_version`` on this connection whenever a
+        # *different* connection commits.  The estate worker updates Alpha's
+        # index in another process, so this is a cheap, token-free invalidation
+        # signal for long-lived dashboard/retriever instances.
+        self._index_data_version = self._read_index_data_version()
 
     def get_embedder(self):
         """The resolved embedder (loaded once), or ``None`` when unavailable.
@@ -129,6 +134,22 @@ class HybridRetriever:
         self._vector_cache = None
         self._id_index = None
         self._boiler_cache = None
+        self._index_data_version = self._read_index_data_version()
+
+    def _read_index_data_version(self) -> int:
+        row = self.store.connect().execute("PRAGMA data_version").fetchone()
+        return int(row[0])
+
+    def _refresh_external_index(self) -> None:
+        """Invalidate process-local caches after another process updates SQLite."""
+
+        current = self._read_index_data_version()
+        if current == self._index_data_version:
+            return
+        self._vector_cache = None
+        self._id_index = None
+        self._boiler_cache = None
+        self._index_data_version = current
 
     def _boilerplate_model(self):
         """The corpus-frequency boilerplate model (built once per index, then cached).
@@ -182,6 +203,8 @@ class HybridRetriever:
         """
         if not query or not query.strip():
             return []
+
+        self._refresh_external_index()
 
         # Push the active scope INTO candidate retrieval (not just the post-hoc hydrate filter),
         # so a narrow company/industry/period scope draws its top-`pool` from the scoped subset.

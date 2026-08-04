@@ -67,3 +67,54 @@ def test_noop_without_config():
             "2Q22A": {"revenue": _row("revenue", 96434.0, prior=81654.0)}}
     apply_restated_priors(data, METRICS, {})
     assert data["2Q21A"]["revenue"].current == 83789.0
+
+
+def test_eval_config_label_matches_production_canonical_period():
+    """Regression: live configs use 2Q21A while pipeline keys are 2021-2T."""
+    data = {
+        "2021-2T": {"revenue": _row("revenue", 200.0)},
+        "2022-2T": {"revenue": _row("revenue", 300.0, prior=205.0)},
+    }
+    cfg = {"restated_prior": {"revenue": ["2Q21A"]}}
+    events = apply_restated_priors(data, METRICS, cfg)
+    assert data["2021-2T"]["revenue"].current == 205.0
+    assert events[0]["policy"] == "configured"
+
+
+def test_latest_comparative_defaults_off():
+    data = {
+        "2021-2T": {"revenue": _row("revenue", 200.0, source="[statement] q2")},
+        "2022-2T": {"revenue": _row("revenue", 300.0, prior=205.0,
+                                      source="[statement] q2")},
+    }
+    assert apply_restated_priors(data, METRICS, {}) == []
+    assert data["2021-2T"]["revenue"].current == 200.0
+
+
+def test_latest_comparative_allow_requires_trusted_tier():
+    trusted = {
+        "2021-2T": {"revenue": _row("revenue", 200.0)},
+        "2022-2T": {"revenue": _row("revenue", 300.0, prior=205.0,
+                                      source="[statement] official P&L")},
+    }
+    apply_restated_priors(trusted, METRICS, {"latest_comparative": "allow"})
+    assert trusted["2021-2T"]["revenue"].current == 205.0
+    assert "auto:allow" in trusted["2021-2T"]["revenue"].source_line
+
+    untrusted = {
+        "2021-2T": {"revenue": _row("revenue", 200.0)},
+        "2022-2T": {"revenue": _row("revenue", 300.0, prior=205.0,
+                                      source="[regex_table] guessed row")},
+    }
+    apply_restated_priors(untrusted, METRICS, {"latest_comparative": "allow"})
+    assert untrusted["2021-2T"]["revenue"].current == 200.0
+
+
+def test_latest_comparative_force_accepts_untrusted_tier():
+    data = {
+        "2021-2T": {"revenue": _row("revenue", 200.0)},
+        "2022-2T": {"revenue": _row("revenue", 300.0, prior=205.0,
+                                      source="[regex_table] guessed row")},
+    }
+    apply_restated_priors(data, METRICS, {"latest_comparative": "force"})
+    assert data["2021-2T"]["revenue"].current == 205.0

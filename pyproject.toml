@@ -42,7 +42,7 @@ process-estate-outbox = "src.consumers.cli:main"
 airflow-quarterly-estate = "src.deployment.airflow_task:main"
 
 [tool.setuptools]
-py-modules = ["estate_bridge"]
+py-modules = ["estate_bridge", "estate_portability", "estate_volume"]
 
 [tool.setuptools.packages.find]
 where = ["."]

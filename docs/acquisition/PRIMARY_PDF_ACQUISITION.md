@@ -65,6 +65,13 @@ bridge is switched. See
 
 ## Source certification workflow
 
+Use the deterministic
+[`SOURCE_ONBOARDING_COMPILER.md`](SOURCE_ONBOARDING_COMPILER.md) workflow to
+turn official URL seeds into bounded discovery evidence, verified sample PDFs,
+inferred templates, and a reviewable registry patch. It requires no LLM and is
+dry-run/non-estate-mutating by default. The manual certification rules below
+remain the promotion gate.
+
 Add a source only after completing these steps:
 
 1. **Identify the authoritative page.** Prefer an issuer IR page. Use the

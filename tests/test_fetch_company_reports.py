@@ -184,3 +184,47 @@ def test_parse_period_spanish_ordinals():
     ]
     for stem, expected in cases:
         assert parse_period(stem) == expected, f"parse_period({stem!r}) = {parse_period(stem)!r}, expected {expected!r}"
+
+
+def test_pdf_reparse_overrides_mdna_markdown(tmp_path, monkeypatch):
+    """A report PDF must win over MD&A-derived Markdown for the same period.
+
+    An XBRL-only issuer gets `<period>.md` rendered from its XBRL narrative. Once
+    an IR binding is discovered and the real earnings release lands, resuming
+    with skip_existing must NOT treat that placeholder as completed work.
+    """
+    import json as _json
+
+    from scripts import fetch_company_reports as fcr
+
+    report_dir = tmp_path / "autlan"
+    report_dir.mkdir()
+    (report_dir / "2026-1T.pdf").write_bytes(b"%PDF-1.4\n")
+    (report_dir / "2026-1T.md").write_text("MDNA PLACEHOLDER", encoding="utf-8")
+    (report_dir / "2026-2T.pdf").write_bytes(b"%PDF-1.4\n")
+    (report_dir / "2026-2T.md").write_text("PARSED FROM PDF", encoding="utf-8")
+    (report_dir / "provenance.json").write_text(
+        _json.dumps(
+            {
+                "version": 1,
+                "periods": {
+                    "2026-1T": {"period": "2026-1T", "source": "mdna",
+                                "markdown": "2026-1T.md", "facts": None, "instance": None},
+                    "2026-2T": {"period": "2026-2T", "source": "pdf",
+                                "markdown": "2026-2T.md", "facts": None, "instance": None},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "src.parse.parse_pdf.parse_pdf", lambda path: ("REAL REPORT TEXT", [])
+    )
+
+    parsed = fcr._parse_pdfs(report_dir, skip_existing=True)
+
+    assert parsed == ["2026-1T"]
+    assert (report_dir / "2026-1T.md").read_text(encoding="utf-8") == "REAL REPORT TEXT"
+    # The genuinely-parsed period is still checkpointed, not redone.
+    assert (report_dir / "2026-2T.md").read_text(encoding="utf-8") == "PARSED FROM PDF"
