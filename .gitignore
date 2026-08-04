@@ -6,7 +6,12 @@ __pycache__/
 .airflow-venv/
 .llm_cache/
 .env
-.claude/
+# Keep machine-local Claude state ignored while versioning the project skill.
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/onboard-company/
+!.claude/skills/onboard-company/**
 HANDOFF_ALPHA_GO_CONTINUATION.md
 downloads/
 *.pdf

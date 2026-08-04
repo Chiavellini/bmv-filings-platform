@@ -1,0 +1,4 @@
+interface:
+  display_name: "Onboard Company"
+  short_description: "Build and certify company Excel models"
+  default_prompt: "Use $onboard-company to build and accuracy-certify a company metrics workbook."
