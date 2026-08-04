@@ -1,8 +1,8 @@
 """Shared, project-neutral document estate for the pdfs/ monorepo.
 
-The estate is a metadata catalog. Original files remain where they are until an explicit,
-verified storage migration is undertaken; every artifact is addressed by an absolute path and
-content hash, so Alpha Go, the root extraction stack, and soft can safely share it meanwhile.
+The estate is a portable metadata catalog backed by content-addressed objects.
+Catalog paths are relative to the estate root, so Alpha Go, the root extraction
+stack, and soft can safely share the same external drive on another computer.
 """
 from __future__ import annotations
 
@@ -525,8 +525,43 @@ class EstateReader:
         ).fetchall()
         return [row["project"] for row in rows]
 
+    def _alias_group(self, name: str) -> tuple[str, ...]:
+        """Every name that denotes the same issuer as ``name``, aliases included."""
+        candidate = name.strip().lower()
+        alias_map = self._alias_map()
+        canonical = alias_map.get(candidate, candidate)
+        group = {candidate, canonical}
+        group.update(alias for alias, target in alias_map.items() if target == canonical)
+        return tuple(sorted(group))
+
+    def resolve_companies(self, name: str) -> tuple[str, ...]:
+        """All catalog ``documents.company`` values for one issuer identity.
+
+        The catalog carries two slugs for the same issuer in 19 cases — the
+        alpha-go ticker slug and the registry slug (``gfnorte``/``banorte``,
+        ``amx``/``america_movil``, ``sport``/``sports_world``, …). Resolving to
+        a single name silently drops whichever half the caller did not ask for:
+        ``artifacts("gfnorte")`` returned news rows and none of the 21 quarterly
+        releases filed under ``banorte``. Callers that want an issuer's whole
+        estate must query the union.
+        """
+        present = tuple(
+            row["company"]
+            for row in self.conn.execute(
+                "SELECT DISTINCT company FROM documents WHERE company IN ({})".format(
+                    ",".join("?" * len(self._alias_group(name)))
+                ),
+                self._alias_group(name),
+            )
+        )
+        return present or (self.resolve_company(name),)
+
     def resolve_company(self, name: str) -> str:
-        """Canonical catalog company for ``name`` (slug, alias, or membership)."""
+        """Canonical catalog company for ``name`` (slug, alias, or membership).
+
+        Returns a single name; use :meth:`resolve_companies` when an issuer may
+        be split across two catalog slugs.
+        """
         candidate = name.strip().lower()
         exists = self.conn.execute(
             "SELECT 1 FROM documents WHERE company=? LIMIT 1", (candidate,)
@@ -562,8 +597,11 @@ class EstateReader:
     ) -> list[ArtifactRef]:
         clauses, params = [], []
         if company is not None:
-            clauses.append("d.company=?")
-            params.append(self.resolve_company(company))
+            # Union over the issuer's whole alias group, so a split identity
+            # returns both halves instead of whichever slug was asked for.
+            names = self.resolve_companies(company)
+            clauses.append("d.company IN ({})".format(",".join("?" * len(names))))
+            params.extend(names)
         for column, value in (
             ("d.period", period),
             ("d.doc_type", doc_type),

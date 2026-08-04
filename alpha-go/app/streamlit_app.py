@@ -145,17 +145,25 @@ def _resources():
     return store, retriever, config
 
 
+def _index_revision(store: IndexStore) -> int:
+    """Return SQLite's cross-process commit token for cache keying."""
+
+    return int(store.connect().execute("PRAGMA data_version").fetchone()[0])
+
+
 @st.cache_data(show_spinner=False)
-def _facets():
+def _facets(index_revision_token: int):
     """Clickable filter options straight from the index (companies, doc types, periods…)."""
+    del index_revision_token  # used only as the Streamlit cache key
     store, _, _ = _resources()
     return facet_values(store)
 
 
 @st.cache_data(show_spinner=False)
-def _suggestions():
+def _suggestions(index_revision_token: int):
     """Suggestion pills, filtered to concepts that actually occur in THIS corpus — the
     dictionary is shared with other projects and offers e.g. gym-membership metrics."""
+    del index_revision_token  # used only as the Streamlit cache key
     store, _, _ = _resources()
     conn = store.connect()
     out = []
@@ -183,7 +191,8 @@ def _page_search() -> None:
 
     n_docs = store.count("documents")
     n_chunks = store.count("chunks")
-    facets = _facets()
+    index_revision = _index_revision(store)
+    facets = _facets(index_revision)
     taxonomy = load_taxonomy(config)
     model_name = store.get_meta("embedding_model") or "unknown"
     company_names = {
@@ -360,7 +369,7 @@ def _page_search() -> None:
                              search_cfg=config.get("search"))
     else:
         panels.render_trends(st, store, term=query, filters=filters,
-                             suggestions=_suggestions())
+                             suggestions=_suggestions(index_revision))
 
 
 def _page_upload() -> None:
@@ -371,8 +380,14 @@ def _page_upload() -> None:
         st.error(f"Could not open the index ({type(exc).__name__}: {exc}). "
                  "Build it first: `python3 scripts/build_index.py`.")
         return
-    upload_panel.render_upload(st, config, store, retriever,
-                               facets=_facets(), taxonomy=load_taxonomy(config))
+    upload_panel.render_upload(
+        st,
+        config,
+        store,
+        retriever,
+        facets=_facets(_index_revision(store)),
+        taxonomy=load_taxonomy(config),
+    )
 
 
 def main() -> None:

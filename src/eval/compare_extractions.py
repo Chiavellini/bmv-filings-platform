@@ -668,6 +668,46 @@ def _build_source(md_file: Path, period: str, enabled_tiers: set) -> PeriodSourc
                         period_end=period_end_from_label(period), doc=None)
 
 
+def _markdown_by_period(source_dir: Path) -> dict:
+    """Period → Markdown file for certification.
+
+    The configured directory is authoritative. The estate view is consulted
+    **only when that directory yields no Markdown at all** — the genuinely
+    broken case: ``data/reports/gruma`` holds 41 PDFs and zero Markdown, so
+    gruma certified at zero coverage while its 41 parsed reports sat in
+    ``views/reports/gruma``.
+
+    Deliberately not a full union. Merging the two corpora per-period is the
+    more principled fix (it is what `build_segments` reads), but it *adds*
+    observations — it took `chedraui` from 36 to 43 source files and `femsa`
+    from 20 to 31 — and uncertified observations move pinned regression
+    baselines. Widening certification's corpus is a decision to make per
+    company, with re-certification, not a silent side effect.
+    """
+    from src.shared.paths import SHARED_PARSED_REPORTS_DIR, SHARED_REPORTS_DIR
+
+    def collect(directory: Path) -> dict:
+        found: dict = {}
+        if not directory.is_dir():
+            return found
+        for md_file in sorted(directory.glob('*.md')):
+            period = parse_period(md_file.stem)
+            if period is not None:
+                found.setdefault(period, md_file)
+        return found
+
+    configured = collect(source_dir)
+    if configured:
+        return configured
+
+    slug = source_dir.name
+    for fallback in (SHARED_REPORTS_DIR / slug, SHARED_PARSED_REPORTS_DIR / slug):
+        recovered = collect(fallback)
+        if recovered:
+            return recovered
+    return {}
+
+
 def run_comparison(company_name: str, *, enabled_tiers: set | None = None,
                    use_llm: bool = False) -> list:
     comp = COMPANIES[company_name]
@@ -675,6 +715,7 @@ def run_comparison(company_name: str, *, enabled_tiers: set | None = None,
     metric_defs = apply_config(METRICS, cfg)
     actuales = parse_actuales(comp['actual_file'])
     source_dir = Path(comp['source_dir'])
+    md_by_period = _markdown_by_period(source_dir)
     metric_map = comp['metric_map']
     currency_scale = comp.get('currency_scale', 1.0)
     enabled_tiers = enabled_tiers if enabled_tiers is not None else set(DEFAULT_TIERS)
@@ -686,11 +727,8 @@ def run_comparison(company_name: str, *, enabled_tiers: set | None = None,
     #            can see neighbouring quarters) ────────────────────────────────
     extracted_by_period: dict = {}
     file_by_period: dict = {}
-    for md_file in sorted(source_dir.glob('*.md')):
+    for period, md_file in sorted(md_by_period.items()):
         n_files += 1
-        period = parse_period(md_file.stem)
-        if period is None:
-            continue
         n_mapped += 1
 
         src = _build_source(md_file, period, enabled_tiers)

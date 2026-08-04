@@ -27,7 +27,10 @@ def test_canonical_registry_covers_actual_project_universes():
     assert len(registry.for_project("alpha_go")) == 51
     assert len(registry.for_project("soft")) == 178
     assert len(registry.for_project("earnings")) == 109
-    assert len(registry.enabled_sources(kind="investor_relations")) == 24
+    # These two counts move every time an issuer is bound via
+    # `scripts/onboard_source.py <slug> --apply`. Bump them deliberately in the
+    # same commit as the registry change — that is the point of pinning them.
+    assert len(registry.enabled_sources(kind="investor_relations")) == 28
     assert len(registry.enabled_sources(kind="bmv_issuer_pdf")) == 1
     primary_pdf_sources = (
         *registry.enabled_sources(kind="investor_relations"),
@@ -36,7 +39,7 @@ def test_canonical_registry_covers_actual_project_universes():
     assert sum(
         source.live_verified_period is not None
         for _issuer, source in primary_pdf_sources
-    ) == 5
+    ) == 12
 
     tiendas_3b = registry.get("tiendas_3b")
     assert not tiendas_3b.is_member("alpha_go")
@@ -66,7 +69,12 @@ def test_canonical_registry_covers_actual_project_universes():
     assert gfnorte.source("ir").live_verified_period == "2026-2T"
     assert registry.get("femsa").source("ir").live_verified_period == "2026-2T"
     assert registry.get("sports_world").source("ir").live_verified_period == "2026-2T"
+    assert registry.get("qualitas").source("ir").live_verified_period == "2026-2T"
+    assert registry.get("qualitas").source("ir").strict_pdf_link_pattern
     assert registry.get("tiendas_3b").source("ir").live_verified_period == "2026-1T"
+    assert registry.get("walmex").source("ir").live_verified_period == "2026-2T"
+    assert registry.get("walmex").source("ir").strict_pdf_link_pattern
+    assert registry.get("liverpool").source("ir").live_verified_period == "2026-2T"
 
 
 def test_project_memberships_match_committed_source_universes_exactly():

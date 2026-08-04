@@ -164,16 +164,35 @@ def build_index(corpus_dir: Path, db_path: Path, config: dict, *, embedder=None)
     dim = 0
     if all_chunks:
         batch_size = max(1, int(index_cfg.get("embedding_batch_size", 64)))
-        for start in range(0, len(all_chunks), batch_size):
-            batch = all_chunks[start:start + batch_size]
-            vectors = embedder.encode([c.text for c in batch])
-            for chunk, vec in zip(batch, vectors):
-                arr = np.asarray(vec, dtype="float32")
-                dim = int(arr.shape[0])
-                store.upsert_embedding(chunk.chunk_id, dim, arr.tobytes())
-                embedded += 1
-            if start and start % (batch_size * 10) == 0:
-                print(f"Embedded {start:,}/{len(all_chunks):,} chunks…", flush=True)
+        workers = max(1, int(index_cfg.get("embedding_build_workers", 1)))
+        pool_started = False
+        if workers > 1:
+            starter = getattr(embedder, "start_multi_process_pool", None)
+            if starter is None:
+                raise RuntimeError(
+                    "multiple build workers require a compatible semantic embedder"
+                )
+            worker_threads = max(
+                1, int(index_cfg.get("embedding_build_worker_threads", 1))
+            )
+            starter(workers, worker_threads)
+            pool_started = True
+        try:
+            for start in range(0, len(all_chunks), batch_size):
+                batch = all_chunks[start:start + batch_size]
+                vectors = embedder.encode([c.text for c in batch])
+                for chunk, vec in zip(batch, vectors):
+                    arr = np.asarray(vec, dtype="float32")
+                    dim = int(arr.shape[0])
+                    store.upsert_embedding(chunk.chunk_id, dim, arr.tobytes())
+                    embedded += 1
+                if start and start % (batch_size * 10) == 0:
+                    print(f"Embedded {start:,}/{len(all_chunks):,} chunks…", flush=True)
+        finally:
+            if pool_started:
+                stopper = getattr(embedder, "stop_multi_process_pool", None)
+                if stopper is not None:
+                    stopper()
     store.commit()
 
     store.set_meta("embedding_model", model_name)

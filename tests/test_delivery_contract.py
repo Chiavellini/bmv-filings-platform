@@ -37,8 +37,13 @@ DELIVERY_CONTRACT = (
     "requirements/airflow-native.txt",
     "deploy/airflow/dags/quarterly_estate.py",
     "deploy/airflow/native/.env.example",
+    "deploy/airflow/native/launchd/com.bmv.airflow.COMPONENT.plist.template",
+    "deploy/airflow/native/systemd/bmv-airflow@.service",
+    "scripts/airflow_native_status.py",
     "scripts/configure_airflow.py",
     "scripts/install_airflow_native.sh",
+    "scripts/run_airflow_native.sh",
+    "src/deployment/airflow_task.py",
 )
 
 

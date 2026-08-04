@@ -33,6 +33,16 @@ from pathlib import Path
 
 from src.model.financial_model import MetricDef, compute_derived_metrics
 from src.extract.extract_metrics import extract_metrics, extract_metrics_segmented
+from src.extract.revisions import (
+    DEFAULT_TRUSTED_TIERS,
+    ExtractedMetrics,
+    FactObservation,
+    RevisionMode,
+    normalize_period_label,
+    policy_config,
+    shift_canonical_period,
+    unpack_extraction_result,
+)
 
 
 @dataclass
@@ -43,6 +53,20 @@ class PeriodSource:
     pdf_path: Path | None = None    # source PDF  → Tier 2
     period_end: str | None = None   # ISO quarter end, anchors XBRL context selection
     doc: object | None = None       # parse_pdf.DocMeta: detected scale + sections
+    # Optional richer output supplied by a company extractor or source adapter.
+    # These observations can target any fiscal period, not just ``period``.
+    observations: tuple[FactObservation, ...] = ()
+    # Artifact lineage carried by directory unions. These fields prevent a
+    # current amended report from being silently paired with stale structured
+    # facts/PDFs belonging to another estate document.
+    source_path: Path | None = None
+    source_document_id: str | None = None
+    source_artifact_id: str | None = None
+    pdf_document_id: str | None = None
+    pdf_artifact_id: str | None = None
+    facts_path: Path | None = None
+    facts_document_id: str | None = None
+    facts_artifact_id: str | None = None
 
 
 _QUARTER_END = {"1": "03-31", "2": "06-30", "3": "09-30", "4": "12-31"}
@@ -238,15 +262,15 @@ def extract_metrics_tiered(
     lift of the BMV statement tier) without relying on which inputs are present.
     Names: "xbrl", "bmv", "search", "prose", "table", "llm".
     """
-    found: dict = {}
+    found = ExtractedMetrics(observations=src.observations)
     _on = lambda name: tiers is None or name in tiers
 
     # ---- Tier 1: XBRL structured facts -------------------------------------
     if src.facts and _on("xbrl"):
         try:
             from src.extract.xbrl_facts import (
-                extract_from_xbrl, iso_currency_for, pesos_per_unit_for,
-                pesos_per_unit_for_facts,
+                extract_comparative_observations_from_xbrl,
+                extract_from_xbrl, fact_value_divisor_for, iso_currency_for,
             )
             period_end = src.period_end or period_end_from_label(src.period)
             # Two currency regimes, selected per caller via config:
@@ -256,14 +280,30 @@ def extract_metrics_tiered(
             #  - "convert_to_mxn" (coverage path — soft injects this at call time):
             #    facts-detected USD converts via USDMXN + per-filing millions
             #    sensing, no filter.
-            if ((cfg or {}).get("xbrl") or {}).get("currency_mode") == "convert_to_mxn":
-                ppu = pesos_per_unit_for_facts(cfg, src.facts)
+            currency_mode = (
+                ((cfg or {}).get("xbrl") or {}).get("currency_mode") or "native"
+            )
+            if currency_mode == "convert_to_mxn":
+                ppu = fact_value_divisor_for(
+                    cfg, src.facts, currency_mode="convert_to_mxn",
+                )
                 expected = None
             else:
-                ppu = pesos_per_unit_for(cfg)
+                ppu = fact_value_divisor_for(cfg, src.facts, currency_mode="native")
                 expected = iso_currency_for(cfg)
             _merge_rows(found, extract_from_xbrl(src.facts, metric_defs, period_end, ppu,
                                                  expected_currency=expected), cfg)
+            found.observations.extend(extract_comparative_observations_from_xbrl(
+                src.facts,
+                metric_defs,
+                report_period=src.period,
+                period_end=period_end,
+                pesos_per_unit=ppu,
+                expected_currency=expected,
+                source_document_id=(src.facts_document_id
+                                    or src.source_document_id
+                                    or str(src.facts_path or src.source_path or "")),
+            ))
         except Exception as exc:
             print(f"tiered: Tier 1 (xbrl) failed for {src.period}: {exc}", file=sys.stderr)
 
@@ -311,7 +351,9 @@ def extract_metrics_tiered(
                 if wants_period:
                     args.append(src.period)
                 kwargs = {"pdf_path": src.pdf_path} if wants_pdf else {}
-                _merge_rows(found, fn(*args, **kwargs), cfg)
+                custom_rows, custom_observations = unpack_extraction_result(fn(*args, **kwargs))
+                _merge_rows(found, custom_rows, cfg)
+                found.observations.extend(custom_observations)
             except Exception as exc:
                 print(f"tiered: custom extractor '{custom}' failed for {src.period}: {exc}",
                       file=sys.stderr)
@@ -438,8 +480,10 @@ def _shift_period_label(label: str, years: int = 1) -> str | None:
     return f"{m.group('q2')}Q{yy:02d}{m.group('sfx')}"
 
 
-def apply_restated_priors(extracted_by_period: dict, metric_defs: list, cfg: dict | None) -> None:
-    """Replace configured cells with the NEXT year's same-quarter prior-column value.
+def apply_restated_priors(
+    extracted_by_period: dict, metric_defs: list, cfg: dict | None,
+) -> list[dict]:
+    """Promote next-year comparatives according to explicit and automatic policy.
 
     Mexican issuers routinely restate comparatives — discontinued operations
     (Bimbo/Ricolino 2021), IFRS-16 adoption (2019), IAS-29 re-expression of
@@ -447,33 +491,103 @@ def apply_restated_priors(extracted_by_period: dict, metric_defs: list, cfg: dic
     track the RESTATED series, which is printed only in the following year's
     filing as the prior-year column. For each metric listed in
     ``cfg['restated_prior']`` (value: list of period labels, or ``all``), period
-    P's value is replaced by extracted[P+1y].prior when that capture exists;
-    otherwise the as-reported row is kept. Derived ([calc]) ratios of touched
-    periods are recomputed so restated components flow into margins.
+    P's value is replaced by extracted[P+1y].prior when that capture exists.
+    Configuration labels are normalized, so eval-style ``2Q21A`` works against
+    production's ``2021-2T`` keys.
+
+    A separate, conservative ``latest_comparative`` policy may be ``off``
+    (default), ``allow`` (trusted/official source tiers only), or ``force``.
+    Explicit ``restated_prior`` cells always retain their historical behavior and
+    take precedence over the automatic policy.  Returns audit events; callers
+    which previously ignored the ``None`` return remain compatible.
     """
     spec = (cfg or {}).get("restated_prior") or {}
-    if not spec:
-        return
+    if not isinstance(spec, dict):
+        spec = {}
+    auto_mode, auto_details = policy_config(cfg, "latest_comparative", default="off")
+    if not spec and auto_mode is RevisionMode.OFF:
+        return []
+
+    raw_auto_metrics = auto_details.get("metrics")
+    if isinstance(raw_auto_metrics, str):
+        auto_metrics = {raw_auto_metrics}
+    elif raw_auto_metrics:
+        auto_metrics = {str(key) for key in raw_auto_metrics}
+    else:
+        auto_metrics = None
+    trusted_tiers = {
+        str(tier).strip().lower().strip("[]")
+        for tier in (auto_details.get("trusted_tiers") or DEFAULT_TRUSTED_TIERS)
+    }
+
+    canonical_to_actual = {
+        normalize_period_label(period): period for period in extracted_by_period
+    }
+
+    def explicitly_configured(key: str, canonical_period: str) -> bool:
+        periods = spec.get(key)
+        if periods == "all":
+            return True
+        if isinstance(periods, str):
+            periods = [periods]
+        return canonical_period in {
+            normalize_period_label(item) for item in (periods or [])
+        }
+
     touched: set = set()
-    for period, rows in extracted_by_period.items():
-        nxt_label = _shift_period_label(period, 1)
-        nxt = extracted_by_period.get(nxt_label) if nxt_label else None
+    events: list[dict] = []
+    # Snapshot the items: a future typed-observation projection may have added a
+    # period, and this pass must not mutate the mapping while iterating it.
+    for period, rows in list(extracted_by_period.items()):
+        canonical_period = normalize_period_label(period)
+        next_canonical = shift_canonical_period(canonical_period, 1)
+        next_actual = canonical_to_actual.get(next_canonical or "")
+        nxt = extracted_by_period.get(next_actual) if next_actual else None
         if not nxt:
             continue
-        for key, periods in spec.items():
-            if periods != "all" and period not in set(periods or []):
+        for key, nrow in nxt.items():
+            explicit = explicitly_configured(key, canonical_period)
+            automatic = auto_mode is not RevisionMode.OFF and (
+                auto_metrics is None or key in auto_metrics
+            )
+            if not explicit and not automatic:
                 continue
-            nrow = nxt.get(key)
             if nrow is None or nrow.prior is None:
                 continue
+            if not explicit and auto_mode is RevisionMode.ALLOW:
+                if _source_tier(nrow) not in trusted_tiers:
+                    continue
+            old = rows.get(key)
+            old_value = getattr(old, "current", None) if old is not None else None
+            # Automatic promotion is intentionally quiet when the later filing
+            # merely confirms the as-reported number.  Explicit policy still
+            # annotates the cell, preserving its established semantics.
+            if not explicit and old_value is not None and old_value == nrow.prior:
+                continue
+            policy = "configured" if explicit else f"auto:{auto_mode.value}"
+            provenance = (
+                f"[restated] {policy} latest comparative from {next_actual} prior "
+                f"for {period} — {nrow.source_line}"
+            )
             rows[key] = replace(
                 nrow,
                 current=nrow.prior,
                 prior=None,
                 var_pct=None,
-                source_line=f"[restated] {nxt_label} prior — {nrow.source_line}"[:120],
+                source_line=provenance[:160],
             )
             touched.add(period)
+            events.append({
+                "kind": "latest_comparative",
+                "policy": policy,
+                "metric": key,
+                "observed_period": canonical_period,
+                "source_report_period": normalize_period_label(next_actual),
+                "previous_value": old_value,
+                "selected_value": nrow.prior,
+                "selected_source_tier": _source_tier(nrow),
+                "applied": True,
+            })
     # Restated components must flow into derived ratios: recompute [calc] rows
     # (only cells that are calc-sourced or absent — raw-extracted ratios stay).
     for period in touched:
@@ -483,3 +597,4 @@ def apply_restated_priors(extracted_by_period: dict, metric_defs: list, cfg: dic
             old = rows.get(key)
             if old is None or "[calc" in (old.source_line or ""):
                 rows[key] = drow
+    return events

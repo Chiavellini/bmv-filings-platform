@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import textwrap
 
+import pytest
+
 from src.shared.paths import CONFIGS_DIR
 from src.model.financial_model import (
     METRICS, METRIC_BY_KEY, MetricDef,
     load_config, apply_config, load_concept_map, attach_concept_map,
+    default_metric_aggregation, evaluate_metric_calc,
 )
 
 
@@ -39,6 +42,35 @@ def test_apply_config_merges_overrides_and_custom_metrics():
 def test_apply_config_empty_is_noop():
     merged = apply_config(METRICS, {})
     assert [m.key for m in merged] == [m.key for m in METRICS]
+
+
+def test_metric_aggregation_defaults_and_config_override():
+    assert METRIC_BY_KEY["revenue"].aggregation == "sum"
+    assert METRIC_BY_KEY["cash"].aggregation == "ending"
+    assert METRIC_BY_KEY["shares_outstanding"].aggregation == "ending"
+    assert METRIC_BY_KEY["gross_margin"].aggregation == "none"
+    assert default_metric_aggregation("net_new_stores", "kpi", "count") == "sum"
+
+    merged = apply_config(METRICS, {
+        "metric_overrides": {"revenue": {"aggregation": "average"}},
+        "custom_metrics": [{
+            "key": "installed_base", "section": "kpi", "unit": "count",
+            "aggregation": "ending",
+        }],
+    })
+    by_key = {m.key: m for m in merged}
+    assert by_key["revenue"].aggregation == "average"
+    assert by_key["installed_base"].aggregation == "ending"
+
+
+def test_metric_calc_evaluator_accepts_only_simple_arithmetic():
+    assert evaluate_metric_calc("revenue - cogs", {"revenue": 100, "cogs": 60}) == 40
+    assert evaluate_metric_calc("gross_profit / revenue * 100", {
+        "gross_profit": 40, "revenue": 100,
+    }) == 40
+    assert evaluate_metric_calc("-capex", {"capex": 10}) == -10
+    with pytest.raises(ValueError):
+        evaluate_metric_calc("__import__('os').system('echo nope')", {})
 
 
 def test_load_concept_map_from_explicit_path(tmp_path):

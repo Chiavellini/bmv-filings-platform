@@ -3,7 +3,7 @@
 Downloads Mexican quarterly reports, extracts financial metrics (deterministic cascade:
 XBRL → BMV statements → command-F search → regex → tables → optional LLM), and generates standardized **Segments** Excel models —
 driven from the terminal. The simplest entry point is `scripts/build_segments.py`: one
-markdown file in, one self-contained `<Company>/` directory out.
+markdown file in, one retained company build plus one canonical analyst handoff.
 
 ## Root quarterly acquisition status
 
@@ -72,9 +72,9 @@ configs/      <company>.yaml + <company>_segments.yaml, xbrl_concepts.yaml
 data/
   document_estate/     SQLite metadata, immutable local objects, and compatibility views
   reports/<company>/   legacy cache being migrated into the shared estate
-  ground_truth/        actuales/*.csv accuracy baselines
-  style/               reference Segments workbooks
-docs/         this README, handoffs, HANDOFF_EXTRACTION_CASCADE.md
+  ground_truth/        optional private accuracy baselines (not in Git)
+  style/               optional private reference workbooks (not in Git)
+docs/         current guides, architecture, deployment, and verification records
 tests/        pytest suite
 archive/      retired/duplicate artifacts (safe to delete)
 ```
@@ -87,10 +87,10 @@ All resource paths resolve through `src/shared/paths.py` (`PROJECT_ROOT`, `CONFI
 CLIs are invoked as modules from the project root:
 
 ```bash
-# One command, one markdown in (company name + IR link + metrics outline),
-# one self-contained <Company>/ out (downloads/ parses/ csv/ excel/).
-# Runs the full pipeline (download → parse → extract → Excel) via outline mode.
-python3 scripts/build_segments.py path/to/company.md
+# Strict onboarding: the analyst CSV/XLSX, explicitly pinned Markdown outline,
+# and a successful company acquisition receipt must all agree.
+python3 scripts/build_segments.py path/to/company.md \
+  --analyst-metrics requests/Metrics.xlsx --analyst-company TICKER
 
 # Extract metrics → CSV
 python -m src.extract.pipeline --dir data/reports/sport --config configs/sport.yaml --csv out.csv
@@ -123,6 +123,8 @@ the existing `parse_outline` → `pipeline.run` → `build_outline_workbook` mac
 ```markdown
 # Soriana
 IR: https://www.organizacionsoriana.com/principales_reportes_en.html
+Analyst-Metrics: requests/Metrics.xlsx#Requested Metrics
+Analyst-Company: SORIANA
 
 ## Total Income
 - Total Income {revenue}
@@ -139,15 +141,27 @@ IR: https://www.organizacionsoriana.com/principales_reportes_en.html
 ```
 
 - `## Heading` → a workbook section.
-- `- Label` → a data row; its metric key is auto-resolved when unambiguous (exact/alias).
-- `- Label {metric_key}` → a data row with a **pinned** key (authoritative — use this to fix
-  any mis-map, e.g. `Total Income {revenue}`).
+- `- Label` → drafting convenience only; strict onboarding rejects an unpinned data row.
+- `- Label {metric_key}` → a data row with an explicit, authoritative key.
 - `- YoY` / `- Margin` / `- As % of Total` / `- bps change` / `- Check` / `- 2-year comp`
   → derived rows, rendered as live Excel formulas.
 
-Rows the cascade can't fill render as graceful blanks; a resolution report prints what
-mapped vs. blanked. If `data/reports/<slug>/` already has parsed reports they're reused
-(download/parse skipped); pass `--force-download` to refetch.
+The analyst sheet, Markdown, and rendered workbook are compared by ordered label, row role
+(section versus requested row), and any analyst-declared canonical key. Requested rows are never
+silently pruned, and formulas with no evaluable periods fail the Excel audit. A weak/audit-failing
+candidate cannot replace `outputs/latest/` and the CLI returns status 3. The previous
+single-workbook handoff moves to `outputs/archive/deliverables/` after a serialized,
+crash-recoverable publication.
+
+A populated cache is not proof of freshness. Strict builds require a successful, non-backfill
+canonical acquisition receipt for the exact company within 24 hours; use
+`refresh-quarterly-estate sync --only <slug> --apply` first. `--allow-stale-estate` and
+`--allow-auto-map` are recorded exploratory escape hatches, not shipping modes. Publication binds
+the receipt to the exact selected catalog artifacts and their hashes, so a stale view or local
+cache cannot pass merely because discovery ran. Extraction reads the zero-copy union of the
+reports compatibility view, versioned parsed derivatives, and any transitional local report cache.
+The adjacent `outputs/latest_manifest.json` binds the current workbook SHA/build ID to its analyst
+contract and estate watermark while `outputs/latest/` itself remains exactly one `.xlsx` file.
 
 ## Extraction Config Knobs
 

@@ -80,3 +80,36 @@ def test_build_index_auto_backend_offline(tmp_path, monkeypatch):
     stats = build_index(corpus_dir, db, cfg)
     assert stats["embedding_model"] == "hashing"
     assert stats["embedded"] == stats["chunks"]
+
+
+def test_build_index_uses_and_closes_requested_worker_pool(tmp_path):
+    class PoolAwareEmbedder(HashingEmbedder):
+        model_name = "pool-aware-test"
+
+        def __init__(self):
+            super().__init__(dim=32)
+            self.started = None
+            self.stopped = False
+
+        def start_multi_process_pool(self, workers, worker_threads):
+            self.started = (workers, worker_threads)
+
+        def stop_multi_process_pool(self):
+            self.stopped = True
+
+    corpus_dir = _seed_corpus(tmp_path)
+    db = tmp_path / "index" / "alpha.db"
+    embedder = PoolAwareEmbedder()
+    cfg = {
+        "index": {
+            "embedding_build_workers": 3,
+            "embedding_build_worker_threads": 2,
+            "chunk": {"target_chars": 400, "overlap_chars": 50},
+        }
+    }
+
+    stats = build_index(corpus_dir, db, cfg, embedder=embedder)
+
+    assert stats["embedded"] == stats["chunks"]
+    assert embedder.started == (3, 2)
+    assert embedder.stopped is True

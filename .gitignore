@@ -2,10 +2,16 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .venv/
+.venv*/
 .airflow-venv/
 .llm_cache/
 .env
-.claude/
+# Keep machine-local Claude state ignored while versioning the project skill.
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/onboard-company/
+!.claude/skills/onboard-company/**
 HANDOFF_ALPHA_GO_CONTINUATION.md
 downloads/
 *.pdf
@@ -58,13 +64,26 @@ soft/data/bmv_equity_roster.csv
 soft/data/bloomberg/*.csv
 !soft/data/bloomberg/walmex.csv
 
-# Private/generated Earnings research artifacts. Source, configs, and tests are
-# versioned; model inventories, analyst workbooks, rendered results, and raw
-# vendor snapshots stay with the external data bundle.
-earnings/audit/model_vintage_inventory.csv
-earnings/data/analyst/
+# Historical local handoffs and corpus-derived research labels are retained in
+# existing developer checkouts but are not part of a reusable source release.
+docs/HANDOFF_EXTRACTION_CASCADE.md
+docs/handoffs/
+alpha-go/HANDOFF.md
+alpha-go/handoffs/
+alpha-go/eval/analog_candidates2_unlabeled.yaml
+alpha-go/eval/analog_relevance.yaml
+alpha-go/eval/analog_relevance2.yaml
+alpha-go/eval/sentiment_gold.yaml
+alpha-go/eval/sentiment_labels.yaml
+alpha-go/eval/sentiment_sample2_labeled.yaml
+alpha-go/eval/sentiment_sample2_unlabeled.yaml
+
+# All Earnings inventories, private analyst inputs, generated reports, and the
+# vendored downloader cache are external/runtime data rather than source.
+earnings/audit/
+earnings/data/
 earnings/outputs/
-earnings/vendor/alpha-go/data/bmv/archive_index.html
+earnings/vendor/alpha-go/data/
 
 # Generated deliverables: outputs/<Company>/{csv,excel,validation}/ is produced
 # by scripts/build_segments.py. Declared here so the phase manifest can name it

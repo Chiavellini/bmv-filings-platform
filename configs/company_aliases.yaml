@@ -1,5 +1,29 @@
 # Canonical Soft-universe slug -> equivalent slugs used by another subproject.
 # These are issuer identities, not query-term synonyms.
+# The alpha-go corpus keys issuers by BMV ticker while the root registry
+# (configs/issuers.yaml) keys them by canonical slug, so the same issuer lands
+# in the catalog twice. Every pair below was verified to have rows under BOTH
+# names in data/document_estate/catalog.db; without the alias, an estate query
+# silently returns only one half of the issuer's documents.
 canonical:
   gfnorte: [banorte]
   gmexico_transportes: [gmxt]
+  america_movil: [amx]
+  consorcio_ara: [ara]
+  farmacias_benavides: [bevides]
+  bolsa_mexicana: [bolsa]
+  grupo_cable: [cable]
+  cementos_moctezuma: [cmoctez]
+  fibra_danhos: [danhos]
+  fibra_hd: [fibrahd]
+  fibra_macquarie: [fibramq]
+  fibra_prologis: [fibrapl]
+  fibra_ideal: [fideal]
+  fibra_hotel: [fiho]
+  fibra_inn: [finn]
+  fibra_mty: [fmty]
+  corporativo_fragua: [fragua]
+  fibra_shop: [fshop]
+  fibra_sites: [fsites]
+  grupo_carso: [gcarso]
+  sports_world: [sport]

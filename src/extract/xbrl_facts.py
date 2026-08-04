@@ -20,13 +20,17 @@ Key facts about the input (facts = ``json["facts"]`` from a ``*_facts.json``):
          "unit": "ISO4217:MXN", "decimals": "-3", "dimensions": null}
     ], ...}
 
-Raw IFRS monetary values are in PESOS. The rest of the project works in
-*miles de pesos* (thousands), so monetary metrics are divided by 1000.
+Most raw IFRS monetary values are in full currency units. Some BMV artifacts,
+however, preserve the filing's displayed millions denomination. Callers use
+``fact_value_divisor_for`` to normalize either representation into the
+company's configured workbook unit before extracting metrics.
 """
 
 from __future__ import annotations
 
 from datetime import date
+import math
+import re
 
 from src.model.financial_model import MetricDef
 
@@ -38,6 +42,9 @@ PESOS_PER_UNIT = 1000.0
 # distinguish the single-quarter fact from the year-to-date fact.
 _QUARTER_DAYS = 92
 _QUARTER_MAX_DAYS = 100   # accept up to ~3 months; rejects half-year/YTD spans
+_QUARTER_MIN_DAYS = 70    # reject monthly/irregular contexts as quarter assertions
+_FY_MIN_DAYS = 300
+_FY_MAX_DAYS = 380
 
 
 def _parse_iso(d) -> date | None:
@@ -255,18 +262,45 @@ def _facts_in_millions(facts: dict | None) -> bool:
     return bool(mags) and max(mags) < _MILLIONS_MAX_TOTAL
 
 
+def fact_value_divisor_for(
+    cfg: dict | None,
+    facts: dict | None,
+    *,
+    currency_mode: str = "native",
+) -> float:
+    """Return the divisor that normalizes one filing into workbook units.
+
+    The unit math is deliberately expressed in three independent quantities::
+
+        output = fact_value * fact_denomination * fx / output_unit_scale
+
+    ``_scale`` performs division, so this function returns the equivalent
+    ``output_unit_scale / (fact_denomination * fx)``.  A filing detected as
+    already denominated in millions uses ``fact_denomination=1e6``.  Native
+    mode leaves the filing currency unchanged; ``convert_to_mxn`` applies
+    USD→MXN exactly once.
+
+    This also handles configurations whose workbook unit is thousands: a fact
+    reported in millions correctly uses a ``0.001`` divisor (one million-unit
+    fact equals one thousand thousands).
+    """
+    output_unit_scale = pesos_per_unit_for(cfg)
+    fact_denomination = 1e6 if _facts_in_millions(facts) else 1.0
+    fx_to_output_currency = 1.0
+    if currency_mode == "convert_to_mxn" and detect_reporting_currency(facts) == "USD":
+        fx_to_output_currency = _USDMXN
+    return output_unit_scale / (fact_denomination * fx_to_output_currency)
+
+
 def pesos_per_unit_for_facts(cfg: dict | None, facts: dict | None) -> float:
-    """Per-filing pesos-per-unit for the CONVERT-to-MXN coverage path: config unit +
-    facts-detected currency (USD converts via USDMXN) + a magnitude guard. When a
-    full-peso config (base ≥ 1e6) meets a filing whose totals are already in
-    millions, downshift the unit ×1e6 so the value isn't divided by a million again
-    (which would land an equity of 6,962mn at 0.007). Only downshifts a
-    millions-config filer; thousands/USD scaling and every normal filing are
-    untouched."""
-    base = pesos_per_unit_for(cfg, detect_reporting_currency(facts))
-    if base >= 1e6 and _facts_in_millions(facts):
-        return base / 1e6
-    return base
+    """Compatibility wrapper for the convert-to-MXN coverage path.
+
+    New code should call :func:`fact_value_divisor_for` and state its currency
+    mode explicitly.  Keeping this wrapper preserves the coverage API while
+    fixing already-in-millions USD filings, whose FX-adjusted divisor is below
+    ``1e6`` and therefore escaped the former magnitude guard.
+    """
+    return fact_value_divisor_for(cfg, facts, currency_mode="convert_to_mxn")
 
 
 # Metrics whose mapped concept list can contain a present-but-0.0 line that shadows the real value in
@@ -293,6 +327,209 @@ def _currency_ok(entry: dict, expected: str | None) -> bool:
     if "ISO4217" not in unit.upper():
         return True
     return unit.upper().rsplit(":", 1)[-1] == expected
+
+
+def _quarter_label_for_end(
+    end: date,
+    report_period: str,
+    report_end: date | None,
+) -> str:
+    """Map a duration end to the issuer's canonical fiscal-quarter label.
+
+    When the report end is known, map relative to that report's quarter. This
+    preserves non-calendar fiscal calendars. The calendar-quarter fallback is
+    used only when that anchor is unavailable.
+    """
+    from src.extract.revisions import normalize_period_label
+
+    normalized = normalize_period_label(report_period)
+    match = re.fullmatch(r"(?P<year>\d{4})-(?P<quarter>[1-4])T", normalized)
+    if match and report_end is not None and end <= report_end:
+        month_gap = (report_end.year - end.year) * 12 + report_end.month - end.month
+        steps = int(round(month_gap / 3.0))
+        expected_days = steps * (365.2425 / 4.0)
+        if steps >= 0 and abs((report_end - end).days - expected_days) <= 24:
+            index = int(match.group("year")) * 4 + int(match.group("quarter")) - 1 - steps
+            return f"{index // 4:04d}-{index % 4 + 1}T"
+    quarter = (end.month - 1) // 3 + 1
+    return f"{end.year:04d}-{quarter}T"
+
+
+def _duration_period_identity(
+    entry: dict,
+    report_period: str,
+    report_end: date | None,
+) -> tuple[str, str] | None:
+    """Return ``(period, kind)`` for safe quarter/FY duration contexts only."""
+    if _has_dimensions(entry) or _is_instant(entry):
+        return None
+    end = _parse_iso(entry.get("period_end"))
+    span = _span_days(entry)
+    if end is None or span is None:
+        return None
+    if _QUARTER_MIN_DAYS <= span <= _QUARTER_MAX_DAYS:
+        return _quarter_label_for_end(end, report_period, report_end), "quarter"
+    if _FY_MIN_DAYS <= span <= _FY_MAX_DAYS:
+        from src.extract.revisions import normalize_period_label
+
+        normalized = normalize_period_label(report_period)
+        report_fy = re.fullmatch(r"(?P<year>\d{4})-FY", normalized)
+        report_q4 = re.fullmatch(r"(?P<year>\d{4})-4T", normalized)
+        if report_end is not None and (report_fy or report_q4) and end <= report_end:
+            year_gap = int(round((report_end - end).days / 365.2425))
+            report_year = int((report_fy or report_q4).group("year"))
+            return f"{report_year - year_gap:04d}-FY", "fy"
+        return f"{end.year:04d}-FY", "fy"
+    # YTD and other irregular contexts are deliberately not projected onto a
+    # quarterly/FY workbook cell.
+    return None
+
+
+def _unambiguous_scaled_value(
+    entries: list[dict],
+    unit: str,
+    pesos_per_unit: float,
+) -> float | None:
+    """One value when duplicate contexts agree; None for conflicting contexts."""
+    values = [_scale(entry, unit, pesos_per_unit) for entry in entries]
+    if not values:
+        return None
+    first = values[0]
+    if any(not math.isclose(first, value, rel_tol=1e-12, abs_tol=1e-9)
+           for value in values[1:]):
+        return None
+    return first
+
+
+def extract_comparative_observations_from_xbrl(
+    facts: dict,
+    metric_defs: list[MetricDef],
+    *,
+    report_period: str,
+    period_end: str | None = None,
+    pesos_per_unit: float = PESOS_PER_UNIT,
+    expected_currency: str | None = None,
+    source_document_id: str = "",
+) -> list:
+    """Emit trusted typed assertions for earlier periods in a later XBRL filing.
+
+    This is intentionally narrower than global ``latest_comparative`` behavior:
+    only dimensionless official XBRL duration contexts that unambiguously map to
+    a single quarter or full year are emitted. YTD contexts, balance-sheet
+    instants, dimensional facts, and conflicting duplicate contexts are skipped.
+    The same mapped concept used by the report's current period anchors every
+    comparative, preventing cross-taxonomy fallback from rewriting history.
+    """
+    from src.extract.revisions import (
+        FactObservation,
+        ObservationRole,
+        PeriodKind,
+        normalize_period_label,
+    )
+    from src.shared.report_index import period_sort_key
+
+    if not facts:
+        return []
+    normalized_report = normalize_period_label(report_period)
+    report_end = _parse_iso(period_end)
+    current_targets = [normalized_report]
+    q4 = re.fullmatch(r"(?P<year>\d{4})-4T", normalized_report)
+    if q4:
+        current_targets.append(f"{q4.group('year')}-FY")
+
+    observations: list[FactObservation] = []
+    for mdef in metric_defs:
+        if not mdef.xbrl_concepts or mdef.section == "balance":
+            continue
+
+        chosen = None
+        zero_fallback = None
+        for concept in mdef.xbrl_concepts:
+            parts = [part.strip() for part in concept.split("+")]
+            grouped_parts: list[dict[tuple[str, str], list[dict]]] = []
+            valid = True
+            for part in parts:
+                entries = list(facts.get(part) or [])
+                if expected_currency:
+                    entries = [entry for entry in entries
+                               if _currency_ok(entry, expected_currency)]
+                grouped: dict[tuple[str, str], list[dict]] = {}
+                for entry in entries:
+                    identity = _duration_period_identity(
+                        entry, normalized_report, report_end,
+                    )
+                    if identity is not None:
+                        grouped.setdefault(identity, []).append(entry)
+                if not grouped:
+                    valid = False
+                    break
+                grouped_parts.append(grouped)
+            if not valid:
+                continue
+
+            common = set(grouped_parts[0])
+            for grouped in grouped_parts[1:]:
+                common.intersection_update(grouped)
+            current_identity = next(
+                (identity for target in current_targets for identity in common
+                 if identity[0] == target),
+                None,
+            )
+            if current_identity is None:
+                continue
+            current_value = 0.0
+            for grouped in grouped_parts:
+                component = _unambiguous_scaled_value(
+                    grouped[current_identity], mdef.unit, pesos_per_unit,
+                )
+                if component is None:
+                    valid = False
+                    break
+                current_value += component
+            if not valid:
+                continue
+            payload = (concept, grouped_parts, common)
+            if current_value == 0 and mdef.key in _PREFER_NONZERO:
+                zero_fallback = zero_fallback or payload
+                continue
+            chosen = payload
+            break
+
+        chosen = chosen or zero_fallback
+        if chosen is None:
+            continue
+        concept, grouped_parts, common = chosen
+        for observed_period, kind in sorted(
+                common, key=lambda identity: period_sort_key(identity[0])):
+            if observed_period in current_targets:
+                continue
+            if period_sort_key(observed_period) >= period_sort_key(normalized_report):
+                continue
+            value = 0.0
+            valid = True
+            for grouped in grouped_parts:
+                component = _unambiguous_scaled_value(
+                    grouped[(observed_period, kind)], mdef.unit, pesos_per_unit,
+                )
+                if component is None:
+                    valid = False
+                    break
+                value += component
+            if not valid or not math.isfinite(value):
+                continue
+            observations.append(FactObservation(
+                metric=mdef.key,
+                observed_period=observed_period,
+                value=value,
+                report_period=normalized_report,
+                period_kind=(PeriodKind.FY if kind == "fy" else PeriodKind.QUARTER),
+                source_tier="xbrl",
+                source_document_id=source_document_id,
+                role=ObservationRole.COMPARATIVE,
+                trusted=True,
+                evidence=f"{concept} comparative context {observed_period}",
+            ))
+    return observations
 
 
 def extract_from_xbrl(

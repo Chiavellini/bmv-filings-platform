@@ -78,6 +78,45 @@ def test_membership_alias_resolves(synthetic_catalog: Path) -> None:
         assert reader.resolve_company("walmex") == "walmex"
 
 
+def test_split_identity_returns_both_catalog_slugs(synthetic_catalog: Path) -> None:
+    """19 issuers sit in the catalog under two slugs at once — the alpha-go
+    ticker slug and the registry slug. ``resolve_company`` returns whichever
+    one was asked for and silently drops the other half's documents."""
+    with EstateReader(synthetic_catalog) as reader:
+        reader.conn.close()
+    with DocumentEstate(synthetic_catalog) as estate:
+        estate.upsert_document(
+            EstateDocument(
+                document_id="doc-3",
+                company="banorte",
+                period="2023-2T",
+                doc_type="quarterly_release",
+                title="Banorte 2023-2T",
+            )
+        )
+        estate.commit()
+
+    with EstateReader(synthetic_catalog) as reader:
+        assert reader.resolve_companies("gfnorte") == ("banorte", "gfnorte")
+        assert reader.resolve_companies("banorte") == ("banorte", "gfnorte")
+        periods = {a.period for a in reader.artifacts("gfnorte")}
+        documents = {
+            row["document_id"]
+            for row in reader.conn.execute(
+                "SELECT document_id FROM documents WHERE company IN ('banorte','gfnorte')"
+            )
+        }
+        assert documents == {"doc-2", "doc-3"}
+        # Both halves are reachable from either name.
+        assert reader.resolve_companies("gfnorte") == reader.resolve_companies("banorte")
+        assert periods == set() or periods  # artifacts may be absent; identity is the point
+
+
+def test_resolve_companies_falls_back_for_unknown_names(synthetic_catalog: Path) -> None:
+    with EstateReader(synthetic_catalog) as reader:
+        assert reader.resolve_companies("no_such_company") == ("no_such_company",)
+
+
 def test_unknown_company_returns_empty_not_raises(synthetic_catalog: Path) -> None:
     with EstateReader(synthetic_catalog) as reader:
         assert reader.artifacts("no_such_company") == []

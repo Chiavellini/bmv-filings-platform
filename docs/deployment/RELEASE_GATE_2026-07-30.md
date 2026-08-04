@@ -1,5 +1,9 @@
 # GitHub release gate — 2026-07-30
 
+> Historical record. This gate predates the portable Estate migration and is
+> superseded by `RELEASE_GATE_2026-08-04.md`. Its legacy-estate blocker and test
+> counts describe the earlier candidate, not the current release.
+
 ## Decision
 
 The sanitized source candidate is ready for a **private** GitHub repository.

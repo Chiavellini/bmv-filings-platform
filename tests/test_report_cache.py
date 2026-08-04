@@ -13,8 +13,10 @@ from scripts import build_segments as bs
 
 def _wire(monkeypatch, tmp_path):
     shared_root = tmp_path / "estate" / "views" / "reports"
+    parsed_root = tmp_path / "estate" / "views" / "parsed"
     reports_root = tmp_path / "data" / "reports"
     monkeypatch.setattr(bs, "SHARED_REPORTS_DIR", shared_root)
+    monkeypatch.setattr(bs, "SHARED_PARSED_REPORTS_DIR", parsed_root)
     monkeypatch.setattr(bs, "REPORTS_DIR", reports_root)
     return shared_root, reports_root
 
@@ -48,3 +50,44 @@ def test_force_download_bypasses_view(monkeypatch, tmp_path):
     (view / "2024-1T.md").write_text("x", encoding="utf-8")
 
     assert bs._report_cache("acme", force_download=True) == reports / "acme"
+
+
+def test_report_sources_union_views_local_cache_and_derivatives(monkeypatch, tmp_path):
+    shared, reports = _wire(monkeypatch, tmp_path)
+    parsed = tmp_path / "estate" / "views" / "parsed"
+    for directory, filename in (
+        (shared / "acme", "2024-1T.pdf"),
+        (reports / "acme", "2024-2T_facts.json"),
+        (parsed / "acme", "2024-1T__doc__hash.md"),
+    ):
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / filename).write_text("x", encoding="utf-8")
+
+    assert bs._report_sources("acme") == (
+        shared / "acme",
+        reports / "acme",
+        parsed / "acme",
+    )
+    assert bs._available_periods(bs._report_sources("acme")) == ["2024-1T", "2024-2T"]
+
+
+def test_report_sources_force_download_is_writable_only(monkeypatch, tmp_path):
+    shared, reports = _wire(monkeypatch, tmp_path)
+    (shared / "acme").mkdir(parents=True)
+    (shared / "acme" / "2024-1T.md").write_text("x", encoding="utf-8")
+
+    assert bs._report_sources("acme", force_download=True) == (reports / "acme",)
+
+
+def test_report_sources_include_only_controlled_xbrl_child(monkeypatch, tmp_path):
+    shared, _reports = _wire(monkeypatch, tmp_path)
+    company = shared / "acme"
+    xbrl = company / "xbrl"
+    junk = company / "archive" / "nested"
+    xbrl.mkdir(parents=True)
+    junk.mkdir(parents=True)
+    (xbrl / "ACME_2024-FY_facts.json").write_text('{"facts": {}}', encoding="utf-8")
+    (junk / "ACME_2023-FY_facts.json").write_text('{"facts": {}}', encoding="utf-8")
+
+    assert bs._report_sources("acme") == (xbrl,)
+    assert bs._available_periods(bs._report_sources("acme")) == ["2024-FY"]

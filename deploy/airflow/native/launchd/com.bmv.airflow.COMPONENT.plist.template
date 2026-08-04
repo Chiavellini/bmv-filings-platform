@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Render concrete files with scripts/configure_airflow.py; do not load
+       this placeholder directly. COMPONENT is api-server, scheduler, or
+       dag-processor. Secrets remain in the owner-only dotenv file. -->
+  <key>Label</key>
+  <string>com.bmv.airflow.__COMPONENT__</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__PROJECT_ROOT__/scripts/run_airflow_native.sh</string>
+    <string>__ENVIRONMENT_FILE__</string>
+    <string>__COMPONENT__</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__PROJECT_ROOT__</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>__AIRFLOW_HOME__/service-logs/__COMPONENT__.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__AIRFLOW_HOME__/service-logs/__COMPONENT__.err.log</string>
+</dict>
+</plist>

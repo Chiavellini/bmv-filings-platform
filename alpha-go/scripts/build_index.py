@@ -48,6 +48,20 @@ def main() -> None:
         default=256,
         help="vector dimension when --embedding-backend=hashing",
     )
+    ap.add_argument(
+        "--embedding-workers",
+        type=int,
+        help=(
+            "parallel semantic embedding processes for this build; omitted keeps "
+            "the portable single-process default"
+        ),
+    )
+    ap.add_argument(
+        "--embedding-worker-threads",
+        type=int,
+        default=1,
+        help="CPU threads per semantic embedding worker (default: 1)",
+    )
     args = ap.parse_args()
 
     from src.corpus.manifest import load_manifest
@@ -83,6 +97,17 @@ def main() -> None:
                 "hashing_dim": int(existing.get_meta("embedding_dim") or 256),
             })
         existing.close()
+    if args.embedding_workers is not None:
+        if args.embedding_workers <= 0:
+            ap.error("--embedding-workers must be positive")
+        if args.embedding_worker_threads <= 0:
+            ap.error("--embedding-worker-threads must be positive")
+        config.setdefault("index", {}).update(
+            {
+                "embedding_build_workers": args.embedding_workers,
+                "embedding_build_worker_threads": args.embedding_worker_threads,
+            }
+        )
     target.parent.mkdir(parents=True, exist_ok=True)
     staging = target.with_name(f".{target.name}.building-{os.getpid()}")
     previous = target.with_name(f"{target.name}.previous")

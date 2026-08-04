@@ -195,8 +195,52 @@ def main() -> None:
     parser.add_argument("--destination", required=True)
     parser.add_argument("--config", default="configs/alpha_go.yaml")
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--workers",
+        type=int,
+        help=(
+            "semantic embedding processes for this run; omitted uses the config"
+        ),
+    )
+    parser.add_argument(
+        "--worker-threads",
+        type=int,
+        default=1,
+        help="CPU threads per semantic worker when --workers is greater than one",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        help="checkpoint/write batch size for this run; omitted uses the config",
+    )
+    parser.add_argument(
+        "--inner-batch-size",
+        type=int,
+        help="model inference batch size for this run; omitted uses the config",
+    )
     args = parser.parse_args()
     config = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
+    if args.workers is not None:
+        if args.workers <= 0:
+            parser.error("--workers must be positive")
+        if args.worker_threads <= 0:
+            parser.error("--worker-threads must be positive")
+        config.setdefault("index", {}).update(
+            {
+                "embedding_migration_workers": args.workers,
+                "embedding_migration_worker_threads": args.worker_threads,
+            }
+        )
+    if args.batch_size is not None:
+        if args.batch_size <= 0:
+            parser.error("--batch-size must be positive")
+        config.setdefault("index", {})["embedding_batch_size"] = args.batch_size
+    if args.inner_batch_size is not None:
+        if args.inner_batch_size <= 0:
+            parser.error("--inner-batch-size must be positive")
+        config.setdefault("index", {})[
+            "embedding_inner_batch_size"
+        ] = args.inner_batch_size
     print(reembed(Path(args.source), Path(args.destination), config, resume=args.resume))
 
 

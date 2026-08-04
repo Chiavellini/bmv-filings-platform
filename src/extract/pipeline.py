@@ -19,12 +19,24 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from src.model.financial_model import METRICS as _BASE_METRICS, apply_config, load_config
 from src.extract.extract_metrics import MetricRow, extract_metrics, extract_metrics_segmented, display_metrics, parse_number
 from src.extract.tiered_extract import PeriodSource, extract_metrics_tiered, period_end_from_label
-from src.shared.report_index import index_report_files, infer_period_label, period_sort_key
+from src.extract.revisions import (
+    ObservationRole,
+    apply_observation_revisions,
+    normalize_period_label,
+    unpack_extraction_result,
+)
+from src.shared.report_index import (
+    controlled_report_directories,
+    index_report_files,
+    infer_period_label,
+    period_sort_key,
+)
 from src.shared.validator import validate, score_confidence, validation_summary, flagged_metrics
 
 
@@ -78,8 +90,48 @@ def _quarantine_series_magnitude(extracted_by_period: dict, metric_defs) -> None
 # Core pipeline function
 # ---------------------------------------------------------------------------
 
+def _effective_input_metadata(
+    docs: dict[str, PeriodSource],
+) -> tuple[tuple[str, ...], tuple[dict[str, object], ...]]:
+    """Return exact post-precedence files and their per-period catalog lineage.
+
+    Paths deliberately use ``absolute()`` rather than ``resolve()``: an estate
+    compatibility-view path is itself the cataloged artifact consumed by the
+    pipeline, while resolving its symlink could substitute an immutable backing
+    path with a different artifact identity.
+    """
+    paths: list[str] = []
+    seen: set[str] = set()
+    lineage: list[dict[str, object]] = []
+
+    def absolute(path: Path | None) -> str | None:
+        return str(Path(path).expanduser().absolute()) if path is not None else None
+
+    for period, src in sorted(docs.items(), key=lambda item: period_sort_key(item[0])):
+        source_path = absolute(src.source_path)
+        pdf_path = absolute(src.pdf_path)
+        facts_path = absolute(src.facts_path)
+        record: dict[str, object] = {
+            "period": period,
+            "source_path": source_path,
+            "source_document_id": src.source_document_id,
+            "source_artifact_id": src.source_artifact_id,
+            "pdf_path": pdf_path,
+            "pdf_document_id": src.pdf_document_id,
+            "pdf_artifact_id": src.pdf_artifact_id,
+            "facts_path": facts_path,
+            "facts_document_id": src.facts_document_id,
+            "facts_artifact_id": src.facts_artifact_id,
+        }
+        lineage.append(record)
+        for path in (source_path, pdf_path, facts_path):
+            if path is not None and path not in seen:
+                seen.add(path)
+                paths.append(path)
+    return tuple(paths), tuple(lineage)
+
 def run(
-    source: str | Path,
+    source: str | Path | list[str | Path] | tuple[str | Path, ...],
     *,
     metrics: list[str] | None = None,
     config: str | Path | None = None,
@@ -108,6 +160,7 @@ def run(
                          - Path to directory → process all PDFs/MDs found
                          - Path to .md file → extract directly
                          - Path to .pdf file → parse then extract
+                         - Sequence of directories → one deduplicated period union
         metrics:       Optional list of metric keys to include in output.
                        None = include all.
         config:        Path to a company YAML config. None = auto-detect
@@ -146,10 +199,14 @@ def run(
         max_reports=max_reports,
         cfg_path=cfg_path,
     )
+    input_paths, input_lineage = _effective_input_metadata(docs)
 
     if not docs:
         print("No documents to process.", file=sys.stderr)
-        return pd.DataFrame()
+        empty = pd.DataFrame()
+        empty.attrs["input_paths"] = input_paths
+        empty.attrs["input_lineage"] = input_lineage
+        return empty
 
     # Extract metrics from each document
     all_rows: list[dict] = []
@@ -161,6 +218,7 @@ def run(
     use_evidence = use_evidence or diagnostics_path is not None or candidates_path is not None
 
     extracted_by_period: dict[str, dict] = {}
+    supplied_observations: list = []
     for period, src in sorted(docs.items()):
         # 4-tier cascade: XBRL facts → table cells → regex (segmented if the
         # config defines sections) → optional LLM fallback. A text-only source
@@ -176,9 +234,20 @@ def run(
                 use_llm_labeling=use_llm_labeling or use_llm,
             )
             evidence_results.append(evidence_result)
-            extracted = evidence_result.accepted
+            extraction_result = evidence_result.accepted
         else:
-            extracted = extract_metrics_tiered(src, metric_defs, cfg, use_llm=use_llm)
+            extraction_result = extract_metrics_tiered(src, metric_defs, cfg, use_llm=use_llm)
+
+        # Per-company extractors may now return an ExtractionBatch containing
+        # observations about arbitrary earlier fiscal periods.  Legacy dicts
+        # remain the default and pass through unchanged.
+        extracted, batch_observations = unpack_extraction_result(extraction_result)
+        supplied_observations.extend(batch_observations)
+        # Evidence mode does not route through tiered_extract, and monkeypatched
+        # or third-party legacy extractors may return a plain dict.  Preserve any
+        # observations attached directly to the source in those cases.
+        if not batch_observations:
+            supplied_observations.extend(getattr(src, "observations", ()) or ())
 
         # Drop physically-impossible negatives a fallback tier may have left as the
         # sole candidate (config-driven; e.g. Soriana capex from the cash-flow tier).
@@ -188,6 +257,22 @@ def run(
                 extracted.pop(_k, None)
 
         extracted_by_period[period] = extracted
+
+    # A trusted comparative is revision evidence for a period already selected
+    # into this run; it must not make a one-file extraction unexpectedly sprout
+    # historical rows merely because the filing carries prior contexts. An
+    # explicitly marked restatement remains allowed to introduce a missing cell.
+    selected_periods = {
+        normalize_period_label(period) for period in extracted_by_period
+    }
+    supplied_observations = [
+        observation for observation in supplied_observations
+        if (
+            normalize_period_label(observation.observed_period) in selected_periods
+            or observation.role is ObservationRole.RESTATED
+            or observation.explicit_restatement
+        )
+    ]
 
     # Advisory cross-check: an independent LLM re-extracts what the engine
     # produced and the agreement rides along in conf_map (never gates).
@@ -201,10 +286,16 @@ def run(
                 if checks:
                     crosscheck_by_period[period] = checks
 
-    # Restated comparatives: configured cells take the next year's prior-column
-    # value (the restated series analyst models track); see tiered_extract.
+    # Typed arbitrary-period revisions run first; explicit restated_prior cells
+    # remain the final authority and therefore run second.
+    revision_events = apply_observation_revisions(
+        extracted_by_period, supplied_observations, metric_defs, cfg,
+    )
+
+    # Restated comparatives: configured (and optionally trusted automatic) cells
+    # take the next year's same-quarter prior-column value; see tiered_extract.
     from src.extract.tiered_extract import apply_restated_priors
-    apply_restated_priors(extracted_by_period, metric_defs, cfg)
+    revision_events.extend(apply_restated_priors(extracted_by_period, metric_defs, cfg))
 
     # Cross-period gate: needs every period extracted, so it runs between the
     # extraction loop and the row-building loop.
@@ -257,7 +348,10 @@ def run(
                 })
 
     if not all_rows:
-        return pd.DataFrame()
+        empty = pd.DataFrame()
+        empty.attrs["input_paths"] = input_paths
+        empty.attrs["input_lineage"] = input_lineage
+        return empty
 
     # Build ordered wide DataFrame
     ordered_keys = [m.key for m in metric_defs]
@@ -308,6 +402,21 @@ def run(
     # Carry per-cell confidence/flag for downstream styling (excel marks low-conf
     # cells). df.attrs survives the slicing above and the return.
     df.attrs["confidence"] = conf_map
+    # Exact artifacts that survived period/directory precedence. Publication
+    # freshness consumes ``input_paths``; it must never receive every candidate
+    # present in a historical view. ``input_lineage`` is the audit companion.
+    df.attrs["input_paths"] = input_paths
+    df.attrs["input_lineage"] = input_lineage
+    # Explicit provenance for every applied revision and every typed conflict.
+    # Workbook/consumer code can surface this without reparsing source strings.
+    df.attrs["revisions"] = revision_events
+    # Preserve configured FY semantics for the shared series-suspect gate. Flow
+    # metrics (aggregation=sum) must compare quarterly values only with quarters
+    # and annual totals only with FY peers; stocks/ratios retain the conservative
+    # mixed-period behavior.
+    df.attrs["metric_aggregations"] = {
+        metric.key: metric.aggregation for metric in metric_defs
+    }
     # Cell-level sign/range/magnitude suspicion, shared with the verification
     # gate (series_checks) so the workbook comments and the Phase-6 scorecard
     # always agree. Computed AFTER the override layer: [verified] cells are
@@ -354,14 +463,38 @@ def run(
 # Source resolution
 # ---------------------------------------------------------------------------
 
+class AmbiguousPeriodSourceError(RuntimeError):
+    """Multiple versioned estate derivatives exist with no safe current winner."""
+
+
 def _resolve_source(
-    source: str | Path,
+    source: str | Path | list[str | Path] | tuple[str | Path, ...],
     output_dir: Path,
     period_filter: str | None,
     max_reports: int,
     cfg_path: Path | None,
 ) -> dict[str, PeriodSource]:
     """Return dict mapping period_label → PeriodSource (text + optional facts/pdf)."""
+    if isinstance(source, (list, tuple)):
+        sources = [Path(item) if not str(item).startswith(("http://", "https://")) else str(item)
+                   for item in source]
+        directories = [item for item in sources if isinstance(item, Path) and item.is_dir()]
+        if len(directories) == len(sources):
+            # Resolve all paths as one ordered union so duplicate periods collapse
+            # before a PDF is parsed. Later directories have explicit precedence:
+            # pass [views/reports/<slug>, views/parsed/<slug>] so the current
+            # derivative wins legacy compatibility Markdown while keeping its PDF.
+            return _from_directories(directories)
+
+        docs: dict[str, PeriodSource] = {}
+        for item in sources:
+            incoming = _resolve_source(
+                item, output_dir, period_filter, max_reports, cfg_path,
+            )
+            for period, period_source in incoming.items():
+                docs[period] = _merge_period_sources(docs.get(period), period_source)
+        return docs
+
     source = str(source)
     docs: dict[str, PeriodSource] = {}
 
@@ -375,6 +508,84 @@ def _resolve_source(
         print(f"Source not recognized: {source}", file=sys.stderr)
 
     return docs
+
+
+def _merge_period_sources(
+    existing: PeriodSource | None, incoming: PeriodSource,
+) -> PeriodSource:
+    """Merge a later mixed-source item only when its lineage is compatible.
+
+    Directory unions have their own artifact-level selector. This function is
+    for lists containing individual files/URLs or a mixture of source kinds.
+    Later items are explicit precedence winners. Complementary text/PDF/facts
+    may cross-fill only when both sides prove the same catalog document, or when
+    neither side has catalog lineage and their artifacts are co-located as one
+    explicit local bundle. One-sided or conflicting lineage never cross-pairs.
+    """
+    if existing is None:
+        return incoming
+
+    def document_ids(src: PeriodSource) -> set[str]:
+        return {
+            value for value in (
+                src.source_document_id,
+                src.pdf_document_id,
+                src.facts_document_id,
+            ) if value
+        }
+
+    def artifact_parents(src: PeriodSource) -> set[Path]:
+        return {
+            Path(path).absolute().parent for path in (
+                src.source_path,
+                src.pdf_path,
+                src.facts_path,
+            ) if path is not None
+        }
+
+    existing_ids = document_ids(existing)
+    incoming_ids = document_ids(incoming)
+    if existing_ids or incoming_ids:
+        compatible = (
+            len(existing_ids) == 1
+            and len(incoming_ids) == 1
+            and existing_ids == incoming_ids
+        )
+    else:
+        compatible = bool(artifact_parents(existing) & artifact_parents(incoming))
+
+    if not compatible:
+        # Do not retain observations from the losing artifact either: they may
+        # assert values from the stale document version being replaced.
+        return incoming
+
+    observations = list(existing.observations)
+    for observation in incoming.observations:
+        if observation not in observations:
+            observations.append(observation)
+    return PeriodSource(
+        period=incoming.period,
+        text=incoming.text or existing.text,
+        facts=incoming.facts or existing.facts,
+        pdf_path=incoming.pdf_path or existing.pdf_path,
+        period_end=incoming.period_end or existing.period_end,
+        doc=incoming.doc or existing.doc,
+        observations=tuple(observations),
+        source_path=incoming.source_path or existing.source_path,
+        source_document_id=(incoming.source_document_id
+                            or existing.source_document_id),
+        source_artifact_id=(incoming.source_artifact_id
+                            or existing.source_artifact_id),
+        pdf_document_id=(incoming.pdf_document_id
+                         or existing.pdf_document_id),
+        pdf_artifact_id=(incoming.pdf_artifact_id
+                         or existing.pdf_artifact_id),
+        facts_path=incoming.facts_path or existing.facts_path,
+        facts_document_id=(incoming.facts_document_id
+                           or existing.facts_document_id),
+        facts_artifact_id=(incoming.facts_artifact_id
+                           or existing.facts_artifact_id),
+    )
 
 
 def _from_url(
@@ -438,15 +649,15 @@ def _from_url(
                 period=period, text=md_text,
                 pdf_path=path if path.suffix.lower() == ".pdf" else None,
                 period_end=period_end_from_label(period), doc=doc,
+                source_path=path,
             )
         except Exception as exc:
             print(f"WARN parse {path.name}: {exc}", file=sys.stderr)
     return docs
 
 
-def _load_facts(json_path: Path) -> dict | None:
-    """Read a filing's flat numeric facts (regenerating the artifact if missing)."""
-    import json
+def _facts_artifact_path(json_path: Path) -> Path | None:
+    """Return a filing's generated facts artifact, creating it when necessary."""
     from src.download.bmv_xbrl import _logical_stem
     facts_path = json_path.with_name(_logical_stem(json_path) + "_facts.json")
     if not facts_path.exists():
@@ -458,10 +669,173 @@ def _load_facts(json_path: Path) -> dict | None:
             return None
     if not facts_path.exists():
         return None
+    return facts_path
+
+
+def _load_facts(json_path: Path) -> dict | None:
+    """Read a filing's flat numeric facts (regenerating the artifact if missing)."""
+    facts_path = _facts_artifact_path(json_path)
+    return _read_facts_artifact(facts_path) if facts_path is not None else None
+
+
+def _read_facts_artifact(facts_path: Path) -> dict | None:
+    """Read either the standard ``{"facts": ...}`` artifact or a flat map."""
+    import json
+
     try:
-        return json.loads(facts_path.read_text(encoding="utf-8")).get("facts") or None
+        payload = json.loads(facts_path.read_text(encoding="utf-8"))
     except Exception:
         return None
+    if not isinstance(payload, dict):
+        return None
+    nested = payload.get("facts")
+    if isinstance(nested, dict):
+        return nested or None
+    return payload or None
+
+
+@dataclass(frozen=True)
+class _SourceArtifact:
+    path: Path
+    source_index: int
+    document_id: str | None
+    artifact_id: str | None
+
+
+@dataclass(frozen=True)
+class _FactsArtifact:
+    path: Path
+    facts: dict
+    source_index: int
+    document_id: str | None
+    artifact_id: str | None
+
+
+def _estate_root_for_artifact(path: Path) -> Path | None:
+    """Nearest estate root for a compatibility/parsed-view artifact."""
+    for parent in path.absolute().parents:
+        if (parent / "catalog.db").is_file() and (parent / "views").is_dir():
+            return parent
+    return None
+
+
+def _artifact_lineage(
+    path: Path,
+    cache: dict[Path, tuple[str | None, str | None]],
+) -> tuple[str | None, str | None]:
+    """Resolve one view path to ``(document_id, artifact_id)``, read-only."""
+    key = path.absolute()
+    if key in cache:
+        return cache[key]
+    estate_root = _estate_root_for_artifact(path)
+    if estate_root is None:
+        cache[key] = (None, None)
+        return cache[key]
+
+    import sqlite3
+
+    catalog = estate_root / "catalog.db"
+    values = [str(path.absolute())]
+    try:
+        values.append(path.absolute().relative_to(estate_root).as_posix())
+    except ValueError:
+        pass
+    values.extend((str(path), str(path.resolve())))
+    values = list(dict.fromkeys(values))
+    try:
+        conn = sqlite3.connect(f"{catalog.as_uri()}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA query_only=ON")
+        selected: tuple[str | None, str | None] | None = None
+        for value in values:
+            rows = conn.execute(
+                "SELECT document_id,artifact_id FROM artifacts WHERE path=?",
+                (value,),
+            ).fetchall()
+            document_ids = {str(row["document_id"]) for row in rows}
+            artifact_ids = {str(row["artifact_id"]) for row in rows}
+            if len(document_ids) == 1:
+                selected = (
+                    next(iter(document_ids)),
+                    next(iter(artifact_ids)) if len(artifact_ids) == 1 else None,
+                )
+                break
+        cache[key] = selected or (None, None)
+    except sqlite3.Error:
+        cache[key] = (None, None)
+    finally:
+        if "conn" in locals():
+            conn.close()
+    return cache[key]
+
+
+def _artifact_document_id(
+    path: Path,
+    cache: dict[Path, tuple[str | None, str | None]],
+) -> str | None:
+    """Compatibility helper returning only the catalog document id."""
+    return _artifact_lineage(path, cache)[0]
+
+
+def _collect_facts_artifacts(
+    directories: list[Path],
+    document_cache: dict[Path, tuple[str | None, str | None]],
+) -> dict[str, list[_FactsArtifact]]:
+    found: dict[str, list[_FactsArtifact]] = {}
+    for source_index, directory in enumerate(directories):
+        for path in sorted(directory.glob("*_facts.json"),
+                           key=lambda item: (len(item.name), item.name.lower())):
+            period = infer_period_label(path.stem)
+            facts = _read_facts_artifact(path)
+            if period and facts:
+                document_id, artifact_id = _artifact_lineage(path, document_cache)
+                found.setdefault(period, []).append(_FactsArtifact(
+                    path=path,
+                    facts=facts,
+                    source_index=source_index,
+                    document_id=document_id,
+                    artifact_id=artifact_id,
+                ))
+    return found
+
+
+def _artifact_preference(candidate) -> tuple:
+    """Later source directory first; deterministic shortest filename within it."""
+    return (-candidate.source_index, len(candidate.path.name), candidate.path.name.lower())
+
+
+def _lineage_compatible(selected: _SourceArtifact, candidate) -> bool:
+    """True for proven same-document artifacts or an explicit co-located bundle."""
+    if selected.document_id or candidate.document_id:
+        return bool(
+            selected.document_id
+            and candidate.document_id
+            and selected.document_id == candidate.document_id
+        )
+    return selected.source_index == candidate.source_index
+
+
+def _select_compatible_artifact(selected: _SourceArtifact, candidates: list):
+    for candidate in sorted(candidates, key=_artifact_preference):
+        if _lineage_compatible(selected, candidate):
+            return candidate
+    return None
+
+
+def _directory_facts(directory: Path) -> dict[str, tuple[Path, dict]]:
+    """Index valid sibling ``*_facts.json`` artifacts by canonical period."""
+    return _directories_facts([directory])
+
+
+def _directories_facts(directories: list[Path]) -> dict[str, tuple[Path, dict]]:
+    """Compatibility wrapper: preferred facts per period across controlled dirs."""
+    expanded = list(controlled_report_directories(directories))
+    candidates = _collect_facts_artifacts(expanded, {})
+    return {
+        period: (selected.path, selected.facts)
+        for period, choices in candidates.items()
+        for selected in [sorted(choices, key=_artifact_preference)[0]]
+    }
 
 
 def _from_bmv_xbrl(
@@ -497,11 +871,14 @@ def _from_bmv_xbrl(
         except Exception as exc:
             print(f"WARN xbrl mdna {path.name}: {exc}", file=sys.stderr)
             text = ""
-        facts = _load_facts(path)
+        facts_path = _facts_artifact_path(path)
+        facts = _read_facts_artifact(facts_path) if facts_path is not None else None
         if text or facts:
             docs[period] = PeriodSource(
                 period=period, text=text, facts=facts,
                 period_end=period_end_from_label(period),
+                source_path=path,
+                facts_path=facts_path if facts else None,
             )
     if docs:
         print(f"BMV XBRL: {len(docs)} period(s) covered for {ticker}.", file=sys.stderr)
@@ -510,44 +887,298 @@ def _from_bmv_xbrl(
 
 def _from_single_file(path: Path) -> dict[str, PeriodSource]:
     period = infer_period_label(path.stem) or path.stem
+    if path.name.lower().endswith("_facts.json"):
+        facts = _read_facts_artifact(path)
+        cache: dict[Path, tuple[str | None, str | None]] = {}
+        document_id, artifact_id = _artifact_lineage(path, cache)
+        return ({period: PeriodSource(period=period, facts=facts,
+                                      period_end=period_end_from_label(period),
+                                      facts_path=path,
+                                      facts_document_id=document_id,
+                                      facts_artifact_id=artifact_id)}
+                if facts else {})
+
+    cache = {}
+    document_id, artifact_id = _artifact_lineage(path, cache)
+    selected = _SourceArtifact(
+        path=path, source_index=0,
+        document_id=document_id,
+        artifact_id=artifact_id,
+    )
+    facts_choices = _collect_facts_artifacts([path.parent], cache).get(
+        normalize_period_label(period), [])
+    facts_artifact = _select_compatible_artifact(selected, facts_choices)
+    facts = facts_artifact.facts if facts_artifact else None
+    common = {
+        "facts": facts,
+        "source_path": path,
+        "source_document_id": selected.document_id,
+        "source_artifact_id": selected.artifact_id,
+        "pdf_document_id": selected.document_id if path.suffix.lower() == ".pdf" else None,
+        "pdf_artifact_id": selected.artifact_id if path.suffix.lower() == ".pdf" else None,
+        "facts_path": facts_artifact.path if facts_artifact else None,
+        "facts_document_id": facts_artifact.document_id if facts_artifact else None,
+        "facts_artifact_id": facts_artifact.artifact_id if facts_artifact else None,
+    }
     if path.suffix.lower() == ".pdf":
         from src.parse.parse_pdf import parse_pdf
         md_text, _, doc = parse_pdf(str(path), with_meta=True)
-        return {period: PeriodSource(period=period, text=md_text, pdf_path=path,
-                                     period_end=period_end_from_label(period), doc=doc)}
+        return {period: PeriodSource(
+            period=period, text=md_text, pdf_path=path,
+            period_end=period_end_from_label(period), doc=doc, **common,
+        )}
     else:
-        return {period: PeriodSource(period=period, text=path.read_text(encoding="utf-8"),
-                                     period_end=period_end_from_label(period))}
+        return {period: PeriodSource(
+            period=period, text=path.read_text(encoding="utf-8"),
+            period_end=period_end_from_label(period), **common,
+        )}
 
 
 def _from_directory(directory: Path) -> dict[str, PeriodSource]:
+    return _from_directories([directory])
+
+
+def _parsed_view_root(directory: Path) -> Path | None:
+    """Return the estate root when ``directory`` is ``views/parsed/<company>``."""
+    resolved = directory.resolve()
+    parsed = resolved.parent
+    if parsed.name == "parsed" and parsed.parent.name == "views":
+        return parsed.parent.parent
+    return None
+
+
+def _version_order(value: object) -> tuple:
+    """Comparable natural version key (``2026.10`` sorts after ``2026.2``)."""
+    import re
+
+    if value is None:
+        return ()
+    return tuple((0, int(part)) if part.isdigit() else (1, part.lower())
+                 for part in re.split(r"(\d+)", str(value)) if part)
+
+
+def _select_parsed_view_candidate(
+    directory: Path, period: str, candidates: list[Path],
+) -> Path:
+    """Select a current estate derivative, or fail instead of filename guessing."""
+    candidates = sorted(candidates, key=lambda path: path.name.lower())
+    if len(candidates) == 1:
+        return candidates[0]
+
+    estate_root = _parsed_view_root(directory)
+    catalog = estate_root / "catalog.db" if estate_root else None
+    if catalog is None or not catalog.is_file():
+        names = ", ".join(path.name for path in candidates)
+        raise AmbiguousPeriodSourceError(
+            f"ambiguous parsed derivatives for {period}: {names}; "
+            "estate catalog is unavailable, so current version cannot be proven"
+        )
+
+    import sqlite3
+
+    candidate_by_path = {path.resolve(): path for path in candidates}
+    try:
+        conn = sqlite3.connect(f"{catalog.as_uri()}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA query_only=ON")
+        tables = {
+            row["name"] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        required = {"artifacts", "documents", "document_derivations"}
+        if not required.issubset(tables):
+            raise AmbiguousPeriodSourceError(
+                f"ambiguous parsed derivatives for {period}: catalog lacks "
+                f"{', '.join(sorted(required - tables))}"
+            )
+        rows = conn.execute(
+            """SELECT a.path,a.document_id,d.created_at,
+                      d.processor_name,d.processor_version
+               FROM artifacts a
+               JOIN documents doc ON doc.document_id=a.document_id
+               JOIN document_derivations d ON d.output_artifact_id=a.artifact_id
+               WHERE doc.period=? AND a.role='parsed_text' AND a.format='md'""",
+            (period,),
+        ).fetchall()
+        matched = []
+        for row in rows:
+            catalog_path = Path(row["path"])
+            if not catalog_path.is_absolute():
+                catalog_path = estate_root / catalog_path
+            candidate = candidate_by_path.get(catalog_path.resolve())
+            if candidate is not None:
+                matched.append((row, candidate))
+        if len(matched) != len(candidates):
+            raise AmbiguousPeriodSourceError(
+                f"ambiguous parsed derivatives for {period}: not every candidate "
+                "has verified catalog lineage"
+            )
+
+        # Source-record current_document_id is the authority across immutable
+        # filing versions. Different current documents imply different families
+        # (e.g. release vs statement), which cannot be ranked safely here.
+        if {"source_records", "source_record_versions"}.issubset(tables):
+            document_ids = sorted({row["document_id"] for row, _ in matched})
+            placeholders = ",".join("?" for _ in document_ids)
+            current_rows = conn.execute(
+                f"""SELECT srv.document_id,sr.current_document_id
+                    FROM source_record_versions srv
+                    JOIN source_records sr
+                      ON sr.source_key=srv.source_key
+                     AND sr.source_record_id=srv.source_record_id
+                    WHERE srv.document_id IN ({placeholders})""",
+                document_ids,
+            ).fetchall()
+            current_ids = {
+                row["document_id"] for row in current_rows
+                if row["document_id"] == row["current_document_id"]
+            }
+            if len(current_ids) == 1:
+                matched = [pair for pair in matched if pair[0]["document_id"] in current_ids]
+            elif len(current_ids) > 1:
+                raise AmbiguousPeriodSourceError(
+                    f"ambiguous parsed derivatives for {period}: multiple current "
+                    "document families are present"
+                )
+
+        document_ids = {row["document_id"] for row, _ in matched}
+        if len(document_ids) != 1:
+            raise AmbiguousPeriodSourceError(
+                f"ambiguous parsed derivatives for {period}: no unique current "
+                "estate document can be proven"
+            )
+
+        ranked = sorted(
+            matched,
+            key=lambda pair: (
+                pair[0]["created_at"] or "",
+                _version_order(pair[0]["processor_version"]),
+                pair[0]["processor_name"] or "",
+            ),
+            reverse=True,
+        )
+        best_key = (
+            ranked[0][0]["created_at"] or "",
+            _version_order(ranked[0][0]["processor_version"]),
+            ranked[0][0]["processor_name"] or "",
+        )
+        tied = [pair for pair in ranked if (
+            pair[0]["created_at"] or "",
+            _version_order(pair[0]["processor_version"]),
+            pair[0]["processor_name"] or "",
+        ) == best_key]
+        if len(tied) != 1:
+            raise AmbiguousPeriodSourceError(
+                f"ambiguous parsed derivatives for {period}: latest processor "
+                "version is tied"
+            )
+        return ranked[0][1]
+    finally:
+        if "conn" in locals():
+            conn.close()
+
+
+def _from_directories(directories: list[Path]) -> dict[str, PeriodSource]:
+    """Build one period index; later directories explicitly override earlier ones."""
     from src.parse.parse_pdf import parse_pdf
 
+    directories = list(controlled_report_directories(directories))
     docs: dict[str, PeriodSource] = {}
-    indexed = index_report_files(directory.iterdir())
-    for period, group in sorted(indexed.items(), key=lambda item: period_sort_key(item[0])):
-        path = group.selected_path
-        if path is None:
-            continue
+    document_cache: dict[Path, tuple[str | None, str | None]] = {}
+    facts_by_period = _collect_facts_artifacts(directories, document_cache)
+    selected_by_period: dict[str, _SourceArtifact] = {}
+    pdf_by_period: dict[str, list[_SourceArtifact]] = {}
+    for source_index, directory in enumerate(directories):
+        indexed = index_report_files(directory.iterdir())
+        for period, group in indexed.items():
+            selected = group.selected_path
+            if _parsed_view_root(directory) is not None and group.md_paths:
+                selected = _select_parsed_view_candidate(directory, period, group.md_paths)
+            if selected is not None:
+                document_id, artifact_id = _artifact_lineage(selected, document_cache)
+                selected_by_period[period] = _SourceArtifact(
+                    path=selected,
+                    source_index=source_index,
+                    document_id=document_id,
+                    artifact_id=artifact_id,
+                )
+            for pdf_path in group.pdf_paths:
+                document_id, artifact_id = _artifact_lineage(pdf_path, document_cache)
+                pdf_by_period.setdefault(period, []).append(_SourceArtifact(
+                    path=pdf_path,
+                    source_index=source_index,
+                    document_id=document_id,
+                    artifact_id=artifact_id,
+                ))
+
+    for period, selected in sorted(selected_by_period.items(),
+                                   key=lambda item: period_sort_key(item[0])):
+        path = selected.path
         # Keep the sibling PDF reachable even when the parsed .md is selected, so
         # custom extractors can recover tables the markdown mangles (e.g. Soriana's
-        # rotated ops table that needs page-geometry reconstruction).
-        sibling_pdf = group.pdf_paths[0] if getattr(group, "pdf_paths", None) else None
+        # rotated ops table that needs page-geometry reconstruction). Cross-source
+        # pairing requires proven same-document lineage; co-located files are an
+        # explicit bundle. The same rule protects Tier-1 facts from stale versions.
+        pdf_artifact = (
+            selected if path.suffix.lower() == ".pdf"
+            else _select_compatible_artifact(selected, pdf_by_period.get(period, []))
+        )
+        sibling_pdf = pdf_artifact.path if pdf_artifact else None
+        facts_choices = facts_by_period.get(period, [])
+        facts_artifact = _select_compatible_artifact(selected, facts_choices)
+        if facts_choices and facts_artifact is None:
+            skipped = ", ".join(choice.path.name for choice in facts_choices)
+            print(
+                f"pipeline: ignored lineage-incompatible facts for {period} "
+                f"({skipped}); selected report is {path.name}",
+                file=sys.stderr,
+            )
+        common = {
+            "facts": facts_artifact.facts if facts_artifact else None,
+            "source_path": path,
+            "source_document_id": selected.document_id,
+            "source_artifact_id": selected.artifact_id,
+            "pdf_document_id": pdf_artifact.document_id if pdf_artifact else None,
+            "pdf_artifact_id": pdf_artifact.artifact_id if pdf_artifact else None,
+            "facts_path": facts_artifact.path if facts_artifact else None,
+            "facts_document_id": (facts_artifact.document_id
+                                  if facts_artifact else None),
+            "facts_artifact_id": (facts_artifact.artifact_id
+                                   if facts_artifact else None),
+        }
         try:
             if path.suffix.lower() == ".md":
                 docs[period] = PeriodSource(
                     period=period, text=path.read_text(encoding="utf-8"),
                     pdf_path=sibling_pdf,
                     period_end=period_end_from_label(period),
+                    **common,
                 )
             else:
                 md_text, _, doc = parse_pdf(str(path), with_meta=True)
                 docs[period] = PeriodSource(
-                    period=period, text=md_text, pdf_path=path,
+                    period=period, text=md_text,
+                    pdf_path=path,
                     period_end=period_end_from_label(period), doc=doc,
+                    **common,
                 )
         except Exception as exc:
             print(f"WARN parse {path.name}: {exc}", file=sys.stderr)
+
+    # A structured filing may be the only artifact available for a period.  It
+    # is still a complete Tier-1 input and must not disappear merely because no
+    # parsed markdown/PDF sibling exists.
+    for period, choices in facts_by_period.items():
+        facts_artifact = sorted(choices, key=_artifact_preference)[0]
+        docs.setdefault(period, PeriodSource(
+            period=period,
+            facts=facts_artifact.facts,
+            period_end=period_end_from_label(period),
+            facts_path=facts_artifact.path,
+            facts_document_id=facts_artifact.document_id,
+            facts_artifact_id=facts_artifact.artifact_id,
+        ))
 
     return docs
 
