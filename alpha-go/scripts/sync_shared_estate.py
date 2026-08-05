@@ -782,7 +782,7 @@ def audit_shared_estate_projection(
         _stable_search_doc_id(row.document_family_id, row.document_id): row.sha256
         for row in rows
     }
-    manifest = load_manifest(corpus)
+    manifest = load_manifest(corpus, estate_root=estate.parent)
     manifest_shared = {
         document.doc_id: document.content_sha256
         for document in manifest.documents
@@ -875,7 +875,7 @@ def _sync_shared_estate_locked(
     requested_ids = tuple(dict.fromkeys(
         str(document_id) for document_id in document_ids if document_id
     ))
-    manifest = load_manifest(corpus)
+    manifest = load_manifest(corpus, estate_root=estate.parent)
     rows = _rows(estate, requested_ids)
     memberships_by_document, originals_by_document = _projection_metadata(
         estate, (row.document_id for row in rows)
@@ -1071,7 +1071,9 @@ def _sync_shared_estate_locked(
     # Index replacement completes first. A failed embedding therefore leaves the
     # old manifest and old searchable version together.
     if manifest_changed:
-        save_manifest(projected_manifest, corpus)
+        # Relative to the estate root: the projection ships inside the bundle and
+        # must not record the mount name it happened to be generated under.
+        save_manifest(projected_manifest, corpus, estate_root=estate.parent)
     if store is not None:
         store.set_meta("manifest_checksum", manifest_checksum(projected_manifest))
         store.commit()

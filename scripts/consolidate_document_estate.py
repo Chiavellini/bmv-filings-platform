@@ -24,7 +24,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.shared.document_estate import DocumentEstate, file_sha256  # noqa: E402
+from src.shared.document_estate import (  # noqa: E402
+    DocumentEstate,
+    file_sha256,
+    resolve_artifact_path,
+)
 from src.shared.paths import DOCUMENT_ESTATE_DB, DOCUMENT_ESTATE_DIR  # noqa: E402
 
 
@@ -101,7 +105,7 @@ def audit(db_path: Path) -> dict:
         devices = set()
         valid = True
         for row in group:
-            path = Path(row["path"])
+            path = resolve_artifact_path(row["path"], catalog_dir=db_path.parent)
             try:
                 value = _current_regular(path)
             except FileNotFoundError:
@@ -159,7 +163,9 @@ def verify_content_objects(db_path: Path) -> dict:
                 "SELECT path FROM artifacts WHERE sha256=?", (item["sha256"],)
             ).fetchall()
             for artifact in artifacts:
-                value = _current_regular(Path(artifact["path"]))
+                value = _current_regular(
+                    resolve_artifact_path(artifact["path"], catalog_dir=db_path.parent)
+                )
                 if (value.st_dev, value.st_ino) != (blob_stat.st_dev, blob_stat.st_ino):
                     raise RuntimeError(
                         f"artifact is not linked to its content object: {artifact['path']}"
@@ -234,7 +240,7 @@ def apply(
             verified: list[tuple[sqlite3.Row, Path, os.stat_result]] = []
             try:
                 for row in group:
-                    path = Path(row["path"])
+                    path = resolve_artifact_path(row["path"], catalog_dir=db_path.parent)
                     verified.append((row, path, _verified(path, sha256, size_bytes)))
                 devices = {value.st_dev for _row, _path, value in verified}
                 if len(devices) != 1:

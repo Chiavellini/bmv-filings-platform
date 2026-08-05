@@ -15,6 +15,7 @@ from pathlib import Path
 import sqlite3
 from typing import Any, Iterable
 
+from estate_portability import inspect_alpha_index
 from estate_volume import inspect_estate_environment
 
 
@@ -48,6 +49,27 @@ def _bundle_path(root: Path, raw: object, *, field: str) -> Path:
     return path
 
 
+def _artifact_path_keys(path: Path, *, portable_root: Path) -> tuple[str, ...]:
+    """Return absolute and, when applicable, estate-relative catalog keys.
+
+    Mirrors ``DocumentEstate._artifact_path_keys`` (``src/shared/document_estate.py``)
+    without importing across the ``src.`` package boundary: this module is loaded
+    by every subproject's own ``sys.path``-shadowed ``src`` package, and a module-level
+    ``from src... import ...`` here would silently resolve against whichever
+    subproject imported it first rather than this repository's own ``src/``.
+    """
+    resolved = path.expanduser().resolve()
+    keys = [str(resolved)]
+    root = portable_root.expanduser().resolve()
+    try:
+        relative = resolved.relative_to(root)
+    except ValueError:
+        pass
+    else:
+        keys.insert(0, relative.as_posix())
+    return tuple(dict.fromkeys(keys))
+
+
 @dataclass(frozen=True)
 class EstateBridge:
     """Resolved paths for one portable estate bundle."""
@@ -61,7 +83,24 @@ class EstateBridge:
     models_dir: Path
     alpha_go_embedding_model_path: Path
     alpha_go_index_path: Path
+    alpha_go_corpus_dir: Path
     manifest_path: Path
+
+    def alpha_go_projected_document_count(self) -> int | None:
+        """Documents the projection expects the index to cover, if discoverable.
+
+        Returns ``None`` when the bundle carries no projection, so a bundle
+        shipped without one is not failed for a count nobody declared.
+        """
+        projection = self.alpha_go_corpus_dir / "manifest.json"
+        if not projection.is_file():
+            return None
+        try:
+            payload = json.loads(projection.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        documents = payload.get("documents") if isinstance(payload, dict) else None
+        return len(documents) if isinstance(documents, list) else None
 
     def resolve_object(self, object_key: str) -> Path:
         """Resolve a portable object key without allowing directory traversal."""
@@ -150,8 +189,13 @@ class EstateBridge:
                 )
 
             for path, _role in artifacts:
+                keys = _artifact_path_keys(
+                    path, portable_root=self.estate_root
+                )
+                placeholders = ",".join("?" for _ in keys)
                 owner = connection.execute(
-                    "SELECT document_id FROM artifacts WHERE path=?", (str(path),)
+                    f"SELECT document_id FROM artifacts WHERE path IN ({placeholders})",
+                    keys,
                 ).fetchone()
                 if owner and owner["document_id"] != estate_document_id:
                     raise EstateBridgeError(
@@ -213,7 +257,13 @@ class EstateBridge:
                 (alpha_doc_id, estate_document_id),
             )
 
-            current_paths = [str(path) for path, _role in artifacts]
+            current_paths = [
+                key
+                for path, _role in artifacts
+                for key in _artifact_path_keys(
+                    path, portable_root=self.estate_root
+                )
+            ]
             placeholders = ",".join("?" for _ in current_paths)
             connection.execute(
                 f"""
@@ -229,8 +279,17 @@ class EstateBridge:
                 with path.open("rb") as stream:
                     for block in iter(lambda: stream.read(1024 * 1024), b""):
                         digest.update(block)
+                keys = _artifact_path_keys(
+                    path, portable_root=self.estate_root
+                )
+                key_placeholders = ",".join("?" for _ in keys)
+                existing = connection.execute(
+                    f"SELECT path FROM artifacts WHERE path IN ({key_placeholders}) LIMIT 1",
+                    keys,
+                ).fetchone()
+                stored_path = existing["path"] if existing else keys[0]
                 artifact_id = hashlib.sha256(
-                    f"{estate_document_id}\0{path}".encode()
+                    f"{estate_document_id}\0{stored_path}".encode()
                 ).hexdigest()
                 connection.execute(
                     """
@@ -253,7 +312,7 @@ class EstateBridge:
                         "alpha-go",
                         role,
                         path.suffix.lower().lstrip(".") or "file",
-                        str(path),
+                        stored_path,
                         digest.hexdigest(),
                         stat.st_size,
                         stat.st_mtime_ns,
@@ -287,9 +346,14 @@ class EstateBridge:
             problems.append(f"estate root does not exist: {self.estate_root}")
         if require_catalog and not self.catalog_path.is_file():
             problems.append(f"catalog does not exist: {self.catalog_path}")
-        if require_alpha_index and not self.alpha_go_index_path.is_file():
-            problems.append(
-                f"Alpha Go index does not exist: {self.alpha_go_index_path}"
+        if require_alpha_index:
+            # Presence is not readiness: the gate exists to keep a partially
+            # built index off the production path, so it checks completeness.
+            problems.extend(
+                inspect_alpha_index(
+                    self.alpha_go_index_path,
+                    expected_documents=self.alpha_go_projected_document_count(),
+                )
             )
         problems.extend(inspect_estate_environment(self.estate_root).problems)
         return list(dict.fromkeys(problems))
@@ -309,6 +373,7 @@ class EstateBridge:
                 self.alpha_go_embedding_model_path
             ),
             "alpha_go_index": str(self.alpha_go_index_path),
+            "alpha_go_corpus": str(self.alpha_go_corpus_dir),
             "manifest": str(self.manifest_path),
         }
 
@@ -415,6 +480,14 @@ def load_estate_bridge(
         indexes.get("alpha_go", "indexes/alpha_go.db"),
         field="indexes.alpha_go",
     )
+    projections = config.get("projections", {})
+    if not isinstance(projections, dict):
+        raise EstateBridgeError("projections must be a JSON object")
+    alpha_go_corpus_dir = _bundle_path(
+        estate_root,
+        projections.get("alpha_go", "projections/alpha-go"),
+        field="projections.alpha_go",
+    )
     manifest_path = _bundle_path(
         estate_root, config.get("manifest", "manifest.json"), field="manifest"
     )
@@ -428,6 +501,7 @@ def load_estate_bridge(
         models_dir=models_dir,
         alpha_go_embedding_model_path=alpha_go_embedding_model_path,
         alpha_go_index_path=alpha_go_index_path,
+        alpha_go_corpus_dir=alpha_go_corpus_dir,
         manifest_path=manifest_path,
     )
 

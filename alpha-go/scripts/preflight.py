@@ -55,27 +55,36 @@ def main(argv: list[str] | None = None) -> int:
             if not p.exists():
                 failures.append(f"{doc.doc_id}: missing markdown source {p}")
 
+    from estate_portability import inspect_alpha_index
+
     db_path = (
         Path(args.db).expanduser().resolve()
         if args.db
         else ESTATE_BRIDGE.alpha_go_index_path
     )
-    store = None
-    if not db_path.exists():
-        failures.append(f"index database missing: {db_path}")
-    else:
-        store = IndexStore(db_path)
-        store.connect()
-        if store.count("documents") != len(manifest.documents):
-            failures.append(f"index documents={store.count('documents')} manifest={len(manifest.documents)}")
+    runtime_dim: int | None = None
     try:
         embedder, name = get_embedder(config)
-        expected = store.get_meta("embedding_dim") if store else None
-        if expected and int(expected) != int(embedder.dim):
-            failures.append(f"embedding dimension index={expected} runtime={embedder.dim}")
-        print(f"runtime model: {name} ({embedder.dim} dims)")
+        runtime_dim = int(embedder.dim)
+        print(f"runtime model: {name} ({runtime_dim} dims)")
     except Exception as exc:
         failures.append(f"runtime model unavailable: {type(exc).__name__}: {exc}")
+
+    # One definition of "complete", shared with the root release gate. Comparing
+    # the runtime dimension against recorded metadata only protects the index if
+    # missing metadata is itself a failure -- an index that declares nothing used
+    # to skip the check and pass.
+    failures.extend(
+        inspect_alpha_index(
+            db_path,
+            expected_documents=len(manifest.documents),
+            expected_dim=runtime_dim,
+        )
+    )
+    store = None
+    if db_path.is_file():
+        store = IndexStore(db_path)
+        store.connect()
 
     if failures:
         print("PREFLIGHT FAILED")

@@ -47,9 +47,10 @@ def test_same_path_refresh_does_not_transfer_artifact_ownership(tmp_path):
             ))
         estate.add_artifact("root-doc", artifact, project="root", role="derived")
         estate.add_artifact("alpha-doc", artifact, project="alpha-go", role="search_text")
+        artifact_id = estate.artifact_id(artifact)
         row = estate.conn.execute(
-            "SELECT document_id,project,role FROM artifacts WHERE path=?",
-            (str(artifact.resolve()),),
+            "SELECT document_id,project,role FROM artifacts WHERE artifact_id=?",
+            (artifact_id,),
         ).fetchone()
         assert dict(row) == {
             "document_id": "root-doc", "project": "root", "role": "derived",
