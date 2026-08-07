@@ -28,6 +28,114 @@ def portable_relative(raw: str) -> bool:
     )
 
 
+ALPHA_INDEX_REQUIRED_TABLES = (
+    "documents",
+    "chunks",
+    "chunks_fts",
+    "embeddings",
+    "meta",
+)
+
+
+def inspect_alpha_index(
+    path: str | Path,
+    *,
+    expected_documents: int | None = None,
+    expected_dim: int | None = None,
+) -> list[str]:
+    """Return why an Alpha Go index is not production-complete; empty means healthy.
+
+    Existence is not completeness. A half-built index is a readable SQLite file
+    with the right schema, so a release gate that stops at ``is_file()`` promotes
+    it happily — which is how a 10-document index reached the production path in
+    front of a 3,695-document projection. Everything here is read-only.
+    """
+    index = Path(path).expanduser()
+    if not index.is_file():
+        return [f"Alpha Go index does not exist: {index}"]
+    try:
+        connection = sqlite3.connect(f"file:{index.as_posix()}?mode=ro", uri=True)
+    except sqlite3.Error as exc:
+        return [f"Alpha Go index cannot be opened: {index}: {exc}"]
+    problems: list[str] = []
+    try:
+        try:
+            integrity = connection.execute("PRAGMA quick_check").fetchone()[0]
+            present = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+        except sqlite3.DatabaseError as exc:
+            return [f"Alpha Go index is not a readable database: {index}: {exc}"]
+        if integrity != "ok":
+            problems.append(f"Alpha Go index quick_check returned {integrity!r}")
+        missing = [t for t in ALPHA_INDEX_REQUIRED_TABLES if t not in present]
+        if missing:
+            problems.append(
+                "Alpha Go index is missing tables: " + ", ".join(missing)
+            )
+            return problems
+        counts = {
+            table: int(
+                connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            )
+            for table in ("documents", "chunks", "chunks_fts", "embeddings")
+        }
+        metadata = dict(connection.execute("SELECT key, value FROM meta"))
+
+        if counts["documents"] == 0:
+            problems.append(f"Alpha Go index has no documents: {index}")
+        if len({counts["chunks"], counts["chunks_fts"], counts["embeddings"]}) != 1:
+            problems.append(f"Alpha Go index row counts disagree: {counts}")
+
+        model = (metadata.get("embedding_model") or "").strip()
+        if not model:
+            problems.append(
+                "Alpha Go index records no embedding_model; its vector space is unidentified"
+            )
+        elif model == "hashing":
+            problems.append(
+                "Alpha Go index was built with the lexical hashing fallback, not a "
+                "semantic model; it is not search-ready"
+            )
+        raw_dim = (metadata.get("embedding_dim") or "").strip()
+        if not raw_dim:
+            problems.append("Alpha Go index records no embedding_dim")
+        else:
+            try:
+                declared = int(raw_dim)
+            except ValueError:
+                problems.append(f"Alpha Go index embedding_dim is not an integer: {raw_dim!r}")
+            else:
+                divergent = int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM embeddings WHERE dim != ?", (declared,)
+                    ).fetchone()[0]
+                )
+                if divergent:
+                    problems.append(
+                        f"Alpha Go index has {divergent} embedding(s) whose dim "
+                        f"differs from the declared {declared}"
+                    )
+                if expected_dim is not None and declared != int(expected_dim):
+                    problems.append(
+                        f"Alpha Go index embedding_dim={declared} but the runtime "
+                        f"model produces {expected_dim}"
+                    )
+        if expected_documents is not None and counts["documents"] != int(
+            expected_documents
+        ):
+            problems.append(
+                f"Alpha Go index covers {counts['documents']} of "
+                f"{expected_documents} projected documents"
+            )
+    finally:
+        connection.close()
+    return problems
+
+
 def _catalog_connection(path: Path, *, read_only: bool) -> sqlite3.Connection:
     if read_only:
         connection = sqlite3.connect(

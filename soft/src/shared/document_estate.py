@@ -1,8 +1,8 @@
 """Shared, project-neutral document estate for the pdfs/ monorepo.
 
-The estate is a metadata catalog. Original files remain where they are until an explicit,
-verified storage migration is undertaken; every artifact is addressed by an absolute path and
-content hash, so Alpha Go, the root extraction stack, and soft can safely share it meanwhile.
+The estate is a portable metadata catalog backed by content-addressed objects.
+Catalog paths are relative to the estate root, so Alpha Go, the root extraction
+stack, and soft can safely share the same external drive on another computer.
 """
 from __future__ import annotations
 
@@ -237,12 +237,62 @@ class DocumentEstate:
         """)
         self.conn.commit()
 
-    def artifact_document(self, path: Path) -> str | None:
+    @staticmethod
+    def _artifact_path_keys(
+        path: Path,
+        *,
+        portable_root: str | Path | None = None,
+    ) -> tuple[str, ...]:
+        """Return absolute and, when requested, bundle-relative catalog keys."""
+
+        resolved = path.expanduser().resolve()
+        keys = [str(resolved)]
+        if portable_root is not None:
+            root = Path(portable_root).expanduser().resolve()
+            try:
+                relative = resolved.relative_to(root)
+            except ValueError:
+                pass
+            else:
+                keys.insert(0, relative.as_posix())
+        return tuple(dict.fromkeys(keys))
+
+    def artifact_document(
+        self,
+        path: Path,
+        *,
+        portable_root: str | Path | None = None,
+    ) -> str | None:
         """Return the logical document already owning ``path``, if catalogued."""
+        if portable_root is None:
+            portable_root = self.path.parent
+        keys = self._artifact_path_keys(path, portable_root=portable_root)
+        placeholders = ",".join("?" for _ in keys)
         row = self.conn.execute(
-            "SELECT document_id FROM artifacts WHERE path=?", (str(path.resolve()),)
+            f"SELECT document_id FROM artifacts WHERE path IN ({placeholders}) "
+            "ORDER BY CASE WHEN path=? THEN 0 ELSE 1 END LIMIT 1",
+            (*keys, keys[0]),
         ).fetchone()
         return row["document_id"] if row else None
+
+    def artifact_id(
+        self,
+        path: Path,
+        *,
+        portable_root: str | Path | None = None,
+    ) -> str | None:
+        """Return the artifact id for either an absolute or portable path."""
+
+        if portable_root is None:
+            portable_root = self.path.parent
+        keys = self._artifact_path_keys(path, portable_root=portable_root)
+        placeholders = ",".join("?" for _ in keys)
+        row = self.conn.execute(
+            f"SELECT artifact_id FROM artifacts WHERE path IN ({placeholders}) "
+            "ORDER BY CASE WHEN path=? THEN 0 ELSE 1 END LIMIT 1",
+            (*keys, keys[0]),
+        ).fetchone()
+        return row["artifact_id"] if row else None
 
     def add_project_record(self, project: str, record_id: str, document_id: str) -> None:
         self.conn.execute(
@@ -250,10 +300,29 @@ class DocumentEstate:
             (project, record_id, document_id),
         )
 
-    def add_artifact(self, document_id: str, path: Path, *, project: str, role: str) -> str:
+    def add_artifact(
+        self,
+        document_id: str,
+        path: Path,
+        *,
+        project: str,
+        role: str,
+        portable_root: str | Path | None = None,
+    ) -> str:
+        if portable_root is None:
+            portable_root = self.path.parent
         resolved = path.resolve()
         sha, size, mtime = self.hash_file(resolved)
-        artifact_id = hashlib.sha256(f"{document_id}\0{resolved}".encode()).hexdigest()
+        keys = self._artifact_path_keys(resolved, portable_root=portable_root)
+        placeholders = ",".join("?" for _ in keys)
+        existing = self.conn.execute(
+            f"SELECT path FROM artifacts WHERE path IN ({placeholders}) LIMIT 1",
+            keys,
+        ).fetchone()
+        stored_path = existing["path"] if existing else keys[0]
+        artifact_id = hashlib.sha256(
+            f"{document_id}\0{stored_path}".encode()
+        ).hexdigest()
         self.conn.execute("""
             INSERT INTO artifacts(artifact_id,document_id,project,role,format,path,sha256,
                                   size_bytes,mtime_ns,st_dev,st_ino,created_at)
@@ -264,7 +333,7 @@ class DocumentEstate:
                 size_bytes=excluded.size_bytes,mtime_ns=excluded.mtime_ns,
                 st_dev=excluded.st_dev,st_ino=excluded.st_ino
         """, (artifact_id, document_id, project, role, resolved.suffix.lower().lstrip(".") or "file",
-              str(resolved), sha, size, mtime, resolved.stat().st_dev, resolved.stat().st_ino,
+              stored_path, sha, size, mtime, resolved.stat().st_dev, resolved.stat().st_ino,
               _now()))
         return sha
 
@@ -281,3 +350,334 @@ class DocumentEstate:
             "bytes": one("SELECT COALESCE(SUM(size_bytes),0) FROM artifacts").fetchone()[0],
             "duplicate_hashes": one("SELECT COUNT(*) FROM artifact_duplicates").fetchone()[0],
         }
+
+
+# --------------------------------------------------------------------------- #
+# Read-side API. Subprojects consume the estate through EstateReader, which
+# opens the catalog with SQLite's ?mode=ro so it physically cannot violate the
+# estate's read-only contract (docs/DOCUMENT_ESTATE.md).
+# --------------------------------------------------------------------------- #
+
+_FACTS_PERIOD_RE = None  # compiled lazily; keeps re import local to first use
+
+
+def resolve_artifact_path(raw: str, *, catalog_dir: Path) -> Path:
+    """Resolve a stored ``artifacts.path`` value, absolute or catalog-relative.
+
+    ``add_artifact`` stores paths relative to the catalog's own directory by
+    default, so any direct SQL consumer of the ``path`` column must resolve
+    through this helper rather than assuming the stored value is absolute.
+    """
+    path = Path(raw)
+    return path if path.is_absolute() else catalog_dir / path
+
+
+@dataclass(frozen=True)
+class ArtifactRef:
+    document_id: str
+    company: str
+    period: str | None
+    doc_type: str
+    project: str
+    role: str
+    format: str
+    path: Path
+    sha256: str
+
+
+class EstateReader:
+    """Read-only estate access for consumers (earnings/, soft/, alpha-go/...).
+
+    All lookups go through catalog.db; ``view_dir`` exposes the symlink view for
+    glob-style consumers. Company names are resolved through
+    ``configs/company_aliases.yaml`` plus the catalog's memberships table.
+    """
+
+    _QUERY = """
+        SELECT a.document_id, d.company, d.period, d.doc_type,
+               a.project, a.role, a.format, a.path, a.sha256
+        FROM artifacts a JOIN documents d USING (document_id)
+    """
+
+    def __init__(self, db_path: str | Path | None = None):
+        if db_path is None:
+            from src.shared.paths import DOCUMENT_ESTATE_DB
+
+            db_path = DOCUMENT_ESTATE_DB
+        self.path = Path(db_path)
+        if not self.path.exists():
+            raise FileNotFoundError(f"estate catalog not found: {self.path}")
+        self.conn = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
+        self.conn.row_factory = sqlite3.Row
+        self._aliases: dict[str, str] | None = None
+
+    def _artifact_path(self, raw: str) -> Path:
+        return resolve_artifact_path(raw, catalog_dir=self.path.parent)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        self.close()
+
+    def close(self) -> None:
+        self.conn.close()
+
+    # -- company resolution -------------------------------------------------- #
+
+    def _alias_map(self) -> dict[str, str]:
+        if self._aliases is None:
+            aliases: dict[str, str] = {}
+            try:
+                import yaml
+
+                from src.shared.paths import CONFIGS_DIR
+
+                raw = yaml.safe_load((CONFIGS_DIR / "company_aliases.yaml").read_text())
+                for slug, names in (raw.get("canonical") or {}).items():
+                    aliases[slug.lower()] = slug
+                    for name in names or ():
+                        aliases[str(name).lower()] = slug
+            except FileNotFoundError:
+                pass
+            self._aliases = aliases
+        return self._aliases
+
+    def companies(self) -> list[str]:
+        rows = self.conn.execute(
+            "SELECT DISTINCT company FROM documents ORDER BY company"
+        ).fetchall()
+        return [r["company"] for r in rows]
+
+    def document(self, document_id: str) -> EstateDocument | None:
+        """Return one logical document, or ``None`` when it is not catalogued."""
+        row = self.conn.execute(
+            """SELECT document_id,company,period,doc_type,title,language,source_url,
+                      published_at,metadata_json
+               FROM documents WHERE document_id=?""",
+            (document_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            metadata = json.loads(row["metadata_json"] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            metadata = {}
+        return EstateDocument(
+            document_id=row["document_id"],
+            company=row["company"],
+            period=row["period"],
+            doc_type=row["doc_type"],
+            title=row["title"],
+            language=row["language"],
+            source_url=row["source_url"],
+            published_at=row["published_at"],
+            metadata=metadata,
+        )
+
+    def artifacts_for_document(
+        self,
+        document_id: str,
+        *,
+        role: str | None = None,
+        fmt: str | None = None,
+    ) -> list[ArtifactRef]:
+        """Return artifacts belonging to one document with optional exact filters."""
+        clauses = ["a.document_id=?"]
+        params: list[str] = [document_id]
+        if role is not None:
+            clauses.append("a.role=?")
+            params.append(role)
+        if fmt is not None:
+            clauses.append("a.format=?")
+            params.append(fmt)
+        sql = self._QUERY + " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY a.project, a.role, a.format, a.path"
+        return [
+            ArtifactRef(
+                document_id=row["document_id"],
+                company=row["company"],
+                period=row["period"],
+                doc_type=row["doc_type"],
+                project=row["project"],
+                role=row["role"],
+                format=row["format"],
+                path=self._artifact_path(row["path"]),
+                sha256=row["sha256"],
+            )
+            for row in self.conn.execute(sql, params)
+        ]
+
+    def projects_for_document(self, document_id: str) -> list[str]:
+        """Return the document's intended consumer projects.
+
+        Acquisition pins in ``document_projects`` are authoritative. Catalogs
+        created before that table existed fall back to project records and
+        artifact ownership, preserving the read API for legacy estate rows.
+        """
+        has_pins = self.conn.execute(
+            """SELECT 1 FROM sqlite_master
+               WHERE type='table' AND name='document_projects'"""
+        ).fetchone()
+        if has_pins:
+            rows = self.conn.execute(
+                """SELECT project FROM document_projects
+                   WHERE document_id=? ORDER BY project""",
+                (document_id,),
+            ).fetchall()
+            if rows:
+                return [row["project"] for row in rows]
+
+        rows = self.conn.execute(
+            """SELECT project FROM project_records WHERE document_id=?
+               UNION
+               SELECT project FROM artifacts WHERE document_id=?
+               ORDER BY project""",
+            (document_id, document_id),
+        ).fetchall()
+        return [row["project"] for row in rows]
+
+    def _alias_group(self, name: str) -> tuple[str, ...]:
+        """Every name that denotes the same issuer as ``name``, aliases included."""
+        candidate = name.strip().lower()
+        alias_map = self._alias_map()
+        canonical = alias_map.get(candidate, candidate)
+        group = {candidate, canonical}
+        group.update(alias for alias, target in alias_map.items() if target == canonical)
+        return tuple(sorted(group))
+
+    def resolve_companies(self, name: str) -> tuple[str, ...]:
+        """All catalog ``documents.company`` values for one issuer identity.
+
+        The catalog carries two slugs for the same issuer in 19 cases — the
+        alpha-go ticker slug and the registry slug (``gfnorte``/``banorte``,
+        ``amx``/``america_movil``, ``sport``/``sports_world``, …). Resolving to
+        a single name silently drops whichever half the caller did not ask for:
+        ``artifacts("gfnorte")`` returned news rows and none of the 21 quarterly
+        releases filed under ``banorte``. Callers that want an issuer's whole
+        estate must query the union.
+        """
+        present = tuple(
+            row["company"]
+            for row in self.conn.execute(
+                "SELECT DISTINCT company FROM documents WHERE company IN ({})".format(
+                    ",".join("?" * len(self._alias_group(name)))
+                ),
+                self._alias_group(name),
+            )
+        )
+        return present or (self.resolve_company(name),)
+
+    def resolve_company(self, name: str) -> str:
+        """Canonical catalog company for ``name`` (slug, alias, or membership).
+
+        Returns a single name; use :meth:`resolve_companies` when an issuer may
+        be split across two catalog slugs.
+        """
+        candidate = name.strip().lower()
+        exists = self.conn.execute(
+            "SELECT 1 FROM documents WHERE company=? LIMIT 1", (candidate,)
+        ).fetchone()
+        if exists:
+            return candidate
+        canonical = self._alias_map().get(candidate)
+        if canonical and self.conn.execute(
+            "SELECT 1 FROM documents WHERE company=? LIMIT 1", (canonical,)
+        ).fetchone():
+            return canonical
+        member = self.conn.execute(
+            """SELECT d.company FROM memberships m JOIN documents d USING (document_id)
+               WHERE m.company=? LIMIT 1""",
+            (candidate,),
+        ).fetchone()
+        if member:
+            return member["company"]
+        return candidate
+
+    # -- artifact lookups ---------------------------------------------------- #
+
+    def artifacts(
+        self,
+        company: str | None = None,
+        *,
+        period: str | None = None,
+        doc_type: str | None = None,
+        project: str | None = None,
+        role: str | None = None,
+        fmt: str | None = None,
+        path_suffix: str | None = None,
+    ) -> list[ArtifactRef]:
+        clauses, params = [], []
+        if company is not None:
+            # Union over the issuer's whole alias group, so a split identity
+            # returns both halves instead of whichever slug was asked for.
+            names = self.resolve_companies(company)
+            clauses.append("d.company IN ({})".format(",".join("?" * len(names))))
+            params.extend(names)
+        for column, value in (
+            ("d.period", period),
+            ("d.doc_type", doc_type),
+            ("a.project", project),
+            ("a.role", role),
+            ("a.format", fmt),
+        ):
+            if value is not None:
+                clauses.append(f"{column}=?")
+                params.append(value)
+        if path_suffix is not None:
+            clauses.append("a.path LIKE ?")
+            params.append(f"%{path_suffix}")
+        sql = self._QUERY
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY d.company, d.period, a.path"
+        return [
+            ArtifactRef(
+                document_id=r["document_id"],
+                company=r["company"],
+                period=r["period"],
+                doc_type=r["doc_type"],
+                project=r["project"],
+                role=r["role"],
+                format=r["format"],
+                path=self._artifact_path(r["path"]),
+                sha256=r["sha256"],
+            )
+            for r in self.conn.execute(sql, params)
+        ]
+
+    def xbrl_facts_map(self, company: str, *, project: str = "soft") -> dict[str, Path]:
+        """period -> ``*_facts.json`` path for a company, one project's facts only.
+
+        The catalog holds both soft-derived facts and root-derived facts (the
+        latter materialized in the view as ``*_facts__root.json``); the project
+        filter keeps the two universes from mixing. Periods are keyed from the
+        ``<TICKER>_<PERIOD>_facts.json`` naming, falling back to
+        ``report_index.infer_period_label``.
+        """
+        global _FACTS_PERIOD_RE
+        if _FACTS_PERIOD_RE is None:
+            import re
+
+            _FACTS_PERIOD_RE = re.compile(r"_(\d{4}-(?:[1-4]T|FY))_facts$")
+        from src.shared.report_index import infer_period_label
+
+        out: dict[str, Path] = {}
+        for ref in self.artifacts(company, project=project, fmt="json",
+                                  path_suffix="_facts.json"):
+            stem = ref.path.name[: -len(".json")]
+            match = _FACTS_PERIOD_RE.search(stem)
+            period = match.group(1) if match else (ref.period or infer_period_label(stem))
+            if period is None:
+                continue
+            # Exact-named facts win over collision-suffixed variants for a period.
+            if period not in out or len(ref.path.name) < len(out[period].name):
+                out[period] = ref.path
+        return out
+
+    def view_dir(self, company: str) -> Path | None:
+        """``SHARED_REPORTS_DIR/<company>`` for glob-style consumers, if present."""
+        from src.shared.paths import SHARED_REPORTS_DIR
+
+        candidate = SHARED_REPORTS_DIR / self.resolve_company(company)
+        return candidate if candidate.is_dir() else None

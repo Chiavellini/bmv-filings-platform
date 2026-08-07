@@ -11,6 +11,26 @@ import pytest
 
 from estate_bridge import EstateBridgeError, load_estate_bridge
 from src.shared.document_estate import DocumentEstate
+from tests._alpha_index import build_alpha_index
+
+
+@pytest.fixture(autouse=True)
+def _bundle_env_isolation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Resolve bundles from the fixture config, not the operator's shell.
+
+    ``PDFS_DOCUMENT_ESTATE`` deliberately overrides ``estate.json``, so a shell
+    with ``.env`` exported — exactly what the deployment instructions ask for —
+    silently redirected every tmp_path bundle at the real estate and failed these
+    tests for reasons having nothing to do with the code under test.
+    """
+    for name in (
+        "PDFS_DOCUMENT_ESTATE",
+        "PDFS_ESTATE_BRIDGE",
+        "PDFS_REPORTS_DIR",
+        "PDFS_ESTATE_MOUNT_ROOT",
+        "PDFS_ESTATE_ID",
+    ):
+        monkeypatch.delenv(name, raising=False)
 
 
 def _write_bridge(path: Path, estate_root: str = "portable-estate") -> None:
@@ -42,8 +62,14 @@ def test_relative_bridge_moves_as_one_bundle(tmp_path: Path) -> None:
     (bundle / "blobs").mkdir(parents=True)
     (bundle / "views" / "reports").mkdir(parents=True)
     (bundle / "indexes").mkdir(parents=True)
+    (bundle / "projections" / "alpha-go").mkdir(parents=True)
     sqlite3.connect(bundle / "catalog.db").close()
-    (bundle / "indexes" / "alpha_go.db").touch()
+    # A real index, not a touched file: the alpha gate checks completeness, and
+    # asserting it passes here is only meaningful against a complete bundle.
+    build_alpha_index(bundle / "indexes" / "alpha_go.db", documents=2)
+    (bundle / "projections" / "alpha-go" / "manifest.json").write_text(
+        json.dumps({"documents": [{"doc_id": "a"}, {"doc_id": "b"}]}), encoding="utf-8"
+    )
 
     bridge = load_estate_bridge(config_path=config)
 
@@ -136,7 +162,11 @@ def test_alpha_upload_registration_is_atomic_and_complete(tmp_path: Path) -> Non
             ("original", "txt"),
             ("search_text", "md"),
         }
-        assert all(Path(row["path"]).is_file() for row in artifacts)
+        assert all(
+            (Path(row["path"]) if Path(row["path"]).is_absolute()
+             else bridge.estate_root / row["path"]).is_file()
+            for row in artifacts
+        )
 
 
 def test_alpha_upload_registration_rejects_an_artifact_owned_by_another_document(

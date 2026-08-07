@@ -309,6 +309,8 @@ class DocumentEstate:
         role: str,
         portable_root: str | Path | None = None,
     ) -> str:
+        if portable_root is None:
+            portable_root = self.path.parent
         resolved = path.resolve()
         sha, size, mtime = self.hash_file(resolved)
         keys = self._artifact_path_keys(resolved, portable_root=portable_root)
@@ -359,6 +361,17 @@ class DocumentEstate:
 _FACTS_PERIOD_RE = None  # compiled lazily; keeps re import local to first use
 
 
+def resolve_artifact_path(raw: str, *, catalog_dir: Path) -> Path:
+    """Resolve a stored ``artifacts.path`` value, absolute or catalog-relative.
+
+    ``add_artifact`` stores paths relative to the catalog's own directory by
+    default, so any direct SQL consumer of the ``path`` column must resolve
+    through this helper rather than assuming the stored value is absolute.
+    """
+    path = Path(raw)
+    return path if path.is_absolute() else catalog_dir / path
+
+
 @dataclass(frozen=True)
 class ArtifactRef:
     document_id: str
@@ -399,8 +412,7 @@ class EstateReader:
         self._aliases: dict[str, str] | None = None
 
     def _artifact_path(self, raw: str) -> Path:
-        path = Path(raw)
-        return path if path.is_absolute() else self.path.parent / path
+        return resolve_artifact_path(raw, catalog_dir=self.path.parent)
 
     def __enter__(self):
         return self

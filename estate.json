@@ -12,5 +12,8 @@
   "manifest": "manifest.json",
   "indexes": {
     "alpha_go": "indexes/alpha_go.db"
+  },
+  "projections": {
+    "alpha_go": "projections/alpha-go"
   }
 }

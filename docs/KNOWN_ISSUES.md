@@ -129,26 +129,82 @@ Verify any relocated bundle with:
 .venv/bin/python scripts/check_estate_connection.py --verify-relocated /path/to/estate-v1
 ```
 
-## 8. Alpha Go's projected corpus is not portable
+## 8. Alpha Go's projected corpus is not portable — RESOLVED 2026-08-04
 
-`alpha-go/data/corpus/manifest.json` stores thousands of **absolute** paths under
-the original checkout's `alpha-go/data/corpus/`. Relocating the estate bundle to
-another machine leaves that manifest pointing at paths that do not exist.
+The projection manifest stored **absolute** paths, so relocating the estate
+bundle left it pointing at paths that do not exist. The shipped
+`projections/alpha-go/manifest.json` carried 3,695 of 3,695 documents rooted at
+the original computer's mount point (e.g. `/Volumes/<MountName>/bmv-estate-v1`),
+readable only on a computer whose mount happened to carry that name.
 
-The estate bundle itself *is* portable — `estate.json` needs only `estate_root`
-changed, and every other key is containment-checked relative to it. This is
-specifically the Alpha projection.
+`src/corpus/manifest.py` now stores every path field (`markdown_path`,
+`pdf_path`, `source_path`, `original_path`) relative to the estate root and
+resolves them against the *current* root on load, so the on-disk manifest is
+mount-independent while consumers still receive absolute paths. Legacy absolute
+manifests are rebound by matching the longest path tail that exists under the
+current root, so a manifest written before this change keeps working. Writers
+(`save_manifest`, and `sync_shared_estate.py`, which passes the estate root
+explicitly) cannot reintroduce a mount name.
 
-**Workaround**: regenerate the projection after relocating, via
-`alpha-go/scripts/sync_shared_estate.py`.
+Regression coverage: `alpha-go/tests/test_corpus_manifest_portability.py`.
 
-## 9. Paused semantic index migration
+The estate bundle itself was already portable — `estate.json` needs only
+`estate_root` changed, and every other key is containment-checked relative to it.
 
-`data/document_estate/indexes/alpha_go.semantic.db.building` is an incomplete
-384-dimension re-embed (~131,584 of 320,726 chunks converted). Batches are
-transactional, so resuming is safe.
+## 9. Paused semantic index migration — superseded 2026-08-04
 
-**Do not point any application at it.** The live dashboard index is
-`alpha_go.db` (hashing, 256d), with `alpha_go.db.previous` retained as rollback.
-Neither was modified by this sweep. Run `PRAGMA quick_check` only after the
-migration completes, not before.
+The checkpoint this section described,
+`data/document_estate/indexes/alpha_go.semantic.db.building` at ~131,584 of
+320,726 chunks, **does not exist on the certified estate**. A read-only
+inventory of the connected bundle found no such file and no other resumable
+checkpoint. Do not spend time looking for it or trying to resume it.
+
+What was actually on the estate: `indexes/alpha_go.db` holding 10 documents and
+1,890 chunks — a single issuer (`ac`) against a 3,695-document projection — with
+no `embedding_model` or `embedding_dim` metadata, plus an empty 72 KiB staging
+database `.alpha_go.db.building-13983` containing zero rows. Both are preserved
+under `indexes/diagnostic-evidence-2026-08-04/`.
+
+Because that partial index sat at the production path and the release gate only
+checked file existence (see `estate_portability.inspect_alpha_index`), nothing
+reported the shortfall. The gate now validates completeness, so this class of
+silent partial promotion fails closed.
+
+### Building the index is I/O-bound, not CPU-bound
+
+The certified MiniLM embedder sustains ~132 chunks/s on an idle machine, but the
+re-embed runs at ~17 chunks/s when its working database is on the external USB
+estate: every batch commit pays USB fsync latency and the process sits in
+uninterruptible I/O wait at single-digit CPU. Building on internal storage and
+copying the finished index onto the estate is roughly 3x faster. Prefer
+`--batch-size 2048` over the 512 default to cut fsync count.
+
+## 10. `check_portable_estate.py` will not stay `verified: true` on a live estate
+
+`manifest.json` is a byte-exact receipt written once by
+`scripts/export_portable_estate.py` at export time: it records the exported
+`catalog.db`'s SHA-256 and row counts. Any later write to `catalog.db` —
+including a legitimate new quarterly filing landing through the normal
+acquisition pipeline — permanently invalidates that SHA. `export_portable_estate`
+only writes to a brand-new destination directory (it refuses to overwrite an
+existing one), so there is no cheap in-place way to refresh the manifest; doing
+so means a full re-export of every content object (tens of GB).
+
+Treat `check_portable_estate.py` as a one-time "did this specific export copy
+correctly" gate to run right after minting a new bundle, not as an ongoing
+health check for a live, growing estate. For day-to-day verification use
+`scripts/check_estate_connection.py --require-alpha-index` (connects, but does
+not diff against the frozen manifest) and `process-estate-outbox audit-alpha`
+(hash-audits Alpha's projection against the live catalog) — both are safe to
+run repeatedly against a live estate and both were green throughout this
+section's diagnosis.
+
+Confirmed 2026-08-07: the live catalog had also accumulated 2 fake `documents`
+rows (`alpha-go:acme/2025-1T`, `alpha-go:acme/shared`) and 3 dependent
+`artifacts` rows, leaked by a `test_estate_bridge.py::test_alpha_upload_registration_*`
+pytest run that reached the real estate before the autouse env-isolation
+fixture (clearing `PDFS_DOCUMENT_ESTATE` and friends) existed. That leak was
+real and has been purged (catalog backed up first to
+`catalog.db.pre-acme-purge-2026-08-07.backup`); the residual manifest
+SHA/count mismatch that remains afterward is the expected behavior described
+above, not further leakage.

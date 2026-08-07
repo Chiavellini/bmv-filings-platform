@@ -17,7 +17,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.shared.document_estate import DocumentEstate, EstateDocument  # noqa: E402
+from src.shared.document_estate import (  # noqa: E402
+    DocumentEstate,
+    EstateDocument,
+    resolve_artifact_path,
+)
 from src.shared.paths import ESTATE_BRIDGE  # noqa: E402
 from src.shared.report_index import infer_period_label  # noqa: E402
 
@@ -328,7 +332,7 @@ def build_view(estate: DocumentEstate, view: Path) -> int:
                                  ("soft", ROOT / "soft" / "data" / "reports")):
         rows = estate.conn.execute("SELECT path FROM artifacts WHERE project=?", (project,)).fetchall()
         for row in rows:
-            source = Path(row["path"])
+            source = resolve_artifact_path(row["path"], catalog_dir=estate.path.parent)
             try:
                 rel = source.relative_to(source_root)
             except ValueError:
@@ -347,7 +351,7 @@ def build_view(estate: DocumentEstate, view: Path) -> int:
           AND d.period IS NOT NULL AND a.format IN ('pdf','md')
     """).fetchall()
     for row in rows:
-        source = Path(row["path"])
+        source = resolve_artifact_path(row["path"], catalog_dir=estate.path.parent)
         short = hashlib.sha256(row["document_id"].encode()).hexdigest()[:8]
         destination = view / row["company"] / f"{row['period']}__alpha_{short}{source.suffix.lower()}"
         before = destination.exists() or destination.is_symlink()

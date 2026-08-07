@@ -111,6 +111,19 @@ or accept and verify one full reconciliation/reindex. Keeping the projection at
 `E/projections/alpha-go` avoids colliding with any estate export/checksum
 manifest at `E/manifest.json`.
 
+### Index generations
+
+`portable-estate-v1` named the generation whose index covered 10 documents.
+That index was replaced on 2026-08-04 by a complete 384-dimension semantic
+build over the full 3,695-document projection, so the generation identifier
+advances to `portable-estate-v2`. Set `PDFS_ALPHA_TARGET_ID=portable-estate-v2`
+in `deploy/airflow/native/.env` before enabling any Alpha automation against the
+new index; reusing `portable-estate-v1` would let receipts from the partial
+generation appear to satisfy the new one.
+
+Rebuilding the index in place always requires a new identifier. The rule is
+mechanical: one identifier per index generation, never reused.
+
 ## Already-running dashboard
 
 The dashboard and `HybridRetriever` monitor SQLite's cross-process
