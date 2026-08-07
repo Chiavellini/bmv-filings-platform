@@ -178,3 +178,33 @@ estate: every batch commit pays USB fsync latency and the process sits in
 uninterruptible I/O wait at single-digit CPU. Building on internal storage and
 copying the finished index onto the estate is roughly 3x faster. Prefer
 `--batch-size 2048` over the 512 default to cut fsync count.
+
+## 10. `check_portable_estate.py` will not stay `verified: true` on a live estate
+
+`manifest.json` is a byte-exact receipt written once by
+`scripts/export_portable_estate.py` at export time: it records the exported
+`catalog.db`'s SHA-256 and row counts. Any later write to `catalog.db` —
+including a legitimate new quarterly filing landing through the normal
+acquisition pipeline — permanently invalidates that SHA. `export_portable_estate`
+only writes to a brand-new destination directory (it refuses to overwrite an
+existing one), so there is no cheap in-place way to refresh the manifest; doing
+so means a full re-export of every content object (tens of GB).
+
+Treat `check_portable_estate.py` as a one-time "did this specific export copy
+correctly" gate to run right after minting a new bundle, not as an ongoing
+health check for a live, growing estate. For day-to-day verification use
+`scripts/check_estate_connection.py --require-alpha-index` (connects, but does
+not diff against the frozen manifest) and `process-estate-outbox audit-alpha`
+(hash-audits Alpha's projection against the live catalog) — both are safe to
+run repeatedly against a live estate and both were green throughout this
+section's diagnosis.
+
+Confirmed 2026-08-07: the live catalog had also accumulated 2 fake `documents`
+rows (`alpha-go:acme/2025-1T`, `alpha-go:acme/shared`) and 3 dependent
+`artifacts` rows, leaked by a `test_estate_bridge.py::test_alpha_upload_registration_*`
+pytest run that reached the real estate before the autouse env-isolation
+fixture (clearing `PDFS_DOCUMENT_ESTATE` and friends) existed. That leak was
+real and has been purged (catalog backed up first to
+`catalog.db.pre-acme-purge-2026-08-07.backup`); the residual manifest
+SHA/count mismatch that remains afterward is the expected behavior described
+above, not further leakage.
