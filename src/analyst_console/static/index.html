@@ -12,8 +12,8 @@
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./icon-512.png">
-  <link rel="stylesheet" href="./app.css?v=5">
-  <script src="./app.js?v=5" defer></script>
+  <link rel="stylesheet" href="./app.css?v=7">
+  <script src="./app.js?v=7" defer></script>
 </head>
 <body>
   <div class="ambient ambient-one" aria-hidden="true"></div>
@@ -63,11 +63,11 @@
         <div class="node-symbol symbol-model" aria-hidden="true"><span></span><span></span><span></span></div>
         <div class="card-copy">
           <p class="node-kicker">FÁBRICA DE MODELOS</p>
-          <h2>Generar un modelo</h2>
-          <p>Define la empresa y las métricas que debe contener el archivo de Excel.</p>
+          <h2>Generar hoja de segmentos</h2>
+          <p>Elige la empresa y las métricas financieras que debe contener el archivo de Excel.</p>
         </div>
         <button class="primary-action" data-dialog="model-dialog" type="button">
-          <span>Elegir modelo</span><b aria-hidden="true">→</b>
+          <span>Configurar hoja</span><b aria-hidden="true">→</b>
         </button>
       </article>
 
@@ -129,63 +129,33 @@
       <button class="dialog-close" value="cancel" aria-label="Cerrar">×</button>
       <header class="model-header">
         <p class="eyebrow">FÁBRICA DE MODELOS</p>
-        <h2>Generar un modelo</h2>
-        <p class="dialog-copy">Configura la solicitud; el resultado se abrirá en Excel.</p>
+        <h2>Generar hoja de segmentos</h2>
+        <p class="dialog-copy">Elige la empresa y las filas de la hoja. Los reportes se leen del Data Estate.</p>
       </header>
       <div class="model-body">
-        <div class="model-selector-row">
-          <label>Tipo de modelo
-            <select id="model-type">
-              <option value="soft_model">Modelo de cobertura</option>
-              <option value="segments_model">Modelo de segmentos</option>
-            </select>
-          </label>
-          <p id="model-context">Selecciona la empresa que quieres actualizar.</p>
-        </div>
-        <div id="soft-model-fields">
-          <label>Empresa
-            <select id="model-company"></select>
-          </label>
-        </div>
-        <div id="segments-model-fields" hidden>
+        <div id="segments-model-fields">
           <div class="request-basics">
-            <label>Partir de una plantilla
-              <select id="segments-template"></select>
-              <small>Carga las métricas actuales de una empresa existente.</small>
-            </label>
-            <div class="field-grid">
-              <label>Empresa
-                <input id="segments-company" maxlength="160" autocomplete="organization" placeholder="Ej. Grupo Bimbo">
-              </label>
-              <label>Ticker <span>(opcional)</span>
-                <input id="segments-ticker" maxlength="32" autocapitalize="characters" placeholder="Ej. BIMBOA">
-              </label>
-            </div>
-            <label>Liga de Relación con Inversionistas
-              <input id="segments-ir" type="url" maxlength="500" placeholder="https://…">
+            <label>Empresa
+              <select id="segments-template" required></select>
+              <small>Usa los reportes trimestrales de esta empresa que ya están en el Data Estate.</small>
             </label>
           </div>
           <div class="metrics-heading">
-            <div><b>Métricas del modelo</b><small>Abre una sección para editar sus datos y filas calculadas.</small></div>
-            <button class="quiet-action" id="add-section" type="button">+ Agregar sección</button>
+            <div><b>Métricas financieras</b><small>Marca las filas que quieres incluir en la hoja de segmentos.</small></div>
+            <span id="metric-selection-count">0 seleccionadas</span>
           </div>
-          <div id="segments-sections" class="segments-sections"></div>
-          <datalist id="metric-keys"></datalist>
-          <details class="advanced-options">
-            <summary>Opciones de descarga</summary>
-            <div class="field-grid">
-              <label>Máximo de reportes
-                <input id="segments-max-reports" type="number" min="1" max="500" value="100">
-              </label>
-              <label class="check-field"><input id="segments-force-download" type="checkbox"> Volver a descargar los reportes</label>
-            </div>
-          </details>
-          <p class="contract-note">Se crea automáticamente el contrato de métricas. Para publicar, el Estate debe tener una sincronización reciente.</p>
+          <div class="metric-picker">
+            <label class="metric-search">Buscar una métrica
+              <input id="metric-search" type="search" autocomplete="off" placeholder="Ej. ingresos, EBITDA, deuda…">
+            </label>
+            <div id="metric-list" class="metric-list" role="group" aria-label="Lista de métricas financieras"></div>
+          </div>
+          <p class="contract-note">Este flujo usa únicamente los reportes ya disponibles en el Data Estate; no descarga archivos.</p>
         </div>
       </div>
       <footer class="model-footer">
-        <span id="model-summary">Modelo de cobertura</span>
-        <button class="primary-action" id="generate-model" value="default" type="submit"><span>Generar modelo</span><b>→</b></button>
+        <span id="model-summary">Hoja de segmentos</span>
+        <button class="primary-action" id="generate-model" value="default" type="submit"><span>Generar hoja de segmentos</span><b>→</b></button>
       </footer>
     </form>
   </dialog>

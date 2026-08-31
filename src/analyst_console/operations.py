@@ -165,11 +165,8 @@ def operation_command(
                 str(analyst_csv),
                 "--analyst-company",
                 str(metadata.get("ticker") or metadata.get("company") or ""),
-                "--max-reports",
-                str(metadata.get("max_reports", 100)),
+                "--estate-only",
             ]
-            if metadata.get("force_download"):
-                argv.append("--force-download")
             cwd = project_root
         else:
             source = operation.company_source or ""

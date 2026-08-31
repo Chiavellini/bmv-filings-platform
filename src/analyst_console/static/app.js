@@ -10,6 +10,14 @@ const state = {
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const LOCAL_API = document.querySelector('meta[name="analyst-console-api"]')?.content || "http://127.0.0.1:8765";
+const METRIC_SECTIONS = {
+  income: "Estado de resultados",
+  balance: "Balance general",
+  cashflow: "Flujo de efectivo",
+  segment: "Segmentos",
+  ratio: "Razones financieras",
+  kpi: "Indicadores operativos",
+};
 
 async function api(path, options = {}) {
   let response;
@@ -51,92 +59,51 @@ function escapeHtml(value) {
 }
 
 function modelCompanies() {
-  const companies = state.bootstrap?.companies?.soft || [];
-  const select = $("#model-company");
-  select.innerHTML = companies.map(row =>
-    `<option value="${escapeHtml(row.slug)}">${escapeHtml(row.name)}</option>`
-  ).join("");
   const template = $("#segments-template");
-  template.innerHTML = '<option value="">Nueva empresa</option>' +
-    (state.bootstrap?.companies?.segments || []).map(row =>
+  const selected = template.value;
+  template.innerHTML = (state.bootstrap?.companies?.segments || []).map(row =>
       `<option value="${escapeHtml(row.slug)}">${escapeHtml(row.name)}</option>`
-    ).join("");
+    ).join("") || '<option value="">No hay empresas disponibles</option>';
+  if ([...template.options].some(option => option.value === selected)) template.value = selected;
 }
 
-function modelMode() {
-  const segments = $("#model-type").value === "segments_model";
-  $("#soft-model-fields").hidden = segments;
-  $("#segments-model-fields").hidden = !segments;
-  $("#model-context").textContent = segments
-    ? "Define exactamente qué filas tendrá la hoja Segments."
-    : "Selecciona la empresa que quieres actualizar.";
-  $("#model-summary").textContent = segments ? "Solicitud de Segments" : "Modelo de cobertura";
-  if (segments && !state.segmentSetup) loadSegmentSetup($("#segments-template").value);
+function sectionLabel(section) {
+  return METRIC_SECTIONS[section] || section || "Otras métricas";
 }
 
-function rowTypeOptions(selected) {
-  const choices = [{ kind: "metric", label: "Métrica financiera" }, ...(state.segmentSetup?.derived_rows || [])];
-  return choices.map(item =>
-    `<option value="${escapeHtml(item.kind)}"${item.kind === selected ? " selected" : ""}>${escapeHtml(item.label)}</option>`
-  ).join("");
+function presetMetricKeys(payload) {
+  const valid = new Set(payload.metrics.map(metric => metric.key));
+  return new Set(payload.preset.sections.flatMap(section =>
+    section.rows
+      .filter(row => row.kind === "metric" && valid.has(row.key))
+      .map(row => row.key)
+  ));
 }
 
-function metricRow(row = { kind: "metric", label: "", key: "" }) {
-  const derived = row.kind !== "metric";
-  return `<div class="metric-row">
-    <select class="row-kind" aria-label="Tipo de fila">${rowTypeOptions(row.kind)}</select>
-    <input class="row-label" aria-label="Etiqueta visible" maxlength="160" placeholder="Etiqueta visible" value="${escapeHtml(row.label)}"${derived ? " readonly" : ""}>
-    <input class="row-key" aria-label="Clave canónica" maxlength="100" list="metric-keys" placeholder="Clave canónica" value="${escapeHtml(row.key || "")}"${derived ? " hidden" : ""}>
-    <span class="formula-badge"${derived ? "" : " hidden"}>Fórmula de Excel</span>
-    <button class="remove-row" type="button" aria-label="Eliminar fila">×</button>
-  </div>`;
-}
-
-function sectionCard(section = { name: "", rows: [] }, open = false) {
-  const count = (section.rows || []).length;
-  return `<details class="segment-section"${open ? " open" : ""}>
-    <summary><span><b class="section-summary-name">${escapeHtml(section.name || "Nueva sección")}</b><small>${count} fila${count === 1 ? "" : "s"}</small></span><i>Editar</i></summary>
-    <div class="section-editor">
-    <div class="segment-section-head">
-      <input class="section-name" maxlength="160" aria-label="Nombre de sección" placeholder="Nombre de la sección" value="${escapeHtml(section.name)}">
-      <button class="remove-section" type="button">Eliminar</button>
-    </div>
-    <div class="metric-columns" aria-hidden="true"><span>Tipo</span><span>Etiqueta en Excel</span><span>Clave canónica</span><span></span></div>
-    <div class="metric-rows">${(section.rows || []).map(metricRow).join("")}</div>
-    <div class="section-actions">
-      <button class="quiet-action add-metric" type="button">+ Métrica</button>
-      <button class="quiet-action add-derived" type="button">+ Fila calculada</button>
-    </div>
-    </div>
-  </details>`;
+function renderMetricList() {
+  const search = $("#metric-search").value.trim().toLocaleLowerCase("es-MX");
+  const selected = state.segmentSetup.selectedMetrics;
+  const metrics = [...state.segmentSetup.metrics]
+    .sort((a, b) => a.label.localeCompare(b.label, "es-MX"))
+    .filter(metric => `${metric.label} ${sectionLabel(metric.section)}`.toLocaleLowerCase("es-MX").includes(search));
+  $("#metric-list").innerHTML = metrics.map(metric => `
+    <label class="metric-choice">
+      <input type="checkbox" value="${escapeHtml(metric.key)}"${selected.has(metric.key) ? " checked" : ""}>
+      <span><b>${escapeHtml(metric.label)}</b><small>${escapeHtml(sectionLabel(metric.section))}</small></span>
+    </label>
+  `).join("") || '<p class="empty-metrics">No hay métricas que coincidan con la búsqueda.</p>';
+  const count = selected.size;
+  $("#metric-selection-count").textContent = `${count} seleccionada${count === 1 ? "" : "s"}`;
+  $("#model-summary").textContent = count
+    ? `${count} métrica${count === 1 ? "" : "s"} · Hoja Segments`
+    : "Selecciona al menos una métrica";
 }
 
 function renderSegmentSetup(payload) {
   state.segmentSetup = payload;
-  const preset = payload.preset;
-  $("#segments-company").value = preset.company || "";
-  $("#segments-ticker").value = preset.ticker || "";
-  $("#segments-ir").value = preset.ir_url || "";
-  $("#segments-max-reports").value = preset.max_reports || 100;
-  $("#segments-force-download").checked = Boolean(preset.force_download);
-  $("#metric-keys").innerHTML = payload.metrics.map(metric =>
-    `<option value="${escapeHtml(metric.key)}">${escapeHtml(metric.label)} · ${escapeHtml(metric.section)}</option>`
-  ).join("");
-  $("#segments-sections").innerHTML = preset.sections.map((section, index) => sectionCard(section, index === 0)).join("");
-  updateSegmentSummary();
-}
-
-function updateSectionSummary(section) {
-  const name = $(".section-name", section)?.value.trim() || "Nueva sección";
-  const count = $$(".metric-row", section).length;
-  $(".section-summary-name", section).textContent = name;
-  $("summary small", section).textContent = `${count} fila${count === 1 ? "" : "s"}`;
-}
-
-function updateSegmentSummary() {
-  const sections = $$(".segment-section", $("#segments-sections"));
-  const rows = $$(".metric-row", $("#segments-sections")).length;
-  $("#model-summary").textContent = `${sections.length} secciones · ${rows} filas`;
+  state.segmentSetup.selectedMetrics = presetMetricKeys(payload);
+  $("#metric-search").value = "";
+  renderMetricList();
 }
 
 async function loadSegmentSetup(company = "") {
@@ -149,34 +116,35 @@ async function loadSegmentSetup(company = "") {
     toast(error.message, true);
   } finally {
     generate.disabled = false;
-    generate.querySelector("span").textContent = "Generar modelo";
+    generate.querySelector("span").textContent = "Generar hoja de segmentos";
   }
 }
 
 function collectSegmentRequest() {
+  const selected = state.segmentSetup?.selectedMetrics || new Set();
+  const grouped = new Map();
+  state.segmentSetup.metrics.forEach(metric => {
+    if (!selected.has(metric.key)) return;
+    const section = sectionLabel(metric.section);
+    if (!grouped.has(section)) grouped.set(section, []);
+    grouped.get(section).push({ kind: "metric", label: metric.label, key: metric.key });
+  });
   return {
     template_company: $("#segments-template").value,
-    company: $("#segments-company").value,
-    ticker: $("#segments-ticker").value,
-    ir_url: $("#segments-ir").value,
-    max_reports: $("#segments-max-reports").value,
-    force_download: $("#segments-force-download").checked,
-    sections: $$(".segment-section", $("#segments-sections")).map(section => ({
-      name: $(".section-name", section).value,
-      rows: $$(".metric-row", section).map(row => ({
-        kind: $(".row-kind", row).value,
-        label: $(".row-label", row).value,
-        key: $(".row-key", row).value,
-      })),
-    })),
+    sections: [...grouped].map(([name, rows]) => ({ name, rows })),
   };
 }
 
 async function launchSegmentJob() {
+  const request = collectSegmentRequest();
+  if (!request.sections.length) {
+    toast("Selecciona al menos una métrica financiera.", true);
+    return null;
+  }
   try {
     const job = await api("/api/segments/jobs", {
       method: "POST",
-      body: JSON.stringify(collectSegmentRequest()),
+      body: JSON.stringify(request),
     });
     toast(`${job.label}: tarea iniciada.`);
     closeDialogs();
@@ -363,6 +331,9 @@ document.addEventListener("click", async event => {
 
   const dialogButton = event.target.closest("[data-dialog]");
   if (dialogButton) {
+    if (dialogButton.dataset.dialog === "model-dialog" && !state.segmentSetup) {
+      await loadSegmentSetup($("#segments-template").value);
+    }
     $("#" + dialogButton.dataset.dialog).showModal();
     return;
   }
@@ -456,71 +427,17 @@ $("#estate-toggle").addEventListener("click", async () => {
   }
 });
 
-$("#model-type").addEventListener("change", modelMode);
 $("#segments-template").addEventListener("change", event => loadSegmentSetup(event.target.value));
-$("#add-section").addEventListener("click", () => {
-  $("#segments-sections").insertAdjacentHTML("beforeend", sectionCard({ name: "", rows: [] }, true));
-  updateSegmentSummary();
-});
-$("#segments-sections").addEventListener("click", event => {
-  const row = event.target.closest(".metric-row");
-  const section = event.target.closest(".segment-section");
-  if (event.target.closest(".remove-row")) {
-    row?.remove();
-    if (section) updateSectionSummary(section);
-    updateSegmentSummary();
-  } else if (event.target.closest(".remove-section")) {
-    section?.remove();
-    updateSegmentSummary();
-  }
-  else if (event.target.closest(".add-metric")) {
-    $(".metric-rows", section).insertAdjacentHTML("beforeend", metricRow());
-    updateSectionSummary(section);
-    updateSegmentSummary();
-  } else if (event.target.closest(".add-derived")) {
-    $(".metric-rows", section).insertAdjacentHTML("beforeend", metricRow({ kind: "yoy", label: "YoY", key: "" }));
-    updateSectionSummary(section);
-    updateSegmentSummary();
-  }
-});
-$("#segments-sections").addEventListener("input", event => {
-  if (!event.target.matches(".section-name")) return;
-  updateSectionSummary(event.target.closest(".segment-section"));
-});
-$("#segments-sections").addEventListener("toggle", event => {
-  const opened = event.target.closest(".segment-section");
-  if (!opened?.open) return;
-  $$(".segment-section", $("#segments-sections")).forEach(section => {
-    if (section !== opened) section.open = false;
-  });
-}, true);
-$("#segments-sections").addEventListener("change", event => {
-  if (!event.target.matches(".row-kind")) return;
-  const row = event.target.closest(".metric-row");
-  const kind = event.target.value;
-  const label = $(".row-label", row);
-  const key = $(".row-key", row);
-  const badge = $(".formula-badge", row);
-  if (kind === "metric") {
-    label.readOnly = false;
-    label.value = "";
-    key.hidden = false;
-    badge.hidden = true;
-  } else {
-    const definition = state.segmentSetup.derived_rows.find(item => item.kind === kind);
-    label.value = definition?.label || "";
-    label.readOnly = true;
-    key.value = "";
-    key.hidden = true;
-    badge.hidden = false;
-  }
+$("#metric-search").addEventListener("input", renderMetricList);
+$("#metric-list").addEventListener("change", event => {
+  if (!event.target.matches('input[type="checkbox"]')) return;
+  if (event.target.checked) state.segmentSetup.selectedMetrics.add(event.target.value);
+  else state.segmentSetup.selectedMetrics.delete(event.target.value);
+  renderMetricList();
 });
 $("#model-form").addEventListener("submit", async event => {
   event.preventDefault();
-  const type = $("#model-type").value;
-  const job = type === "segments_model"
-    ? await launchSegmentJob()
-    : await launchJob(type, { company: $("#model-company").value });
+  const job = await launchSegmentJob();
   if (job) closeDialogs();
 });
 
@@ -554,4 +471,4 @@ $$("dialog").forEach(dialog => dialog.addEventListener("click", event => {
   if (event.target === dialog) dialog.close();
 }));
 
-refresh(false).then(() => { modelMode(); ensurePolling(); });
+refresh(false).then(ensurePolling);

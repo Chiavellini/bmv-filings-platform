@@ -5,7 +5,6 @@ import csv
 import json
 from pathlib import Path
 import re
-import unicodedata
 from urllib.parse import urlparse
 import uuid
 from typing import Any
@@ -38,11 +37,6 @@ def _text(value: object, field: str, *, maximum: int = 160) -> str:
     if len(result) > maximum or _CONTROL_RE.search(result):
         raise OperationError(f"{field.capitalize()} no es válido.")
     return result
-
-
-def _slug(value: str) -> str:
-    normalized = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
-    return re.sub(r"[^a-z0-9]+", "_", normalized.lower()).strip("_") or "empresa"
 
 
 def _metric_defs(project_root: Path, company_slug: str = ""):
@@ -158,33 +152,37 @@ class SegmentRequestStore:
         }
 
     def prepare(self, payload: dict[str, Any]) -> str:
-        company = _text(payload.get("company"), "el nombre de la empresa")
-        ticker = str(payload.get("ticker") or "").strip()
-        if ticker and (len(ticker) > 32 or _CONTROL_RE.search(ticker)):
-            raise OperationError("El ticker no es válido.")
-        ir_url = _text(payload.get("ir_url"), "la liga de Relación con Inversionistas", maximum=500)
+        requested_slug = str(payload.get("template_company") or "").strip()
+        known_templates = {
+            path.stem: path for path in (self.project_root / "inputs").glob("*.md")
+            if not path.name.startswith("_")
+        }
+        if requested_slug not in known_templates:
+            raise OperationError("Elige una empresa de la lista disponible.")
+
+        preset = _parse_preset(known_templates[requested_slug])
+        company = _text(preset.get("company"), "el nombre de la empresa")
+        ticker = str(preset.get("ticker") or "").strip()
+        config_path = self.project_root / "configs" / f"{requested_slug}.yaml"
+        if config_path.is_file():
+            from src.model.financial_model import load_config
+
+            company_config = load_config(config_path).get("company", {}) or {}
+            ticker = str(company_config.get("ticker") or ticker)
+        ir_url = _text(
+            preset.get("ir_url"),
+            "la fuente histórica configurada para esta empresa",
+            maximum=500,
+        )
         parsed_url = urlparse(ir_url)
         if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
-            raise OperationError("La liga de Relación con Inversionistas debe usar http o https.")
-        try:
-            max_reports = int(payload.get("max_reports", 100))
-        except (TypeError, ValueError) as exc:
-            raise OperationError("El máximo de reportes debe ser un número.") from exc
-        if not 1 <= max_reports <= 500:
-            raise OperationError("El máximo de reportes debe estar entre 1 y 500.")
+            raise OperationError("La empresa seleccionada no tiene una fuente histórica válida.")
 
         raw_sections = payload.get("sections")
         if not isinstance(raw_sections, list) or not 1 <= len(raw_sections) <= 40:
             raise OperationError("Agrega al menos una sección de métricas.")
 
-        requested_slug = str(payload.get("template_company") or "").strip()
-        known_templates = {
-            path.stem for path in (self.project_root / "inputs").glob("*.md")
-            if not path.name.startswith("_")
-        }
-        if requested_slug and requested_slug not in known_templates:
-            raise OperationError("La plantilla de empresa no existe.")
-        company_slug = _slug(company)
+        company_slug = requested_slug
         valid_keys = {row["key"] for row in metric_catalog(self.project_root, company_slug)}
         sections: list[dict[str, Any]] = []
         row_count = 0
@@ -202,10 +200,10 @@ class SegmentRequestStore:
                 kind = str(raw_row.get("kind") or "metric")
                 label = _text(raw_row.get("label"), "la etiqueta de una métrica")
                 if kind == "metric":
-                    key = _text(raw_row.get("key"), f'la clave canónica de "{label}"')
+                    key = _text(raw_row.get("key"), f'la métrica financiera de "{label}"')
                     if key not in valid_keys:
                         raise OperationError(
-                            f'La clave canónica "{key}" no está disponible para esta empresa.'
+                            f'La métrica seleccionada para "{label}" no está disponible para esta empresa.'
                         )
                 elif kind in DERIVED_ROWS:
                     key = ""
@@ -250,8 +248,8 @@ class SegmentRequestStore:
             "ticker": ticker,
             "slug": company_slug,
             "template_company": requested_slug,
-            "max_reports": max_reports,
-            "force_download": bool(payload.get("force_download")),
+            "max_reports": 100,
+            "force_download": False,
             "sections": sections,
         }
         metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
