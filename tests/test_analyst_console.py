@@ -111,14 +111,19 @@ def test_console_serves_launchpad_and_bootstrap(console_server: str) -> None:
     assert "Todo lo que necesitas" not in html
     assert "Cada herramienta conserva su propio espacio" not in html
     assert "Lanzadores de proyectos" in html
-    assert 'href="./app.css?v=5"' in html
-    assert 'src="./app.js?v=5"' in html
+    assert 'href="./app.css?v=7"' in html
+    assert 'src="./app.js?v=7"' in html
     assert 'content="http://127.0.0.1:8765"' in html
     assert 'href="./" aria-label="Inicio del lanzador BMV"' in html
     assert "connect-src http://127.0.0.1:8765" in html
     assert "#analyst-launchpad" in html
     assert "Pipeline" not in html
     assert "Earnings Study" not in html
+    assert "Generar hoja de segmentos" in html
+    assert "Tipo de modelo" not in html
+    assert "Clave canónica" not in html
+    assert "Opciones de descarga" not in html
+    assert "Buscar una métrica" in html
 
     with urlopen(f"{console_server}/api/bootstrap", timeout=3) as response:
         payload = json.load(response)
@@ -147,11 +152,6 @@ def test_segments_request_creates_strict_markdown_and_analyst_contract(
     request_id = store.prepare(
         {
             "template_company": "soriana",
-            "company": "Soriana",
-            "ticker": "SORIANA",
-            "ir_url": "https://example.com/inversionistas",
-            "max_reports": 40,
-            "force_download": True,
             "sections": [
                 {
                     "name": "Resultados",
@@ -181,7 +181,8 @@ def test_segments_request_creates_strict_markdown_and_analyst_contract(
     assert operation.key == "segments_model"
     assert argv[1:3] == ["scripts/build_segments.py", str(request_dir / "input.md")]
     assert "--analyst-metrics" in argv
-    assert "--force-download" in argv
+    assert "--estate-only" in argv
+    assert "--force-download" not in argv
     assert cwd == ROOT
 
 

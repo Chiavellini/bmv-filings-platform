@@ -1012,6 +1012,7 @@ def run(
     *,
     max_reports: int = 100,
     force_download: bool = False,
+    estate_only: bool = False,
     strict_metrics: bool = True,
     require_analyst_sheet: bool = True,
     require_fresh_estate: bool = True,
@@ -1192,6 +1193,10 @@ def run(
         print(f"\n[1-2/5] Reusing zero-copy report inputs from {locations} "
               "— skipping download/parse.")
         print(f"        {len(parsed)} report period(s) available")
+    elif estate_only:
+        raise InputError(
+            f"No hay reportes trimestrales procesados para {name} en el Data Estate."
+        )
     else:
         # ── Phase 1 · Download (always into the WRITABLE cache, never the
         # estate view — the view is read-only and owned by the estate builder) ─
@@ -1553,6 +1558,11 @@ def main() -> int:
         help="Worksheet name when --analyst-metrics points to an XLSX workbook.",
     )
     ap.add_argument(
+        "--estate-only",
+        action="store_true",
+        help="Use only reports already present in the Data Estate; never download files.",
+    )
+    ap.add_argument(
         "--allow-auto-map",
         action="store_true",
         help=(
@@ -1593,6 +1603,7 @@ def main() -> int:
             md_path,
             max_reports=args.max_reports,
             force_download=args.force_download,
+            estate_only=args.estate_only,
             strict_metrics=not args.allow_auto_map,
             require_analyst_sheet=not args.allow_missing_analyst_sheet,
             require_fresh_estate=not args.allow_stale_estate,
