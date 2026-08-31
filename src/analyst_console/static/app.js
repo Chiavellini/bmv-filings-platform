@@ -149,7 +149,7 @@ async function launchSegmentJob() {
     toast(`${job.label}: tarea iniciada.`);
     closeDialogs();
     await refresh();
-    ensurePolling();
+    ensurePolling(job.id, true);
     return job;
   } catch (error) {
     toast(error.message, true);
@@ -185,7 +185,6 @@ function renderBootstrap(payload) {
     ? `USB ${payload.estate.volume_name} conectado. Ya puedes usar Alpha, modelos y matrices.`
     : "Conecta el USB para usar la biblioteca de reportes y sus índices.";
   modelCompanies();
-  renderJobs(payload.jobs);
 }
 
 function setLocalControls(enabled) {
@@ -215,39 +214,6 @@ function renderBridgeUnavailable() {
   status($("#models-status"), "Sin conexión local", "warning");
   $("#estate-copy").textContent = "Prepara esta Mac una sola vez para conectar el USB y ejecutar proyectos.";
   setLocalControls(false);
-  renderJobs([]);
-}
-
-function renderJobs(jobs) {
-  const list = $("#job-list");
-  if (!jobs.length) {
-    list.innerHTML = '<p class="empty-state">Todavía no se ha iniciado ninguna tarea.</p>';
-    return;
-  }
-  list.innerHTML = jobs.map(job => `
-    <div class="job-row" data-job="${escapeHtml(job.id)}">
-      <div><b>${escapeHtml(job.label)}</b><small>${escapeHtml(nodeName(job.node))} · ${formatTime(job.created_at)}</small></div>
-      <div><small>${escapeHtml(job.message)}</small></div>
-      <span class="job-state ${escapeHtml(job.status)}"><i></i>${escapeHtml(jobStatus(job.status))}</span>
-      <div class="job-actions">
-        <button type="button" data-log="${escapeHtml(job.id)}">Detalle</button>
-        ${job.has_artifact ? `<button type="button" data-open-job="${escapeHtml(job.id)}">Abrir resultado</button>` : ""}
-      </div>
-    </div>
-  `).join("");
-}
-
-function formatTime(iso) {
-  if (!iso) return "";
-  return new Intl.DateTimeFormat("es-MX", { hour: "numeric", minute: "2-digit" }).format(new Date(iso));
-}
-
-function nodeName(node) {
-  return ({ estate: "ESTATE", models: "MODELOS", soft: "SOFT" })[node] || String(node).toUpperCase();
-}
-
-function jobStatus(value) {
-  return ({ queued: "en espera", running: "en proceso", completed: "completada", failed: "falló", interrupted: "interrumpida" })[value] || value;
 }
 
 async function refresh(silent = true) {
@@ -268,7 +234,7 @@ async function launchJob(operation, params = {}, confirmation = null) {
     toast(`${job.label}: tarea iniciada.`);
     closeDialogs();
     await refresh();
-    ensurePolling();
+    ensurePolling(job.id);
     return job;
   } catch (error) {
     toast(error.message, true);
@@ -276,10 +242,29 @@ async function launchJob(operation, params = {}, confirmation = null) {
   }
 }
 
-function ensurePolling() {
+function ensurePolling(watchedJobId = null, openResult = false) {
   clearInterval(state.poll);
   state.poll = setInterval(async () => {
     await refresh();
+    const watched = watchedJobId
+      ? state.bootstrap?.jobs?.find(job => job.id === watchedJobId)
+      : null;
+    if (watched && !["queued", "running"].includes(watched.status)) {
+      clearInterval(state.poll);
+      if (watched.status === "completed") {
+        if (openResult && watched.has_artifact) {
+          try {
+            await api(`/api/jobs/${watched.id}/open`, { method: "POST", body: "{}" });
+            toast("Hoja de segmentos terminada y abierta en Excel.");
+          } catch (error) { toast(error.message, true); }
+        } else {
+          toast(`${watched.label}: ${watched.message.toLocaleLowerCase("es-MX")}.`);
+        }
+      } else {
+        toast(`${watched.label}: ${watched.message.toLocaleLowerCase("es-MX")}.`, true);
+      }
+      return;
+    }
     const active = state.bootstrap?.jobs?.some(job => ["queued", "running"].includes(job.status));
     if (!active) clearInterval(state.poll);
   }, 1800);
@@ -361,27 +346,6 @@ document.addEventListener("click", async event => {
     return;
   }
 
-  const logButton = event.target.closest("[data-log]");
-  if (logButton) {
-    const jobId = logButton.dataset.log;
-    const job = state.bootstrap.jobs.find(item => item.id === jobId);
-    $("#log-title").textContent = job?.label || "Registro de actividad";
-    $("#log-content").textContent = "Cargando…";
-    $("#log-dialog").showModal();
-    try {
-      const payload = await api(`/api/jobs/${jobId}/log`);
-      $("#log-content").textContent = payload.log || "Todavía no hay información.";
-    } catch (error) { $("#log-content").textContent = error.message; }
-    return;
-  }
-
-  const openJob = event.target.closest("[data-open-job]");
-  if (openJob) {
-    try {
-      await api(`/api/jobs/${openJob.dataset.openJob}/open`, { method: "POST", body: "{}" });
-      toast("Se abrió el resultado terminado.");
-    } catch (error) { toast(error.message, true); }
-  }
 });
 
 $("#launch-alpha").addEventListener("click", async () => {
@@ -466,7 +430,6 @@ $("#confirm-form").addEventListener("submit", async event => {
   await launchJob(operation.key, {}, $("#confirm-input").value);
 });
 
-$("#refresh-state").addEventListener("click", () => refresh(false));
 $$("dialog").forEach(dialog => dialog.addEventListener("click", event => {
   if (event.target === dialog) dialog.close();
 }));

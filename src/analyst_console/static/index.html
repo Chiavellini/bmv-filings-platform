@@ -12,8 +12,8 @@
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./icon-512.png">
-  <link rel="stylesheet" href="./app.css?v=7">
-  <script src="./app.js?v=7" defer></script>
+  <link rel="stylesheet" href="./app.css?v=8">
+  <script src="./app.js?v=8" defer></script>
 </head>
 <body>
   <div class="ambient ambient-one" aria-hidden="true"></div>
@@ -108,15 +108,6 @@
       </article>
     </section>
 
-    <section class="activity" aria-labelledby="activity-title">
-      <div class="section-heading">
-        <div><p class="eyebrow">ACTIVIDAD RECIENTE</p><h2 id="activity-title">Qué está haciendo el lanzador</h2></div>
-        <button class="text-button" id="refresh-state" type="button">Actualizar</button>
-      </div>
-      <div class="job-list" id="job-list">
-        <p class="empty-state">Todavía no se ha iniciado ninguna tarea.</p>
-      </div>
-    </section>
   </main>
 
   <footer>
@@ -185,15 +176,6 @@
       </label>
       <button class="primary-action full danger" id="confirm-submit" value="default" type="submit" disabled><span>Confirmar y ejecutar</span><b>→</b></button>
     </form>
-  </dialog>
-
-  <dialog id="log-dialog" class="log-dialog">
-    <div class="dialog-shell">
-      <button class="dialog-close" data-close-log aria-label="Cerrar">×</button>
-      <p class="eyebrow">DETALLE DE TAREA</p>
-      <h2 id="log-title">Registro de actividad</h2>
-      <pre id="log-content">Cargando…</pre>
-    </div>
   </dialog>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>

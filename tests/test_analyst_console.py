@@ -111,8 +111,8 @@ def test_console_serves_launchpad_and_bootstrap(console_server: str) -> None:
     assert "Todo lo que necesitas" not in html
     assert "Cada herramienta conserva su propio espacio" not in html
     assert "Lanzadores de proyectos" in html
-    assert 'href="./app.css?v=7"' in html
-    assert 'src="./app.js?v=7"' in html
+    assert 'href="./app.css?v=8"' in html
+    assert 'src="./app.js?v=8"' in html
     assert 'content="http://127.0.0.1:8765"' in html
     assert 'href="./" aria-label="Inicio del lanzador BMV"' in html
     assert "connect-src http://127.0.0.1:8765" in html
@@ -124,6 +124,8 @@ def test_console_serves_launchpad_and_bootstrap(console_server: str) -> None:
     assert "Clave canónica" not in html
     assert "Opciones de descarga" not in html
     assert "Buscar una métrica" in html
+    assert "ACTIVIDAD RECIENTE" not in html
+    assert "Qué está haciendo el lanzador" not in html
 
     with urlopen(f"{console_server}/api/bootstrap", timeout=3) as response:
         payload = json.load(response)
