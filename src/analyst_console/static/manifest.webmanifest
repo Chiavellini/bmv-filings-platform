@@ -1,0 +1,24 @@
+{
+  "name": "BMV · Lanzador del Analista",
+  "short_name": "BMV Analista",
+  "description": "Punto de entrada para los proyectos del analista BMV",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f2f0e9",
+  "theme_color": "#0b1830",
+  "icons": [
+    {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

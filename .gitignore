@@ -40,6 +40,7 @@ downloads/
 *.bak
 *.bak-*
 data/night_start.txt
+data/analyst_console/
 
 # Local Airflow state; native definitions and .env.example are versioned.
 deploy/airflow/logs/
