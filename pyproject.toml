@@ -40,6 +40,7 @@ test = [
 refresh-quarterly-estate = "src.acquisition.cli:main"
 process-estate-outbox = "src.consumers.cli:main"
 airflow-quarterly-estate = "src.deployment.airflow_task:main"
+analyst-console = "src.analyst_console.server:main"
 
 [tool.setuptools]
 py-modules = ["estate_bridge", "estate_portability", "estate_volume"]
@@ -47,6 +48,9 @@ py-modules = ["estate_bridge", "estate_portability", "estate_volume"]
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["src", "src.*"]
+
+[tool.setuptools.package-data]
+"src.analyst_console" = ["static/*"]
 
 [tool.pytest.ini_options]
 # Project root on sys.path so `import src.<role>.<module>` and `tests.conftest` resolve.

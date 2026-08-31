@@ -43,9 +43,27 @@ compatible.
 | Alpha Go | `alpha-go/.venv312` | `cd alpha-go && .venv312/bin/python -m streamlit run app/streamlit_app.py` |
 | Soft | `soft/.venv` (Python 3.11.13) | `cd soft && .venv/bin/python -m pytest -q -m "not network and not model"` |
 | Earnings | `earnings/.venv` (Python 3.11.13) | `cd earnings && .venv/bin/python -m pytest -q -m "not network and not model"` |
+| Analyst bridge | `.venv` | `.venv/bin/python scripts/install_analyst_console.py install` |
 
 `audit`, `plan`, `status`, and `check_estate_connection.py` are strictly
 read-only: no source discovery, no network, no estate writes.
+
+## Analyst launchpad
+
+The permanent Analyst Console lives at
+[`https://chiavellini.github.io/bmv-filings-platform/`](https://chiavellini.github.io/bmv-filings-platform/).
+On the analyst's Mac, open that URL in Safari and choose **File → Add to Dock**.
+The resulting icon remains the only visible entry point after closing the window
+or restarting the computer.
+
+GitHub Pages supplies the launchpad interface. A loopback-only bridge installed
+once on the destination Mac performs the actions a browser cannot: starting
+Alpha Go, generating workbooks, running allowlisted estate operations, and
+safely ejecting the USB. The bridge starts automatically at login and never
+needs to be launched by the analyst.
+
+See [`docs/ANALYST_CONSOLE.md`](docs/ANALYST_CONSOLE.md) for destination-Mac
+preparation and the security boundary.
 
 Install the root package once so the console scripts exist:
 
