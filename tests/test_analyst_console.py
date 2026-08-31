@@ -24,7 +24,25 @@ from src.analyst_console.segments import SegmentRequestStore
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_company_operations_accept_only_catalog_slugs() -> None:
+def _pretend_project_pythons_are_installed(monkeypatch: pytest.MonkeyPatch) -> None:
+    original = Path.is_file
+
+    def is_file(path: Path) -> bool:
+        if (
+            path.name == "python"
+            and path.parent.name == "bin"
+            and path.parent.parent.name in {".venv", ".venv312"}
+        ):
+            return True
+        return original(path)
+
+    monkeypatch.setattr(Path, "is_file", is_file)
+
+
+def test_company_operations_accept_only_catalog_slugs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _pretend_project_pythons_are_installed(monkeypatch)
     catalog = company_catalog(ROOT)
     assert {"walmex", "herdez"}.issubset({row["slug"] for row in catalog["soft"]})
     assert "herdez" in {row["slug"] for row in catalog["segments"]}
@@ -120,7 +138,11 @@ def test_console_serves_launchpad_and_bootstrap(console_server: str) -> None:
     }
 
 
-def test_segments_request_creates_strict_markdown_and_analyst_contract(tmp_path: Path) -> None:
+def test_segments_request_creates_strict_markdown_and_analyst_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _pretend_project_pythons_are_installed(monkeypatch)
     store = SegmentRequestStore(ROOT, tmp_path / "state")
     request_id = store.prepare(
         {
