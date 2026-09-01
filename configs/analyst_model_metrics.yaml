@@ -1,0 +1,1022 @@
+# Analyst-model metric contracts promoted from the update pipeline.
+# These extend the parent extractor without replacing its universal base catalog.
+version: 1
+companies:
+  ac:
+    extractor: ac
+    metrics:
+    - key: ac_sales_mexico
+      label: Beverage sales Mexico
+      section: segment
+      unit: currency
+      patterns: []
+    - key: ac_sales_us
+      label: Beverage sales United States
+      section: segment
+      unit: currency
+      patterns: []
+    - key: ac_sales_peru
+      label: Beverage sales Peru
+      section: segment
+      unit: currency
+      patterns: []
+    - key: ac_sales_argentina
+      label: Beverage sales Argentina
+      section: segment
+      unit: currency
+      patterns: []
+    - key: ac_sales_ecuador
+      label: Beverage sales Ecuador
+      section: segment
+      unit: currency
+      patterns: []
+    - key: ac_sales_other
+      label: Sales other businesses
+      section: segment
+      unit: currency
+      patterns: []
+    - key: ac_sales_eliminations
+      label: Sales eliminations
+      section: segment
+      unit: currency
+      patterns: []
+    - key: ac_sales_total
+      label: Sales by segment total
+      section: segment
+      unit: currency
+      patterns: []
+    - key: ac_ebit_mexico
+      label: Operating income Mexico
+      section: segment
+      unit: currency
+      patterns: []
+    - key: ac_ebit_us
+      label: Operating income United States
+      section: segment
+      unit: currency
+      patterns: []
+    - key: ac_ebit_peru
+      label: Operating income Peru
+      section: segment
+      unit: currency
+      patterns: []
+    - key: ac_ebit_argentina
+      label: Operating income Argentina
+      section: segment
+      unit: currency
+      patterns: []
+    - key: ac_ebit_ecuador
+      label: Operating income Ecuador
+      section: segment
+      unit: currency
+      patterns: []
+    - key: ac_ebit_other
+      label: Operating income other businesses
+      section: segment
+      unit: currency
+      patterns: []
+    - key: ac_ebit_eliminations
+      label: Operating income eliminations
+      section: segment
+      unit: currency
+      patterns: []
+    - key: ac_ebit_total
+      label: Operating income segment total
+      section: segment
+      unit: currency
+      patterns: []
+    - key: ac_ebitda_bev_mexico
+      label: Beverage EBITDA Mexico
+      section: segment
+      unit: currency
+      patterns: []
+    - key: ac_ebitda_bev_us
+      label: Beverage EBITDA United States
+      section: segment
+      unit: currency
+      patterns: []
+    - key: ac_ebitda_peru
+      label: EBITDA Peru
+      section: segment
+      unit: currency
+      patterns: []
+    - key: ac_ebitda_argentina
+      label: EBITDA Argentina
+      section: segment
+      unit: currency
+      patterns: []
+    - key: ac_ebitda_ecuador
+      label: EBITDA Ecuador
+      section: segment
+      unit: currency
+      patterns: []
+    - key: ac_ebitda_other
+      label: EBITDA other businesses
+      section: segment
+      unit: currency
+      patterns: []
+    - key: ac_ebitda_eliminations
+      label: EBITDA eliminations
+      section: segment
+      unit: currency
+      patterns: []
+    - key: ac_ebitda_total
+      label: EBITDA segment total
+      section: segment
+      unit: currency
+      patterns: []
+    - key: ac_ebitda_mexico
+      label: Regional EBITDA Mexico
+      section: segment
+      unit: currency
+      patterns: []
+    - key: ac_ebitda_us
+      label: Regional EBITDA United States
+      section: segment
+      unit: currency
+      patterns: []
+    - key: ac_ebitda_southam
+      label: Regional EBITDA South America
+      section: segment
+      unit: currency
+      patterns: []
+    - key: ac_volume_mexico_sparkling
+      label: Mexico sparkling volume
+      section: segment
+      unit: count
+      patterns: []
+    - key: ac_volume_mexico_water
+      label: Mexico water volume
+      section: segment
+      unit: count
+      patterns: []
+    - key: ac_volume_mexico_stills
+      label: Mexico stills volume
+      section: segment
+      unit: count
+      patterns: []
+    - key: ac_volume_mexico_jug
+      label: Mexico jug volume
+      section: segment
+      unit: count
+      patterns: []
+    - key: ac_volume_us_sparkling
+      label: United States sparkling volume
+      section: segment
+      unit: count
+      patterns: []
+    - key: ac_volume_us_water
+      label: United States water volume
+      section: segment
+      unit: count
+      patterns: []
+    - key: ac_volume_us_stills
+      label: United States stills volume
+      section: segment
+      unit: count
+      patterns: []
+    - key: ac_volume_southam_sparkling
+      label: South America sparkling volume
+      section: segment
+      unit: count
+      patterns: []
+    - key: ac_volume_southam_water
+      label: South America water volume
+      section: segment
+      unit: count
+      patterns: []
+    - key: ac_volume_southam_stills
+      label: South America stills volume
+      section: segment
+      unit: count
+      patterns: []
+    - key: ac_volume_southam_jug
+      label: South America jug volume
+      section: segment
+      unit: count
+      patterns: []
+    - key: ac_volume_peru
+      label: Peru total volume
+      section: segment
+      unit: count
+      patterns: []
+    - key: ac_volume_argentina
+      label: Argentina total volume
+      section: segment
+      unit: count
+      patterns: []
+    - key: ac_volume_ecuador
+      label: Ecuador total volume
+      section: segment
+      unit: count
+      patterns: []
+    - key: revenue_mexico
+      label: Net Sales Mexico
+      label_es: Ventas netas México
+      section: segment
+      unit: currency
+      patterns:
+      - regex: Table\s+\d+:\s+Mexico\s+Data[\s\S]{0,1800}?Net\s+Sales(?:\*+|\(\s*\))?\s+([\d,]+)\s+([\d,]+)
+        source: table
+      - regex: Table\s+\d+:\s+Mexico\s+Data[\s\S]{0,1800}?Net\s+Sales[^\n]*\n\s*([\d,]{5,})\s+([\d,]{5,})
+        source: table
+      - regex: Tabla\s+\d+:\s+Cifras\s+para\s+M[eé]xico[\s\S]{0,1800}?Ventas\s+Netas(?:\*+|\(\s*\))?\s+([\d,]+)\s+([\d,]+)
+        source: table
+      - regex: Net\s+[Ss]ales\s+(?:for|in)\s+Mexico\s+reached\s+Ps\.?\s*([\d,]+)\s+million\s+(?:during|in)\s+[1-4]Q\d{2}
+        source: prose
+      - regex: Net\s+[Ss]ales\s+(?:for|in)\s+Mexico[^\n]*?[1-4]Q\d{2}[^\n]*?(?:reaching|to)\s+Ps\.?\s*([\d,]+)
+        source: prose
+      - regex: Net\s+[Ss]ales\s+(?:for|in)\s+Mexico[^\n]*?(?:reaching|reached|to)\s+Ps\.?\s*([\d,]+)\s+million
+        source: prose
+      - regex: ventas\s+netas\s+para\s+la\s+regi[oó]n\s+(?:de\s+)?M[eé]xico\s+alcanzaron\s+(?:los\s+)?Ps\.?\s*([\d,]+)\s+millones
+        source: prose
+      - regex: ventas\s+netas\s+(?:de|para)\s+(?:la\s+regi[oó]n\s+(?:de\s+)?)?Norteam[eé]rica[^\n]*?Ps\.?\s*([\d,]+)\s+millones
+        source: prose
+    - key: revenue_us
+      label: Net Sales United States
+      label_es: Ventas netas Estados Unidos
+      section: segment
+      unit: currency
+      patterns:
+      - regex: Table\s+\d+:\s+United\s+States\s+Data[\s\S]{0,1800}?Net\s+Sales(?:\*+|\(\s*\))?\s+([\d,]+)\s+([\d,]+)
+        source: table
+      - regex: Tabla\s+\d+:\s+Cifras\s+para\s+Estados\s+Unidos[\s\S]{0,1800}?Ventas\s+Netas(?:\*+|\(\s*\))?\s+([\d,]+)\s+([\d,]+)
+        source: table
+      - regex: Net\s+[Ss]ales\s+(?:for|in)\s+the\s+(?:U\.?S\.?|United\s+States)[^\n]*?[1-4]Q\d{2}[^\n]*?(?:reaching|to)\s+Ps\.?\s*([\d,]+)
+        source: prose
+      - regex: Net\s+[Ss]ales\s+(?:for|in)\s+the\s+(?:U\.?S\.?|United\s+States)[^\n]*?(?:reaching|reached|to)\s+Ps\.?\s*([\d,]+)\s+million
+        source: prose
+      - regex: total\s+revenues\s+(?:for|in)\s+the\s+U\.?S\.?[^\n]*?to\s+Ps\.?\s*([\d,]+)\s+million
+        source: prose
+      - regex: Topo\s+Chico\s+y\s+Wise[^\n]*?([\d,]{10,})[ \t]*$
+        source: table
+        multiplier: 1.0e-06
+    - key: revenue_south_america
+      label: Net Sales South America
+      label_es: Ventas netas Sudamérica
+      section: segment
+      unit: currency
+      patterns:
+      - regex: Table\s+\d+:\s+South\s+America\s+Data[\s\S]{0,1800}?Net\s+Sales(?:\*+|\(\s*\))?\s+([\d,]+)\s+([\d,]+)
+        source: table
+      - regex: Tabla\s+\d+:\s+Cifras\s+para\s+Sudam[eé]rica[\s\S]{0,1800}?Ventas\s+Netas(?:\*+|\(\s*\))?\s+([\d,]+)\s+([\d,]+)
+        source: table
+      - regex: Net\s+[Ss]ales\s+(?:for|in)\s+South\s+America[^\n]*?[1-4]Q\d{2}[^\n]*?(?:reaching|to)\s+Ps\.?\s*([\d,]+)
+        source: prose
+      - regex: Net\s+[Ss]ales\s+(?:for|in)\s+South\s+America[^\n]*?(?:reaching|reached|to)\s+Ps\.?\s*([\d,]+)\s+million
+        source: prose
+      - regex: Sudam[eé]rica[^\n]*?ventas\s+netas[^\n]*?\sPs\.?\s*([\d,]+)\s+millones
+        source: prose
+      - regex: ventas\s+netas\s+(?:de|para)\s+(?:la\s+(?:divisi[oó]n|regi[oó]n)\s+(?:de\s+)?)?Sudam[eé]rica[^\n]*?Ps\.?\s*([\d,]+)\s+millones
+        source: prose
+      - regex: ventas\s+(?:de\s+)?la\s+Divisi[oó]n\s+Sudam[eé]rica\s+alcanzaron[^\n]*?Ps\.?\s*([\d,]+)\s+millones
+        source: prose
+      - regex: South\s+American?\s+region[^\n]*?net\s+sales\s+to\s+reach\s+Ps\.?\s*([\d,]+)\s+million
+        source: prose
+    - key: revenue_food_snacks
+      label: Sales Other Businesses (Food & Snacks, Vending)
+      label_es: Ventas Otros Negocios
+      section: segment
+      unit: currency
+      patterns:
+      - regex: Information\s+by\s+Segments\s+\dQ\d{2}[\s\S]{0,700}?Net\s+Sales\s+from\s+intersegments\s+(?:\(?-?[\d,.]+\)?\s+){5}\(?(-?[\d,]+)\)?
+        source: table
+      - regex: Informaci[oó]n\s+por\s+segmentos\s+\dT\d{2}[\s\S]{0,600}?Ingresos\s+del\s+(?:Segmento\s+)?(?:\(?-?[\d,.]+\)?\s+){5}\(?(-?[\d,]+)\)?
+        source: table
+      - regex: Cifras\s+al\s+3[01]\s+de\s+(?:(?:marzo|junio|septiembre|diciembre)\s+de\s+2016|marzo\s+de\s+2017):[\s\S]{0,300}?Ventas\s+por\s+segmento\s+(?:\$?\s*\(?-?[\d,]+\)?\s+){4}\$?\s*\(?(-?[\d,]+)\)?
+        source: table
+        multiplier: 0.001
+    - key: ac_seg_sales_elim
+      label: Sales by Segment — Eliminations (component)
+      label_es: Eliminaciones (componente)
+      section: segment
+      unit: currency
+      patterns:
+      - regex: Information\s+by\s+Segments\s+\dQ\d{2}[\s\S]{0,500}?Sales\s+by\s+Segment\s+(?:\(?-?[\d,.]+\)?\s+){6}\(?(-?[\d,]+)\)?
+        source: table
+      - regex: Informaci[oó]n\s+por\s+segmentos\s+\dT\d{2}[\s\S]{0,600}?Ingresos\s+del\s+(?:Segmento\s+)?(?:\(?-?[\d,.]+\)?\s+){6}\(?(-?[\d,]+)\)?
+        source: table
+    - key: ac_seg_sales_total
+      label: Sales by Segment — Total (component)
+      label_es: Ventas por segmento total (componente)
+      section: segment
+      unit: currency
+      patterns:
+      - regex: (?m)Information\s+by\s+Segments\s+\dQ\d{2}[\s\S]{0,500}?^\s*Sales\s+by\s+Segment[^\n]*[ \t](-?[\d,]+)[ \t]*$
+        source: table
+      - regex: (?m)Informaci[oó]n\s+por\s+segmentos\s+\dT\d{2}[\s\S]{0,600}?Ingresos\s+del\s+(?:Segmento\s+)?[-\d(][^\n]*[
+          \t](-?[\d,]+)[ \t]*$
+        source: table
+    - key: revenue_beverages
+      label: Net Sales Beverage Segments
+      label_es: Ventas netas segmentos de bebidas
+      section: segment
+      unit: currency
+      calc: ac_seg_sales_total - revenue_food_snacks - ac_seg_sales_elim
+      patterns: []
+  becle:
+    extractor: becle
+    metrics:
+    - key: revenue_us_canada
+      label: Net Sales U.S. & Canada
+      label_es: Ventas netas EUA y Canadá
+      section: segment
+      unit: currency
+      patterns:
+      - regex: Net\s+Sales\s+by\s+Region\s+\dQ\s?\d{2}[\s\S]{0,500}?U\.S\.\s*&\s*(?:Canada\s+)?\$?\s*([\d,]+)\s+\$?\s*([\d,]+)
+        source: table
+      - regex: (?:Ventas\s+netas|Ingresos)\s+por\s+regi[oó]n\s+\dT\s?\d{2}[\s\S]{0,500}?EUA\s*[y&]\s*(?:Canad[aá]\s+)?([\d,]+)\s+([\d,]+)
+        source: table
+    - key: revenue_mexico
+      label: Net Sales Mexico
+      label_es: Ventas netas México
+      section: segment
+      unit: currency
+      patterns:
+      - regex: Net\s+Sales\s+by\s+Region\s+\dQ\s?\d{2}[\s\S]{0,650}?M[eé]xico\s+\$?\s*([\d,]+)\s+\$?\s*([\d,]+)
+        source: table
+      - regex: (?:Ventas\s+netas|Ingresos)\s+por\s+regi[oó]n\s+\dT\s?\d{2}[\s\S]{0,650}?M[eé]xico\s+([\d,]+)\s+([\d,]+)
+        source: table
+    - key: revenue_row
+      label: Net Sales Rest of the World
+      label_es: Ventas netas Resto del Mundo
+      section: segment
+      unit: currency
+      patterns:
+      - regex: Net\s+Sales\s+by\s+Region\s+\dQ\s?\d{2}[\s\S]{0,850}?Rest\s+of\s+the\s*(?:World\s+)?\$?\s*([\d,]+)\s+\$?\s*([\d,]+)
+        source: table
+      - regex: (?:Ventas\s+netas|Ingresos)\s+por\s+regi[oó]n\s+\dT\s?\d{2}[\s\S]{0,850}?(?:Resto\s+del\s*(?:Mundo\s+)?|ROW\s+)([\d,]+)\s+([\d,]+)
+        source: table
+    - key: revenue_jose_cuervo
+      label: Net Sales Jose Cuervo
+      label_es: Ventas netas Jose Cuervo
+      section: segment
+      unit: currency
+      patterns:
+      - regex: Net\s+Sales\s+by\s+Category\s+\dQ\s?\d{2}[\s\S]{0,500}?Jose\s+Cuervo\s+\$?\s*([\d,]+)\s+\$?\s*([\d,]+)
+        source: table
+      - regex: (?:Ventas\s+netas|Ingresos)\s+por\s+categor[ií]a\s+\dT\s?\d{2}[\s\S]{0,500}?Jos[eé]\s+Cuervo\s+([\d,]+)\s+([\d,]+)
+        source: table
+    - key: revenue_other_tequilas
+      label: Net Sales Other Tequilas
+      label_es: Ventas netas Otros Tequilas
+      section: segment
+      unit: currency
+      patterns:
+      - regex: Net\s+Sales\s+by\s+Category\s+\dQ\s?\d{2}[\s\S]{0,750}?Other\s+Tequilas\s+\$?\s*([\d,]+)\s+\$?\s*([\d,]+)
+        source: table
+      - regex: (?:Ventas\s+netas|Ingresos)\s+por\s+categor[ií]a\s+\dT\s?\d{2}[\s\S]{0,750}?Otros\s+Tequilas\s+([\d,]+)\s+([\d,]+)
+        source: table
+    - key: revenue_other_spirits
+      label: Net Sales Other Spirits
+      label_es: Ventas netas Otros Spirits
+      section: segment
+      unit: currency
+      patterns:
+      - regex: Net\s+Sales\s+by\s+Category\s+\dQ\s?\d{2}[\s\S]{0,950}?Other\s+Spirits\s+\$?\s*([\d,]+)\s+\$?\s*([\d,]+)
+        source: table
+      - regex: (?:Ventas\s+netas|Ingresos)\s+por\s+categor[ií]a\s+\dT\s?\d{2}[\s\S]{0,950}?Otros\s+(?:Spirits|Espirituosos)\s+([\d,]+)\s+([\d,]+)
+        source: table
+    - key: revenue_rtd
+      label: Net Sales RTD
+      label_es: Ventas netas RTD
+      section: segment
+      unit: currency
+      patterns:
+      - regex: Net\s+Sales\s+by\s+Category\s+\dQ\s?\d{2}[\s\S]{0,1200}?RTD\s+\$?\s*([\d,]+)\s+\$?\s*([\d,]+)
+        source: table
+      - regex: (?:Ventas\s+netas|Ingresos)\s+por\s+categor[ií]a\s+\dT\s?\d{2}[\s\S]{0,1200}?RTD\s+([\d,]+)\s+([\d,]+)
+        source: table
+    - key: volume_us_canada
+      label: Volume U.S. & Canada
+      section: income
+      unit: count
+    - key: volume_mexico
+      label: Volume Mexico
+      section: income
+      unit: count
+    - key: volume_row
+      label: Volume Rest of the World
+      section: income
+      unit: count
+    - key: volume
+      label: Total volume
+      section: income
+      unit: count
+    - key: volume_jose_cuervo
+      label: Volume Jose Cuervo
+      section: income
+      unit: count
+    - key: volume_other_tequilas
+      label: Volume Other Tequilas
+      section: income
+      unit: count
+    - key: volume_other_spirits
+      label: Volume Other Spirits
+      section: income
+      unit: count
+    - key: volume_non_alcoholic
+      label: Volume Non-alcoholic and other
+      section: income
+      unit: count
+    - key: volume_rtd
+      label: Volume RTD
+      section: income
+      unit: count
+    - key: revenue_non_alcoholic
+      label: Net Sales Non-alcoholic and other
+      section: income
+      unit: currency
+    - key: amp_expenses
+      label: AMP expenses
+      section: income
+      unit: currency
+      patterns:
+      - regex: ^\s*Advertising,\s+marketing\s+and\s+promotion\s+\(?-?[\d,]+(?:\.\d+)?\)?\s+(\(?-?[\d,]+(?:\.\d+)?\)?)(?=\s|$)
+        source: table
+    - key: distribution_expenses
+      label: Distribution expenses
+      section: income
+      unit: currency
+      patterns:
+      - regex: ^\s*Distribution\s+\(?-?[\d,]+(?:\.\d+)?\)?\s+(\(?-?[\d,]+(?:\.\d+)?\)?)\s+\d
+        source: table
+    - key: other_income_net
+      label: Other (income), net
+      section: income
+      unit: currency
+      patterns:
+      - regex: ^\s*Other\s+\(income\)\s+\(?-?[\d,]+(?:\.\d+)?\)?\s+(\(?-?[\d,]+(?:\.\d+)?\)?)(?=\s|$)
+        source: table
+  femsa:
+    extractor: femsa
+    metrics:
+    - key: femsa_consolidated_gp
+      label_es: FEMSA consolidated gross profit
+      unit: millions
+    - key: femsa_consolidated_ebit
+      label_es: FEMSA consolidated operating income
+      unit: millions
+    - key: femsa_oxxo_mexico_revenue
+      label_es: OXXO Mexico revenue
+      unit: millions
+    - key: femsa_oxxo_mexico_gp
+      label_es: OXXO Mexico gross profit
+      unit: millions
+    - key: femsa_oxxo_mexico_ebit
+      label_es: OXXO Mexico operating income
+      unit: millions
+    - key: femsa_oxxo_mexico_ebitda
+      label_es: OXXO Mexico adjusted EBITDA
+      unit: millions
+    - key: femsa_oxxo_mexico_sss
+      label_es: OXXO Mexico same-store sales growth
+      unit: ratio
+    - key: femsa_oxxo_mexico_stores
+      label_es: OXXO Mexico stores
+      unit: count
+    - key: femsa_oxxo_mexico_traffic
+      label_es: OXXO Mexico traffic
+      unit: thousands
+    - key: femsa_oxxo_mexico_ticket
+      label_es: OXXO Mexico ticket
+      unit: pesos
+    - key: femsa_am_revenue
+      label_es: Americas and Mobility revenue
+      unit: millions
+    - key: femsa_am_gp
+      label_es: Americas and Mobility gross profit
+      unit: millions
+    - key: femsa_am_ebit
+      label_es: Americas and Mobility operating income
+      unit: millions
+    - key: femsa_am_ebitda
+      label_es: Americas and Mobility adjusted EBITDA
+      unit: millions
+    - key: femsa_am_sss
+      label_es: Americas and Mobility same-store sales growth
+      unit: ratio
+    - key: femsa_oxxo_americas_sss
+      label_es: OXXO Americas comparable same-store sales growth
+      unit: ratio
+    - key: femsa_oxxo_brazil_sss
+      label_es: OXXO Brazil same-store sales growth
+      unit: ratio
+    - key: femsa_oxxo_latam_sss
+      label_es: OXXO Latam same-store sales growth
+      unit: ratio
+    - key: femsa_oxxo_usa_sss
+      label_es: OXXO USA same-store sales growth
+      unit: ratio
+    - key: femsa_am_stores
+      label_es: Americas and Mobility stores
+      unit: count
+    - key: femsa_am_stores_brazil
+      label_es: Americas stores Brazil
+      unit: count
+    - key: femsa_am_stores_colombia
+      label_es: Americas stores Colombia
+      unit: count
+    - key: femsa_am_stores_chile
+      label_es: Americas stores Chile
+      unit: count
+    - key: femsa_am_stores_peru
+      label_es: Americas stores Peru
+      unit: count
+    - key: femsa_am_stores_usa
+      label_es: Americas stores USA
+      unit: count
+    - key: femsa_legacy_southam_stores
+      label_es: Legacy South America stores excluding Brazil
+      unit: count
+    - key: femsa_gas_stations_total
+      label_es: Americas and Mobility gas stations
+      unit: count
+    - key: femsa_gas_stations_mexico
+      label_es: Gas stations Mexico
+      unit: count
+    - key: femsa_gas_stations_usa
+      label_es: Gas stations USA
+      unit: count
+    - key: femsa_gas_volume_growth
+      label_es: Gas station volume growth
+      unit: ratio
+    - key: femsa_gas_unit_margin_growth
+      label_es: Gas station unit margin growth
+      unit: ratio
+    - key: femsa_europe_revenue
+      label_es: Europe revenue
+      unit: millions
+    - key: femsa_europe_gp
+      label_es: Europe gross profit
+      unit: millions
+    - key: femsa_europe_ebit
+      label_es: Europe operating income
+      unit: millions
+    - key: femsa_europe_ebitda
+      label_es: Europe adjusted EBITDA
+      unit: millions
+    - key: femsa_europe_stores
+      label_es: Europe stores
+      unit: count
+    - key: femsa_health_revenue
+      label_es: Health revenue
+      unit: millions
+    - key: femsa_health_gp
+      label_es: Health gross profit
+      unit: millions
+    - key: femsa_health_ebit
+      label_es: Health operating income
+      unit: millions
+    - key: femsa_health_ebitda
+      label_es: Health adjusted EBITDA
+      unit: millions
+    - key: femsa_health_sss
+      label_es: Health same-store sales growth
+      unit: ratio
+    - key: femsa_health_stores_mexico
+      label_es: Health stores Mexico
+      unit: count
+    - key: femsa_health_stores_southam
+      label_es: Health stores South America
+      unit: count
+    - key: femsa_health_chile_unit_growth
+      label_es: Health Chile unit growth
+      unit: ratio
+    - key: femsa_health_colombia_unit_growth
+      label_es: Health Colombia unit growth
+      unit: ratio
+    - key: femsa_health_ecuador_unit_growth
+      label_es: Health Ecuador unit growth
+      unit: ratio
+    - key: femsa_kof_revenue
+      label_es: Coca-Cola FEMSA revenue
+      unit: millions
+    - key: femsa_kof_gp
+      label_es: Coca-Cola FEMSA gross profit
+      unit: millions
+    - key: femsa_kof_ebit
+      label_es: Coca-Cola FEMSA operating income
+      unit: millions
+    - key: femsa_kof_ebitda
+      label_es: Coca-Cola FEMSA adjusted EBITDA
+      unit: millions
+    - key: femsa_other_revenue
+      label_es: FEMSA other revenue residual
+      unit: millions
+    - key: femsa_other_gp
+      label_es: FEMSA other gross profit residual
+      unit: millions
+    - key: femsa_other_ebit
+      label_es: FEMSA other operating income residual
+      unit: millions
+    - key: femsa_other_ebitda
+      label_es: FEMSA other adjusted EBITDA residual
+      unit: millions
+  kimber:
+    extractor: kimber
+    metrics:
+    - key: total_volume_yoy
+      label: Total volume YoY growth
+      section: income
+      unit: pct
+      patterns: []
+    - key: sales_yoy_exact
+      label: Exact net sales YoY growth
+      section: income
+      unit: pct
+      patterns: []
+    - key: revenue_consumer
+      label: Consumer Products revenue
+      label_es: Productos al consumidor
+      section: income
+      unit: currency
+      patterns:
+      - regex: ^Productos al consumidor[^\S\r\n]+[\d,]+[^\S\r\n]+[\d,]+[^\S\r\n]+[\d,]+[^\S\r\n]+([\d,]{7,})$
+        source: table
+        multiplier: 1.0e-06
+    - key: revenue_exports
+      label: Export revenue
+      label_es: Productos de exportación
+      section: income
+      unit: currency
+      patterns:
+      - regex: ^Productos de exportaci[oó]n[^\S\r\n]+[\d,]+[^\S\r\n]+[\d,]+[^\S\r\n]+[\d,]+[^\S\r\n]+([\d,]{7,})$
+        source: table
+        multiplier: 1.0e-06
+    - key: consumer_yoy
+      label: Consumer segment YoY growth
+      section: income
+      unit: pct
+      patterns:
+      - regex: Productos\s+al\s+Consumidor\s+creci[óo]\s+([\d.]+)\s*%
+        source: prose
+        multiplier: 1.0
+      - regex: Productos\s+al\s+Consumidor\s+decreci[óo]\s+([\d.]+)\s*%
+        source: prose
+        multiplier: -1.0
+      - regex: Consumer\s+and\s+Away\s+from\s+Home\s+increased\s+([\d.]+)\s*%
+        source: prose
+        multiplier: 1.0
+      - regex: Consumer\s+and\s+Away\s+from\s+Home\s+decreased\s+([\d.]+)\s*%
+        source: prose
+        multiplier: -1.0
+    - key: afh_yoy
+      label: Away from Home YoY growth
+      section: income
+      unit: pct
+      patterns:
+      - regex: Away\s+from\s+Home\s+creci[óo]\s+([\d.]+)\s*%
+        source: prose
+        multiplier: 1.0
+      - regex: Away\s+from\s+Home\s+decreci[óo]\s+([\d.]+)\s*%
+        source: prose
+        multiplier: -1.0
+      - regex: Consumer\s+and\s+Away\s+from\s+Home\s+increased\s+[\d.]+%\s+and\s+([\d.]+)\s*%
+        source: prose
+        multiplier: 1.0
+      - regex: Consumer\s+and\s+Away\s+from\s+Home\s+decreased\s+[\d.]+%\s+and\s+([\d.]+)\s*%
+        source: prose
+        multiplier: -1.0
+  kof:
+    extractor: kof
+    metrics:
+    - key: kof_avg_price_consolidated
+      label_es: KOF average price per unit case
+      unit: pesos
+    - key: kof_avg_price_mxcam
+      label_es: MX and CAM average price per unit case
+      unit: pesos
+    - key: kof_avg_price_southam
+      label_es: South America average price per unit case
+      unit: pesos
+    - key: kof_other_revenue_consolidated
+      label_es: KOF other operating revenue
+      unit: millions
+    - key: kof_other_revenue_mxcam
+      label_es: MX and CAM other operating revenue
+      unit: millions
+    - key: kof_other_revenue_southam
+      label_es: South America other operating revenue
+      unit: millions
+    - key: kof_revenue_mexico
+      label_es: Mexico revenue
+      unit: millions
+    - key: kof_revenue_cam
+      label_es: Central America revenue
+      unit: millions
+    - key: kof_revenue_colombia
+      label_es: Colombia revenue
+      unit: millions
+    - key: kof_revenue_brazil
+      label_es: Brazil revenue
+      unit: millions
+    - key: kof_revenue_argentina
+      label_es: Argentina revenue
+      unit: millions
+    - key: kof_revenue_uruguay
+      label_es: Uruguay revenue
+      unit: millions
+    - key: kof_beer_revenue_brazil
+      label_es: Brazil beer revenue
+      unit: millions
+    - key: kof_volume_mexico_sparkling
+      label_es: Mexico sparkling volume
+      unit: million_unit_cases
+    - key: kof_volume_mexico_water
+      label_es: Mexico water volume
+      unit: million_unit_cases
+    - key: kof_volume_mexico_bulk
+      label_es: Mexico bulk water volume
+      unit: million_unit_cases
+    - key: kof_volume_mexico_stills
+      label_es: Mexico stills volume
+      unit: million_unit_cases
+    - key: kof_volume_cam_sparkling
+      label_es: Central America sparkling volume
+      unit: million_unit_cases
+    - key: kof_volume_cam_water
+      label_es: Central America water volume
+      unit: million_unit_cases
+    - key: kof_volume_cam_bulk
+      label_es: Central America bulk water volume
+      unit: million_unit_cases
+    - key: kof_volume_cam_stills
+      label_es: Central America stills volume
+      unit: million_unit_cases
+    - key: kof_volume_colombia_sparkling
+      label_es: Colombia sparkling volume
+      unit: million_unit_cases
+    - key: kof_volume_colombia_water
+      label_es: Colombia water volume
+      unit: million_unit_cases
+    - key: kof_volume_colombia_bulk
+      label_es: Colombia bulk water volume
+      unit: million_unit_cases
+    - key: kof_volume_colombia_stills
+      label_es: Colombia stills volume
+      unit: million_unit_cases
+    - key: kof_volume_brazil_sparkling
+      label_es: Brazil sparkling volume
+      unit: million_unit_cases
+    - key: kof_volume_brazil_water
+      label_es: Brazil water volume
+      unit: million_unit_cases
+    - key: kof_volume_brazil_bulk
+      label_es: Brazil bulk water volume
+      unit: million_unit_cases
+    - key: kof_volume_brazil_stills
+      label_es: Brazil stills volume
+      unit: million_unit_cases
+    - key: kof_volume_argentina_sparkling
+      label_es: Argentina sparkling volume
+      unit: million_unit_cases
+    - key: kof_volume_argentina_water
+      label_es: Argentina water volume
+      unit: million_unit_cases
+    - key: kof_volume_argentina_bulk
+      label_es: Argentina bulk water volume
+      unit: million_unit_cases
+    - key: kof_volume_argentina_stills
+      label_es: Argentina stills volume
+      unit: million_unit_cases
+    - key: kof_volume_uruguay_sparkling
+      label_es: Uruguay sparkling volume
+      unit: million_unit_cases
+    - key: kof_volume_uruguay_water
+      label_es: Uruguay water volume
+      unit: million_unit_cases
+    - key: kof_volume_uruguay_bulk
+      label_es: Uruguay bulk water volume
+      unit: million_unit_cases
+    - key: kof_volume_uruguay_stills
+      label_es: Uruguay stills volume
+      unit: million_unit_cases
+    - key: kof_gp_mxcam
+      label_es: MX and CAM gross profit
+      unit: millions
+    - key: kof_gp_southam
+      label_es: South America gross profit
+      unit: millions
+    - key: kof_ebit_mxcam
+      label_es: MX and CAM operating income
+      unit: millions
+    - key: kof_ebit_southam
+      label_es: South America operating income
+      unit: millions
+    - key: kof_ebitda_mxcam
+      label_es: MX and CAM adjusted EBITDA
+      unit: millions
+    - key: kof_ebitda_southam
+      label_es: South America adjusted EBITDA
+      unit: millions
+  lab:
+    extractor: lab
+    metrics:
+    - key: revenue_otc
+      label: Over-the-Counter (OTC)
+      label_es: OTC
+      section: income
+      unit: currency
+      patterns:
+      - regex: ^\s*OTC\s+([\d,]+\.?\d*)\s+[\d,]+\.?\d*\s+\(?-?[\d.]+%\)?
+        source: prose
+    - key: revenue_personal_care
+      label: Personal Care
+      label_es: Cuidado Personal
+      section: income
+      unit: currency
+      patterns:
+      - regex: ^\s*Cuidado\s+Personal\s+([\d,]+\.?\d*)\s+[\d,]+\.?\d*\s+\(?-?[\d.]+%\)?
+        source: prose
+    - key: lab_revenue_mexico
+      label: Mexico revenue
+      section: segment
+      unit: currency
+      patterns: []
+    - key: lab_revenue_latam
+      label: LatAm revenue
+      section: segment
+      unit: currency
+      patterns: []
+    - key: lab_revenue_us
+      label: US revenue
+      section: segment
+      unit: currency
+      patterns: []
+    - key: lab_category_beverage
+      label: Beverage revenue
+      section: segment
+      unit: currency
+      patterns: []
+    - key: lab_category_otc
+      label: OTC revenue
+      section: segment
+      unit: currency
+      patterns: []
+    - key: lab_category_personal_care
+      label: Personal Care revenue
+      section: segment
+      unit: currency
+      patterns: []
+    - key: lab_category_infant
+      label: Infant Nutrition revenue
+      section: segment
+      unit: currency
+      patterns: []
+    - key: lab_mexico_beverage
+      label: Mexico Beverage
+      section: segment
+      unit: currency
+      patterns: []
+    - key: lab_mexico_otc
+      label: Mexico OTC
+      section: segment
+      unit: currency
+      patterns: []
+    - key: lab_mexico_personal_care
+      label: Mexico Personal Care
+      section: segment
+      unit: currency
+      patterns: []
+    - key: lab_mexico_infant
+      label: Mexico Infant Nutrition
+      section: segment
+      unit: currency
+      patterns: []
+    - key: lab_latam_beverage
+      label: LatAm Beverage
+      section: segment
+      unit: currency
+      patterns: []
+    - key: lab_latam_otc
+      label: LatAm OTC
+      section: segment
+      unit: currency
+      patterns: []
+    - key: lab_latam_personal_care
+      label: LatAm Personal Care
+      section: segment
+      unit: currency
+      patterns: []
+    - key: lab_latam_infant
+      label: LatAm Infant Nutrition
+      section: segment
+      unit: currency
+      patterns: []
+    - key: lab_us_beverage
+      label: US Beverage
+      section: segment
+      unit: currency
+      patterns: []
+    - key: lab_us_otc
+      label: US OTC
+      section: segment
+      unit: currency
+      patterns: []
+    - key: lab_us_personal_care
+      label: US Personal Care
+      section: segment
+      unit: currency
+      patterns: []
+    - key: lab_us_infant
+      label: US Infant Nutrition
+      section: segment
+      unit: currency
+      patterns: []
+    - key: lab_margin_mexico
+      label: Mexico EBITDA margin
+      section: segment
+      unit: pct
+      patterns: []
+    - key: lab_margin_latam
+      label: LatAm EBITDA margin
+      section: segment
+      unit: pct
+      patterns: []
+    - key: lab_margin_us
+      label: US EBITDA margin
+      section: segment
+      unit: pct
+      patterns: []
+  tbbb:
+    extractor: tbbb
+    metrics:
+    - key: revenue_merchandise
+      label: Revenue From Sales of Merchandise
+      label_es: Revenue From Sales of Merchandise
+      section: income
+      unit: currency
+      patterns: []
+    - key: ebitda_reported
+      label: EBITDA (as reported, including share-based payment expense)
+      label_es: EBITDA (as reported, including share-based payment expense)
+      section: income
+      unit: currency
+      patterns: []
+    - key: share_based_payment
+      label: Share-Based Payment Expenses
+      label_es: Share-Based Payment Expenses
+      section: income
+      unit: currency
+      patterns: []
+    - key: total_stores
+      label: Total Stores
+      label_es: Total Stores
+      section: kpi
+      unit: count
+      patterns: []
+    - key: net_new_stores
+      label: Net New Stores Opened
+      label_es: Net New Stores Opened
+      section: kpi
+      unit: count
+      patterns: []
+    - key: total_dcs
+      label: Total Distribution Centers
+      label_es: Total Distribution Centers
+      section: kpi
+      unit: count
+      patterns: []
+    - key: sss_yoy
+      label: Same Store Sales Growth
+      label_es: Same Store Sales Growth
+      section: kpi
+      unit: pct
+      patterns: []
+    - key: shares_class_a
+      label: Class A Common Shares
+      label_es: Class A Common Shares
+      section: kpi
+      unit: count
+      patterns: []
+    - key: shares_class_b
+      label: Class B Common Shares
+      label_es: Class B Common Shares
+      section: kpi
+      unit: count
+      patterns: []
+    - key: shares_class_c
+      label: Class C Common Shares
+      label_es: Class C Common Shares
+      section: kpi
+      unit: count
+      patterns: []
+    - key: shares_liquidity_event
+      label: Liquidity Event Plan Class C Common Shares
+      label_es: Liquidity Event Plan Class C Common Shares
+      section: kpi
+      unit: count
+      patterns: []
+    - key: shares_bolton_allocation
+      label: Bolton Partners Class C Share Allocation
+      label_es: Bolton Partners Class C Share Allocation
+      section: kpi
+      unit: count
+      patterns: []
+    - key: shares_equity_compensation
+      label: Net Shares Subject to Equity-Based Compensation Plans
+      label_es: Net Shares Subject to Equity-Based Compensation Plans
+      section: kpi
+      unit: count
+      patterns: []

@@ -42,15 +42,36 @@ Reinstall or remove the bridge with:
 
 ## Segments model requests
 
-**Generar un modelo** collects the full Segments contract: company and ticker,
-Investor Relations URL, report limit, and the ordered sections, canonical
-financial metrics, and calculated rows. Existing input files can be loaded as
-editable templates, or a request can start blank.
+**Generar una hoja de segmentos** starts from the canonical issuer universe and
+collects the ordered sections, financial metrics, and calculated rows. The
+chooser always includes the universal financial registry; it adds only the
+selected company's certified model metrics. Company-specific rows from the
+analyst's AC, Becle, FEMSA, KIMBER, KOF, LAB, and TBBB models are therefore
+available without leaking one company's KPIs into another.
 
 For each run the bridge writes a private Markdown specification and matching
 normalized analyst-request CSV under `data/analyst_console/requests/`. Both are
 passed to `scripts/build_segments.py`, preserving the pinned-metric,
 analyst-fidelity, and fresh-Estate publication gates.
+
+## Directed Estate refresh
+
+**Actualizar biblioteca completa** is the operator-facing fleet refresh. After
+the displayed confirmation it:
+
+1. refreshes quarterly documents for active issuers using only enabled sources
+   in `configs/issuers.yaml`;
+2. drains verified derivatives into the USB Estate and its Alpha projection;
+3. refreshes the configured Alpha news universe through the rights-aware GDELT
+   and Google News RSS metadata/link adapters; and
+4. runs RSS only when feeds have been explicitly approved in
+   `alpha-go/configs/news.yaml`.
+
+The news catalog and corpus live under `<estate>/news/`; publisher article
+bodies are not copied by the default GDELT path. The refresh refuses a missing
+Estate, concurrent launchpad work, or an unmanaged Alpha process. A managed
+Alpha process is closed before the index is updated and can be relaunched from
+the launchpad afterwards.
 
 ## Publishing
 
@@ -69,6 +90,7 @@ correctly from the project subdirectory.
   endpoint.
 - Estate-writing operations require their displayed confirmation phrase.
 - A process-wide writer lock serializes estate mutations.
+- The full Estate refresh closes managed Alpha before writing its index.
 - Job metadata and logs stay under ignored `data/analyst_console/`.
 - Generated outputs remain in their existing project directories.
 - Estate data, command output, job logs, and generated workbooks are never

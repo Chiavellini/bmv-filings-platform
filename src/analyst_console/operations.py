@@ -45,6 +45,14 @@ OPERATIONS = {
             "Revisa la cobertura actual sin descargar ni modificar datos.",
         ),
         Operation(
+            "estate_refresh_all",
+            "Actualizar biblioteca completa",
+            "estate",
+            "Actualiza documentos trimestrales, derivados, índice Alpha y noticias dirigidas.",
+            mutates=True,
+            confirmation="ACTUALIZAR ESTATE",
+        ),
+        Operation(
             "soft_coverage_audit",
             "Revisar cobertura Soft",
             "estate",
@@ -110,9 +118,24 @@ def company_catalog(project_root: Path) -> dict[str, list[dict[str, str]]]:
             result.append({"slug": path.stem, "name": display})
         return result
 
+    from src.acquisition.registry import load_issuer_registry
+
+    registry = load_issuer_registry(project_root / "configs" / "issuers.yaml")
+    segment_companies = [
+        {
+            "slug": issuer.slug,
+            "name": f"{issuer.ticker} · {issuer.name}",
+        }
+        for issuer in registry.issuers
+        if issuer.active
+    ]
+    segment_companies.sort(key=lambda row: row["name"].casefold())
+
     return {
         "soft": rows(project_root / "soft" / "inputs"),
-        "segments": rows(project_root / "inputs"),
+        # Segment extraction is backed by the canonical BMV issuer registry,
+        # not by the small set of hand-written Markdown examples in inputs/.
+        "segments": segment_companies,
     }
 
 
@@ -137,6 +160,9 @@ def operation_command(
         cwd = project_root
     elif key == "estate_audit":
         argv = [str(root_cli / "refresh-quarterly-estate"), "audit", "--json"]
+        cwd = project_root
+    elif key == "estate_refresh_all":
+        argv = [str(root_python), "scripts/refresh_analyst_estate.py"]
         cwd = project_root
     elif key == "soft_coverage_audit":
         argv = [str(root_python), "scripts/audit_soft_quarterly_coverage.py"]

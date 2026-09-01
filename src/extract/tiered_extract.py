@@ -31,6 +31,7 @@ import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from src.extract.custom_registry import CUSTOM_EXTRACTORS
 from src.model.financial_model import MetricDef, compute_derived_metrics
 from src.extract.extract_metrics import extract_metrics, extract_metrics_segmented
 from src.extract.revisions import (
@@ -72,18 +73,11 @@ class PeriodSource:
 _QUARTER_END = {"1": "03-31", "2": "06-30", "3": "09-30", "4": "12-31"}
 _MONETARY_UNITS = {"currency", "miles_mxn"}
 
-# Company-specific deterministic extractors: config ``custom_extractor`` value →
-# (module path, function name, wants_period, wants_pdf_path). Onboarding a new
-# custom extractor = one entry here plus the src/extract/<name>.py module; an
-# unknown value warns loudly at dispatch instead of silently doing nothing.
+# Preserve the historical tuple-shaped private API while keeping one canonical
+# registry for production and evidence extraction.
 _CUSTOM_EXTRACTORS = {
-    "gruma":     ("src.extract.gruma", "extract_gruma_appendix", False, False),
-    "lab":       ("src.extract.lab", "extract_lab_release", True, False),
-    "liverpool": ("src.extract.liverpool", "extract_liverpool_release", True, False),
-    "herdez":    ("src.extract.herdez", "extract_herdez", True, True),
-    "soriana":   ("src.extract.soriana", "extract_soriana", True, True),
-    "orbia":     ("src.extract.orbia", "extract_orbia_release", True, False),
-    "gmexico":   ("src.extract.gmexico", "extract_gmexico", True, True),
+    key: (spec.module, spec.function, spec.wants_period, spec.wants_pdf_path)
+    for key, spec in CUSTOM_EXTRACTORS.items()
 }
 
 
@@ -346,12 +340,14 @@ def extract_metrics_tiered(
             mod_path, fn_name, wants_period, wants_pdf = _CUSTOM_EXTRACTORS[custom]
             try:
                 import importlib
+                from src.extract.custom_registry import scope_custom_rows
                 fn = getattr(importlib.import_module(mod_path), fn_name)
                 args = [src.text, metric_defs]
                 if wants_period:
                     args.append(src.period)
                 kwargs = {"pdf_path": src.pdf_path} if wants_pdf else {}
                 custom_rows, custom_observations = unpack_extraction_result(fn(*args, **kwargs))
+                custom_rows = scope_custom_rows(custom_rows, cfg)
                 _merge_rows(found, custom_rows, cfg)
                 found.observations.extend(custom_observations)
             except Exception as exc:

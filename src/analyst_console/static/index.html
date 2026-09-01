@@ -12,8 +12,8 @@
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./icon-512.png">
-  <link rel="stylesheet" href="./app.css?v=8">
-  <script src="./app.js?v=8" defer></script>
+  <link rel="stylesheet" href="./app.css?v=9">
+  <script src="./app.js?v=9" defer></script>
 </head>
 <body>
   <div class="ambient ambient-one" aria-hidden="true"></div>
@@ -156,7 +156,8 @@
       <button class="dialog-close" value="cancel" aria-label="Cerrar">×</button>
       <p class="eyebrow">DATA ESTATE</p>
       <h2>Acciones del Estate</h2>
-      <p class="dialog-copy">Primero revisa sin modificar. La ampliación siempre pide confirmación.</p>
+      <p class="dialog-copy">Primero revisa sin modificar. Toda descarga o ampliación pide confirmación.</p>
+      <button class="menu-action warning" data-confirm-operation="estate_refresh_all" value="cancel"><span><b>Actualizar biblioteca completa</b><small>Cierra Alpha, descarga fuentes autorizadas y actualiza documentos, índice y noticias.</small></span><i>→</i></button>
       <button class="menu-action" data-operation="estate_check" value="cancel"><span><b>Revisar conexión</b><small>Verifica el USB y su catálogo.</small></span><i>→</i></button>
       <button class="menu-action" data-operation="estate_audit" value="cancel"><span><b>Auditar cobertura</b><small>Revisión de emisoras sin modificar datos.</small></span><i>→</i></button>
       <button class="menu-action" data-operation="soft_coverage_audit" value="cancel"><span><b>Revisar cobertura Soft</b><small>Actualiza la matriz de cobertura documental.</small></span><i>→</i></button>

@@ -23,6 +23,7 @@ def extract_lab_release(
     text: str,
     metric_defs: list[MetricDef],
     period: str | None = None,
+    pdf_path=None,
 ) -> dict[str, MetricRow]:
     defs = {m.key: m for m in metric_defs}
     out: dict[str, MetricRow] = {}
@@ -47,7 +48,318 @@ def extract_lab_release(
         out["revenue_personal_care"] = _row(
             defs["revenue_personal_care"], pc[0], "[search] LAB Cuidado Personal + Bebidas", prior=pc[1]
         )
+
+    # LAB's Segments sheet needs the release's two-dimensional operating view,
+    # not just consolidated revenue.  The company has used two layouts:
+    #
+    # * the historical "Regional sales per business unit" matrix; and
+    # * the recent stacked Region and Business Unit tables.
+    #
+    # Parse both with heading/row anchors and retain the printed prior column.
+    # Reconciliation below rejects a partially shifted table (the failure mode
+    # that previously turned perfectly available actuals into forecast carry).
+    release_metrics = _extract_segment_release_metrics(lines)
+    for key, (value, prior, source_line) in release_metrics.items():
+        if key in defs:
+            out[key] = _row(defs[key], value, source_line, prior=prior)
     return out
+
+
+_REGION_KEYS = {
+    "mexico": "lab_revenue_mexico",
+    "latam": "lab_revenue_latam",
+    "usa": "lab_revenue_us",
+}
+
+_CATEGORY_KEYS = {
+    "beverage": "lab_category_beverage",
+    "otc": "lab_category_otc",
+    "personal_care": "lab_category_personal_care",
+    "infant": "lab_category_infant",
+}
+
+
+def _extract_segment_release_metrics(
+    lines: list[str],
+) -> dict[str, tuple[float, float | None, str]]:
+    out: dict[str, tuple[float, float | None, str]] = {}
+
+    lines = _segment_window(lines)
+
+    region_rows = _extract_region_totals(lines)
+    for region, pair in region_rows.items():
+        key = _REGION_KEYS[region]
+        out[key] = (pair[0], pair[1], f"[LAB region table] {region}")
+
+    category_rows = _extract_category_totals(lines)
+    for category, pair in category_rows.items():
+        key = _CATEGORY_KEYS[category]
+        out[key] = (pair[0], pair[1], f"[LAB business-unit table] {category}")
+
+    matrix = _extract_region_category_matrix(lines)
+    matrix_reconciled = False
+    if not matrix:
+        matrix = _reconcile_current_matrix(region_rows, category_rows)
+        matrix_reconciled = bool(matrix)
+    for (region, category), pair in matrix.items():
+        key = f"lab_{region}_{category}"
+        source = ("[reconciled] LAB official region/category boundary totals"
+                  if matrix_reconciled else "[LAB regional business-unit matrix]")
+        out[key] = (pair[0], pair[1], f"{source} {region}/{category}")
+
+    # Older releases put the region totals only on the matrix's final Total
+    # row.  Summing the fully parsed matrix is an identity, not an estimate, and
+    # preserves the same printed current/prior values to rounding precision.
+    for region in ("mexico", "latam", "us"):
+        pairs = [matrix.get((region, category)) for category in _CATEGORY_KEYS]
+        key = f"lab_revenue_{region}"
+        if key not in out and all(pair is not None for pair in pairs):
+            current = sum(pair[0] for pair in pairs if pair is not None)
+            priors = [pair[1] for pair in pairs if pair is not None]
+            prior = sum(v for v in priors if v is not None) if all(v is not None for v in priors) else None
+            out[key] = (current, prior, f"[LAB matrix identity] {region} total")
+
+    margins = _extract_region_margins(lines)
+    for region, value in margins.items():
+        out[f"lab_margin_{region}"] = (value, None, f"[LAB regional EBITDA prose] {region}")
+
+    _reconcile_segment_metrics(out)
+    return out
+
+
+def _segment_window(lines: list[str]) -> list[str]:
+    start = None
+    for idx, line in enumerate(lines):
+        norm = _norm(line)
+        if ("resultados por region" in norm
+                or "revision de las unidades de negocio por region" in norm
+                or "regional business unit review" in norm
+                or "regional sales per business unit" in norm):
+            start = idx
+            break
+    if start is None:
+        return []
+    end = len(lines)
+    for idx in range(start + 1, len(lines)):
+        norm = _norm(lines[idx])
+        if ("capital de trabajo" in norm or "working capital" in norm
+                or "estado de resultados" in norm or "statement of income" in norm):
+            end = idx
+            break
+    return lines[start:end]
+
+
+def _extract_region_totals(lines: list[str]) -> dict[str, tuple[float, float | None]]:
+    aliases = {
+        "mexico": r"m\s*exico",
+        "latam": r"latam|latin\s+america",
+        "usa": r"ee\.?\s*uu\.?|u\.?s\.?a?\.?|united\s+states",
+    }
+    out: dict[str, tuple[float, float | None]] = {}
+    for idx, line in enumerate(lines):
+        norm = _norm(line)
+        # A region summary row carries current, prior and YTD absolute values.
+        # Narrative lines and the regional matrix header do not.
+        nums = _non_percent_numbers(line)
+        if len(nums) < 2:
+            continue
+        for region, pattern in aliases.items():
+            if region in out or not re.match(rf"^(?:{pattern})\b", norm):
+                continue
+            if len(nums) >= 4 or re.search(r"\([^)]*\)%|[-+]?\d+(?:\.\d+)?%", line):
+                out[region] = (nums[0], nums[1])
+    return out
+
+
+def _category_name(text: str) -> str | None:
+    norm = _norm(text)
+    if re.match(r"^(?:bebidas|beverages?|isotonic)", norm):
+        return "beverage"
+    if re.match(r"^(?:otc|medicina venta libre|medicamentos? de libre venta)", norm):
+        return "otc"
+    if re.match(r"^(?:cuidado personal|personal care)", norm):
+        return "personal_care"
+    if re.match(r"^(?:formula infantil|infant nutrition)", norm):
+        return "infant"
+    return None
+
+
+def _extract_category_totals(lines: list[str]) -> dict[str, tuple[float, float | None]]:
+    out: dict[str, tuple[float, float | None]] = {}
+    for idx, line in enumerate(lines):
+        category = _category_name(line)
+        if category is None:
+            continue
+        joined = line
+        nums = _non_percent_numbers(joined)
+        if not nums and idx + 1 < len(lines):
+            joined = f"{line} {lines[idx + 1]}"
+            nums = _non_percent_numbers(joined)
+        # Recent category summary: current, prior, current YTD, prior YTD.
+        # Historical matrix: four region current/prior pairs; total is the last.
+        if len(nums) >= 8:
+            out[category] = (nums[-2], nums[-1])
+        elif len(nums) >= 4:
+            out[category] = (nums[0], nums[1])
+        elif category == "infant" and len(nums) == 4:
+            out[category] = (nums[-2], nums[-1])
+    return out
+
+
+def _extract_region_category_matrix(
+    lines: list[str],
+) -> dict[tuple[str, str], tuple[float, float | None]]:
+    """Extract LAB's printed Mexico/LatAm/US x category matrix.
+
+    Eight non-percent values on a row are the four current/prior pairs.  Infant
+    Nutrition is the one sparse row: dashes are printed for LatAm and US.
+    """
+    out: dict[tuple[str, str], tuple[float, float | None]] = {}
+    for idx, line in enumerate(lines):
+        category = _category_name(line)
+        if category is None:
+            continue
+        joined = line
+        nums = _non_percent_numbers(joined)
+        if len(nums) < 4 and idx + 1 < len(lines):
+            joined = f"{line} {lines[idx + 1]}"
+            nums = _non_percent_numbers(joined)
+        if len(nums) >= 8:
+            out[("mexico", category)] = (nums[0], nums[1])
+            out[("latam", category)] = (nums[2], nums[3])
+            out[("us", category)] = (nums[4], nums[5])
+        elif category == "infant" and len(nums) == 4 and re.search(r"\bn\s+a\b", _norm(joined)):
+            out[("mexico", category)] = (nums[0], nums[1])
+            out[("latam", category)] = (0.0, 0.0)
+            out[("us", category)] = (0.0, 0.0)
+    return out
+
+
+def _reconcile_current_matrix(
+    regions: dict[str, tuple[float, float | None]],
+    categories: dict[str, tuple[float, float | None]],
+) -> dict[tuple[str, str], tuple[float, float | None]]:
+    """Reconcile LAB's new boundary-only layout to the model's old matrix.
+
+    Starting in 3Q25 LAB replaced the printed Region x Business Unit matrix
+    with exact regional totals and exact consolidated business-unit totals.
+    The workbook still requires the old intersections.  Iterative proportional
+    fitting preserves the last company-disclosed matrix's relationships while
+    forcing every current row and column to the new release actual.  This is
+    deliberately tagged ``[reconciled]`` in the audit trail.
+    """
+    if not all(k in regions for k in ("mexico", "latam", "usa")):
+        return {}
+    if not all(k in categories for k in _CATEGORY_KEYS):
+        return {}
+
+    # The model has no LatAm/US Infant Nutrition rows; historically the company
+    # prints those cells as dashes.  Therefore consolidated Infant Nutrition is
+    # the Mexico cell, an exact identity rather than an allocation.
+    infant = categories["infant"][0]
+    row_targets = [regions["mexico"][0] - infant,
+                   regions["latam"][0], regions["usa"][0]]
+    col_targets = [categories["otc"][0], categories["personal_care"][0],
+                   categories["beverage"][0]]
+    if any(v < 0 for v in row_targets + col_targets):
+        return {}
+    if abs(sum(row_targets) - sum(col_targets)) > 1.0:
+        return {}
+
+    # Last fully disclosed matrix: Q2 2025 (MXN millions), in the order
+    # Mexico / LatAm / US x OTC / Personal Care / Beverage.
+    seed = [
+        [869.2, 697.1, 426.6],
+        [1013.2, 845.6, 185.4],
+        [176.3, 152.6, 132.8],
+    ]
+    matrix = [row[:] for row in seed]
+    for _ in range(100):
+        for i, target in enumerate(row_targets):
+            total = sum(matrix[i])
+            if total == 0:
+                return {}
+            factor = target / total
+            matrix[i] = [value * factor for value in matrix[i]]
+        for j, target in enumerate(col_targets):
+            total = sum(matrix[i][j] for i in range(3))
+            if total == 0:
+                return {}
+            factor = target / total
+            for i in range(3):
+                matrix[i][j] *= factor
+
+    out: dict[tuple[str, str], tuple[float, float | None]] = {}
+    regions_order = ("mexico", "latam", "us")
+    categories_order = ("otc", "personal_care", "beverage")
+    for i, region in enumerate(regions_order):
+        for j, category in enumerate(categories_order):
+            out[(region, category)] = (matrix[i][j], seed[i][j])
+    out[("mexico", "infant")] = (infant, 177.6)
+    out[("latam", "infant")] = (0.0, 0.0)
+    out[("us", "infant")] = (0.0, 0.0)
+    return out
+
+
+def _extract_region_margins(lines: list[str]) -> dict[str, float]:
+    out: dict[str, float] = {}
+    context = ""
+    aliases = {
+        "mexico": (r"m\s*exico",),
+        "latam": (r"latam", r"latin\s+america"),
+        "us": (r"ee\s+uu", r"usa", r"u\s+s", r"united\s+states"),
+    }
+    for idx, line in enumerate(lines):
+        norm = _norm(line)
+        for region, patterns in aliases.items():
+            if (len(_non_percent_numbers(line)) < 2
+                    and any(re.match(rf"^(?:{pattern})\b", norm) for pattern in patterns)):
+                context = region
+                break
+        margin_text = " ".join(lines[idx:idx + 4])
+        ascii_line = "".join(
+            c for c in unicodedata.normalize("NFKD", margin_text)
+            if not unicodedata.combining(c)
+        )
+        m = re.search(
+            r"(?:margen\s+)?EBITDA(?:\s+margin)?[^%\n]{0,100}?"
+            r"(?:ubic(?:arse|o|andose)|cerro|alcanzo|reached|to|at)\s+(?:en\s+)?"
+            r"(-?\d+(?:\.\d+)?)\s*%",
+            ascii_line,
+            re.IGNORECASE,
+        )
+        if m and context and context not in out:
+            out[context] = float(m.group(1))
+    return out
+
+
+def _reconcile_segment_metrics(
+    metrics: dict[str, tuple[float, float | None, str]],
+) -> None:
+    """Drop a parsed matrix if it does not tie to its printed boundaries."""
+    matrix_keys = [k for k in metrics if re.match(r"lab_(?:mexico|latam|us)_", k)
+                   and "revenue" not in k and "margin" not in k]
+    if not matrix_keys:
+        return
+
+    def value(key: str) -> float | None:
+        item = metrics.get(key)
+        return item[0] if item else None
+
+    checks: list[tuple[float, float]] = []
+    for region in ("mexico", "latam", "us"):
+        vals = [value(f"lab_{region}_{cat}") for cat in _CATEGORY_KEYS]
+        total = value(f"lab_revenue_{region}")
+        if total is not None and all(v is not None for v in vals):
+            checks.append((sum(v for v in vals if v is not None), total))
+    for category in _CATEGORY_KEYS:
+        vals = [value(f"lab_{region}_{category}") for region in ("mexico", "latam", "us")]
+        total = value(f"lab_category_{category}")
+        if total is not None and all(v is not None for v in vals):
+            checks.append((sum(v for v in vals if v is not None), total))
+    if checks and any(abs(parsed - printed) > 1.0 for parsed, printed in checks):
+        for key in matrix_keys:
+            metrics.pop(key, None)
 
 
 def _row(mdef: MetricDef, value: float, source_line: str, prior: float | None = None) -> MetricRow:

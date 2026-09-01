@@ -41,6 +41,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", type=int, default=12,
                         help="per-feed network timeout in seconds (default: 12)")
     parser.add_argument("--db", type=Path, required=True, help="main Alpha Go index to update")
+    parser.add_argument("--catalog", type=Path,
+                        help="news catalog path (default: configs/news.yaml)")
+    parser.add_argument("--corpus-dir", type=Path,
+                        help="news corpus directory (default: configs/news.yaml)")
     parser.add_argument("--apply", action="store_true", help="write and index verified news records")
     args = parser.parse_args(argv)
     cfg = yaml.safe_load(args.config.read_text(encoding="utf-8")) or {}
@@ -100,10 +104,12 @@ def main(argv: list[str] | None = None) -> int:
             "hashing_dim": int(index.get_meta("embedding_dim") or 256),
         })
     embedder, _name = get_embedder(app_cfg)
-    with NewsCatalog(ROOT / news.get("catalog_path", "data/news/catalog.db")) as catalog:
+    catalog_path = args.catalog or ROOT / news.get("catalog_path", "data/news/catalog.db")
+    corpus_dir = args.corpus_dir or ROOT / news.get("corpus_dir", "data/news/corpus")
+    with NewsCatalog(catalog_path) as catalog:
         results = [ingest_article(
             article, resolver=resolver, catalog=catalog,
-            corpus_dir=ROOT / news.get("corpus_dir", "data/news/corpus"), store=index,
+            corpus_dir=corpus_dir, store=index,
             config=app_cfg, embedder=embedder,
         ) for article in records]
         stats = catalog.stats()
