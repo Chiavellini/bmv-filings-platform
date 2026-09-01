@@ -182,10 +182,39 @@ def run(
     # Resolve metric definitions
     cfg_path = _resolve_config(config)
     cfg: dict = {}
-    metric_defs = _BASE_METRICS
+    metric_defs = list(_BASE_METRICS)
     if cfg_path:
         cfg = load_config(cfg_path)
         metric_defs = apply_config(_BASE_METRICS, cfg)
+        from src.model.analyst_model_metrics import (
+            analyst_model_extractor,
+            analyst_model_metric_keys,
+            apply_analyst_model_metrics,
+        )
+        company_slug = cfg_path.stem
+        metric_defs = apply_analyst_model_metrics(metric_defs, company_slug)
+        model_extractor = analyst_model_extractor(company_slug)
+        if model_extractor and not cfg.get("custom_extractor"):
+            cfg = dict(cfg)
+            cfg["custom_extractor"] = model_extractor
+            # These child extractors supplement the parent engine's Segments
+            # rows.  Keep universal financial rows on the stronger parent
+            # cascade instead of letting the supplemental extractor replace it.
+            cfg["_custom_extractor_metric_keys"] = list(
+                analyst_model_metric_keys(company_slug)
+            )
+
+    # A company config may suppress broad base rows during unattended fleet
+    # extraction.  An analyst explicitly selecting one of those universal rows
+    # is a different contract: retain that requested definition and let the
+    # normal evidence/verification gates decide whether the company disclosed it.
+    if metrics:
+        present = {metric.key for metric in metric_defs}
+        requested = set(metrics)
+        metric_defs.extend(
+            metric for metric in _BASE_METRICS
+            if metric.key in requested and metric.key not in present
+        )
     # LLM fallback may also be switched on per-company in the config.
     use_llm = use_llm or bool((cfg.get("llm") or {}).get("enabled"))
     # Advisory second-model cross-check (never affects gate verdicts).

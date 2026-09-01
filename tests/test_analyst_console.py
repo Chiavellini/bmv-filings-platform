@@ -17,8 +17,8 @@ from src.analyst_console.operations import (
     operation_command,
     validate_confirmation,
 )
-from src.analyst_console.server import EstateDevice, create_server
-from src.analyst_console.segments import SegmentRequestStore
+from src.analyst_console.server import ConsoleApplication, EstateDevice, create_server
+from src.analyst_console.segments import SegmentRequestStore, metric_catalog
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -46,6 +46,10 @@ def test_company_operations_accept_only_catalog_slugs(
     catalog = company_catalog(ROOT)
     assert {"walmex", "herdez"}.issubset({row["slug"] for row in catalog["soft"]})
     assert "herdez" in {row["slug"] for row in catalog["segments"]}
+    assert len(catalog["segments"]) >= 175
+    assert {"ac", "femsa", "kof", "tiendas_3b"}.issubset(
+        {row["slug"] for row in catalog["segments"]}
+    )
 
     operation, argv, cwd = operation_command(
         ROOT, "soft_model", {"company": "walmex"}
@@ -57,6 +61,35 @@ def test_company_operations_accept_only_catalog_slugs(
 
     with pytest.raises(OperationError, match="Elige una empresa"):
         operation_command(ROOT, "soft_model", {"company": "walmex; touch bad"})
+
+    refresh, refresh_argv, refresh_cwd = operation_command(ROOT, "estate_refresh_all")
+    assert refresh.mutates is True
+    assert refresh.confirmation == "ACTUALIZAR ESTATE"
+    assert refresh_argv[-1] == "scripts/refresh_analyst_estate.py"
+    assert refresh_cwd == ROOT
+
+
+def test_segment_metric_catalog_is_universal_then_company_specific() -> None:
+    generic = {row["key"] for row in metric_catalog(ROOT, "bbajio")}
+    assert len(generic) == 61
+    assert {"revenue", "cfo", "total_assets"}.issubset(generic)
+    assert {"clientes_activos", "revenue_sports"}.isdisjoint(generic)
+
+    herdez = {row["key"] for row in metric_catalog(ROOT, "herdez")}
+    assert {"revenue", "cfo", "ns_domestic"}.issubset(herdez)
+    assert {"clientes_activos", "revenue_sports"}.isdisjoint(herdez)
+
+    expected = {
+        "ac": "ac_sales_mexico",
+        "becle": "revenue_us_canada",
+        "femsa": "femsa_am_revenue",
+        "kimber": "sales_yoy_exact",
+        "kof": "kof_revenue_brazil",
+        "lab": "lab_revenue_mexico",
+        "tiendas_3b": "total_stores",
+    }
+    for company, key in expected.items():
+        assert key in {row["key"] for row in metric_catalog(ROOT, company)}
 
 
 def test_mutating_operations_require_exact_confirmation() -> None:
@@ -111,8 +144,8 @@ def test_console_serves_launchpad_and_bootstrap(console_server: str) -> None:
     assert "Todo lo que necesitas" not in html
     assert "Cada herramienta conserva su propio espacio" not in html
     assert "Lanzadores de proyectos" in html
-    assert 'href="./app.css?v=8"' in html
-    assert 'src="./app.js?v=8"' in html
+    assert 'href="./app.css?v=9"' in html
+    assert 'src="./app.js?v=9"' in html
     assert 'content="http://127.0.0.1:8765"' in html
     assert 'href="./" aria-label="Inicio del lanzador BMV"' in html
     assert "connect-src http://127.0.0.1:8765" in html
@@ -126,6 +159,8 @@ def test_console_serves_launchpad_and_bootstrap(console_server: str) -> None:
     assert "Buscar una métrica" in html
     assert "ACTIVIDAD RECIENTE" not in html
     assert "Qué está haciendo el lanzador" not in html
+    assert 'data-confirm-operation="estate_refresh_all"' in html
+    assert "Actualizar biblioteca completa" in html
 
     with urlopen(f"{console_server}/api/bootstrap", timeout=3) as response:
         payload = json.load(response)
@@ -135,7 +170,7 @@ def test_console_serves_launchpad_and_bootstrap(console_server: str) -> None:
 
     with urlopen(f"{console_server}/api/segments/setup?company=soriana", timeout=3) as response:
         setup = json.load(response)
-    assert setup["preset"]["company"] == "Soriana"
+    assert setup["preset"]["company"] == "Organizacion Soriana"
     assert setup["preset"]["ir_url"].startswith("https://")
     assert any(row["key"] == "revenue" for row in setup["metrics"])
     assert setup["preset"]["sections"][0]["rows"][0] == {
@@ -167,6 +202,7 @@ def test_segments_request_creates_strict_markdown_and_analyst_contract(
     )
     request_dir = tmp_path / "state" / "requests" / request_id
     assert "- Ingresos {revenue}" in (request_dir / "input.md").read_text(encoding="utf-8")
+    assert "Issuer-Slug: soriana" in (request_dir / "input.md").read_text(encoding="utf-8")
     assert "- YoY" in (request_dir / "input.md").read_text(encoding="utf-8")
     assert (request_dir / "analyst_metrics.csv").read_text(encoding="utf-8").splitlines() == [
         "section,label,key",
@@ -299,3 +335,47 @@ def test_estate_connect_explains_when_usb_is_absent(monkeypatch) -> None:
     monkeypatch.setattr("src.analyst_console.server.time.sleep", lambda *_a: None)
     with pytest.raises(OperationError, match="No encontré el USB Estate"):
         device.connect()
+
+
+def test_mass_refresh_requires_estate_and_exclusive_alpha(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    application = ConsoleApplication(ROOT, tmp_path / "state")
+    monkeypatch.setattr(application.jobs, "active", lambda: [])
+
+    monkeypatch.setattr(
+        application.estate,
+        "status",
+        lambda: {"connected": False, "detail": "USB ausente"},
+    )
+    with pytest.raises(OperationError, match="USB ausente"):
+        application.prepare_estate_refresh("ACTUALIZAR ESTATE")
+
+    monkeypatch.setattr(
+        application.estate,
+        "status",
+        lambda: {"connected": True, "detail": None},
+    )
+
+    class Alpha:
+        stopped = False
+
+        def status(self):
+            return {"running": True, "managed": True}
+
+        def stop(self):
+            self.stopped = True
+
+        @staticmethod
+        def _port_open():
+            return False
+
+    alpha = Alpha()
+    application.alpha = alpha
+    with pytest.raises(OperationError, match="ACTUALIZAR ESTATE"):
+        application.prepare_estate_refresh("actualizar estate")
+    assert alpha.stopped is False
+
+    application.prepare_estate_refresh("ACTUALIZAR ESTATE")
+    assert alpha.stopped is True

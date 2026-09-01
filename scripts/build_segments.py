@@ -115,6 +115,10 @@ _ANALYST_COMPANY_RE = re.compile(
     r"^\s*(?:Analyst[- ]Company|Metrics[- ]Company)\s*:\s*(.+?)\s*$",
     re.IGNORECASE,
 )
+_ISSUER_SLUG_RE = re.compile(
+    r"^\s*Issuer-Slug\s*:\s*([a-z0-9]+(?:_[a-z0-9]+)*)\s*$",
+    re.IGNORECASE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +188,15 @@ def parse_input(md_text: str) -> tuple[str, str, list[str]]:
     if not metrics:
         raise InputError("no metrics found — add a markdown list of metric names.")
     return name, ir_url, metrics
+
+
+def _declared_issuer_slug(md_text: str) -> str | None:
+    """Read the canonical registry slug emitted by the analyst Launchpad."""
+    for raw in md_text.splitlines():
+        match = _ISSUER_SLUG_RE.match(raw)
+        if match:
+            return match.group(1).lower()
+    return None
 
 
 # ── Outline compiler ─────────────────────────────────────────────────────────
@@ -1033,7 +1046,7 @@ def run(
     md_text = input_bytes.decode("utf-8")
     input_sha256 = hashlib.sha256(input_bytes).hexdigest()
     name, ir_url, _flat = parse_input(md_text)        # validates name + IR link present
-    slug = slugify(name)
+    slug = _declared_issuer_slug(md_text) or slugify(name)
     build_id = str(uuid.uuid4())
     generated_at = datetime.now(timezone.utc).isoformat()
 
@@ -1052,7 +1065,10 @@ def run(
         writable_cache.mkdir(parents=True, exist_ok=True)
     # Estate views in report_sources are read-only; never mkdir/write there.
 
-    config_path = CONFIGS_DIR / f"{slug}.yaml"
+    from src.model.company_config import resolve_company_config_slug
+
+    config_slug = resolve_company_config_slug(PROJECT_ROOT, slug)
+    config_path = CONFIGS_DIR / f"{config_slug}.yaml"
     config_arg = str(config_path) if config_path.exists() else None
     manifest_path = validation_dir / f"{slug}_metrics_manifest.json"
 
@@ -1061,6 +1077,13 @@ def run(
     from src.extract.interface import MetricResolver
 
     defs = load_metric_defs(config_arg)
+    # Company configs can suppress broad base rows during unattended fleet
+    # extraction.  The Launchpad is analyst-directed, so explicit base metrics
+    # remain valid choices and are restored by pipeline.run when requested.
+    from src.model.financial_model import METRICS
+    by_key = {metric.key: metric for metric in METRICS}
+    by_key.update({metric.key: metric for metric in defs})
+    defs = list(by_key.values())
     resolver = MetricResolver(defs)
     valid_keys = {m.key for m in defs}
     outline_text, sections, mapping, report = compile_outline(md_text, resolver, valid_keys)

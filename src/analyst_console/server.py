@@ -22,7 +22,12 @@ from estate_bridge import BRIDGE_ENV, ESTATE_ROOT_ENV, REPORTS_VIEW_ENV, load_es
 from estate_volume import ESTATE_ID_ENV, inspect_estate_environment, read_estate_id
 
 from .jobs import JobManager
-from .operations import OPERATIONS, OperationError, company_catalog
+from .operations import (
+    OPERATIONS,
+    OperationError,
+    company_catalog,
+    validate_confirmation,
+)
 from .segments import SegmentRequestStore
 
 
@@ -429,6 +434,37 @@ class ConsoleApplication:
             self.alpha,
         )
 
+    def prepare_estate_refresh(self, confirmation: object) -> None:
+        """Make the USB index exclusively available to the fleet refresh."""
+        operation = OPERATIONS["estate_refresh_all"]
+        validate_confirmation(operation, confirmation)
+        if self.jobs.active():
+            raise OperationError(
+                "Hay una tarea en proceso. Espera a que termine antes de actualizar el Estate."
+            )
+        status = self.estate.status()
+        if not status["connected"]:
+            raise OperationError(
+                status.get("detail")
+                or "Conecta el USB Estate antes de actualizar la biblioteca."
+            )
+
+        alpha_status = self.alpha.status()
+        if not alpha_status["running"]:
+            return
+        if not alpha_status["managed"]:
+            raise OperationError(
+                "Cierra Alpha Go antes de actualizar el Estate; está usando su índice."
+            )
+        self.alpha.stop()
+        for _attempt in range(25):
+            if not self.alpha._port_open():
+                return
+            time.sleep(0.2)
+        raise OperationError(
+            "Alpha Go todavía está usando el Estate. Intenta de nuevo en unos segundos."
+        )
+
     def bootstrap(self) -> dict[str, Any]:
         estate = self.estate.status()
         core = self.project_root / "soft" / "outputs" / "_master" / "soft_coverage_master.html"
@@ -615,8 +651,13 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         try:
             body = self._body()
             if route.path == "/api/jobs":
+                operation_key = str(body.get("operation") or "")
+                if operation_key == "estate_refresh_all":
+                    self.server.application.prepare_estate_refresh(
+                        body.get("confirmation")
+                    )
                 job = self.server.application.jobs.create(
-                    str(body.get("operation") or ""),
+                    operation_key,
                     body.get("params") if isinstance(body.get("params"), dict) else {},
                     body.get("confirmation"),
                 )

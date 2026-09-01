@@ -81,6 +81,19 @@ def test_slugify_and_dirname():
     assert cli.dirname_for("Grupo Bimbo") == "Grupo_Bimbo"
 
 
+def test_launchpad_can_declare_canonical_issuer_slug():
+    markdown = "# Coca-Cola FEMSA\nIssuer-Slug: kof\nIR: https://example.com\n- revenue\n"
+    assert cli._declared_issuer_slug(markdown) == "kof"
+    assert cli._declared_issuer_slug("# Coca-Cola FEMSA\n") is None
+
+
+def test_canonical_estate_slug_can_resolve_ticker_named_model_config():
+    from pathlib import Path
+    from src.model.company_config import resolve_company_config_slug
+
+    assert resolve_company_config_slug(Path(cli.PROJECT_ROOT), "tiendas_3b") == "tbbb"
+
+
 def test_publish_latest_workbook_keeps_exactly_the_newest_model(tmp_path):
     source_dir = tmp_path / "company" / "excel"
     source_dir.mkdir(parents=True)

@@ -350,12 +350,13 @@ def _custom_candidates(src, metric_defs: list[MetricDef], cfg: dict) -> list[Can
     mod_path, fn_name, wants_period, wants_pdf = spec
     try:
         import importlib
+        from src.extract.custom_registry import scope_custom_rows
         fn = getattr(importlib.import_module(mod_path), fn_name)
         args = [src.text, metric_defs]
         if wants_period:
             args.append(getattr(src, "period", None))
         kwargs = {"pdf_path": getattr(src, "pdf_path", None)} if wants_pdf else {}
-        rows = fn(*args, **kwargs)
+        rows = scope_custom_rows(fn(*args, **kwargs), cfg)
     except Exception as exc:
         print(f"evidence: custom extractor '{custom}' failed: {exc}", file=sys.stderr)
         return []

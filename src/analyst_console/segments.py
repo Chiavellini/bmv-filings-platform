@@ -41,13 +41,22 @@ def _text(value: object, field: str, *, maximum: int = 160) -> str:
 
 def _metric_defs(project_root: Path, company_slug: str = ""):
     from src.excel.segments_sheet import load_metric_defs
+    from src.model.company_config import resolve_company_config_slug
 
-    config = project_root / "configs" / f"{company_slug}.yaml"
+    config_slug = resolve_company_config_slug(project_root, company_slug)
+    config = project_root / "configs" / f"{config_slug}.yaml"
     return load_metric_defs(str(config) if company_slug and config.is_file() else None)
 
 
 def metric_catalog(project_root: Path, company_slug: str = "") -> list[dict[str, str]]:
-    """Return the canonical metric choices valid for a company build."""
+    """Return universal financial rows plus the selected model's known rows."""
+    from src.model.financial_model import METRICS
+
+    # Company configs may override labels/patterns and add segment KPIs, but
+    # they must not remove universal financial rows from the analyst's chooser.
+    # The explicitly requested base rows are restored in pipeline.run as well.
+    by_key = {metric.key: metric for metric in METRICS}
+    by_key.update({metric.key: metric for metric in _metric_defs(project_root, company_slug)})
     return [
         {
             "key": metric.key,
@@ -56,7 +65,7 @@ def metric_catalog(project_root: Path, company_slug: str = "") -> list[dict[str,
             "section": metric.section,
             "unit": metric.unit,
         }
-        for metric in sorted(_metric_defs(project_root, company_slug), key=lambda row: row.key)
+        for metric in sorted(by_key.values(), key=lambda row: row.key)
     ]
 
 
@@ -113,6 +122,59 @@ def _parse_preset(path: Path) -> dict[str, Any]:
     }
 
 
+def _company_preset(project_root: Path, company_slug: str) -> dict[str, Any]:
+    """Build one issuer preset from the canonical registry and optional template."""
+    from src.acquisition.registry import load_issuer_registry
+
+    registry = load_issuer_registry(project_root / "configs" / "issuers.yaml")
+    try:
+        issuer = registry.get(company_slug)
+    except KeyError as exc:
+        raise OperationError("La empresa seleccionada no existe en el universo BMV.") from exc
+    if not issuer.active:
+        raise OperationError("La empresa seleccionada no está activa en el universo BMV.")
+
+    template = project_root / "inputs" / f"{company_slug}.md"
+    preset = _parse_preset(template) if template.is_file() else {
+        "company": issuer.name,
+        "ticker": issuer.ticker,
+        "ir_url": "",
+        "max_reports": 100,
+        "force_download": False,
+        "sections": [{"name": "Resultados", "rows": []}],
+    }
+    ir_source = next(
+        (
+            source for source in issuer.sources
+            if source.enabled and source.kind == "investor_relations" and source.url
+        ),
+        None,
+    )
+    preset["company"] = issuer.name
+    preset["ticker"] = issuer.ticker
+    preset["ir_url"] = (
+        str(ir_source.url)
+        if ir_source is not None
+        else f"https://www.bmv.com.mx/es/emisoras/perfil/{issuer.ticker}"
+    )
+
+    from src.model.company_config import resolve_company_config_slug
+
+    config_slug = resolve_company_config_slug(project_root, company_slug)
+    config_path = project_root / "configs" / f"{config_slug}.yaml"
+    if config_path.is_file():
+        from src.model.financial_model import load_config
+
+        config = load_config(config_path)
+        company_config = config.get("company", {}) or {}
+        preset["company"] = str(company_config.get("name") or preset["company"])
+        preset["ticker"] = str(company_config.get("ticker") or preset["ticker"])
+        config_url = ((config.get("ir_website") or {}).get("url"))
+        if config_url:
+            preset["ir_url"] = str(config_url)
+    return preset
+
+
 class SegmentRequestStore:
     """Materialize a UI request as the strict Markdown + CSV input contract."""
 
@@ -122,14 +184,7 @@ class SegmentRequestStore:
         self.root.mkdir(parents=True, exist_ok=True)
 
     def setup(self, company_slug: str = "") -> dict[str, Any]:
-        allowed = {
-            path.stem: path
-            for path in (self.project_root / "inputs").glob("*.md")
-            if not path.name.startswith("_")
-        }
-        if company_slug and company_slug not in allowed:
-            raise OperationError("La plantilla de empresa no existe.")
-        preset = _parse_preset(allowed[company_slug]) if company_slug else {
+        preset = _company_preset(self.project_root, company_slug) if company_slug else {
             "company": "",
             "ticker": "",
             "ir_url": "",
@@ -137,12 +192,6 @@ class SegmentRequestStore:
             "force_download": False,
             "sections": [{"name": "Resultados", "rows": []}],
         }
-        config_path = self.project_root / "configs" / f"{company_slug}.yaml"
-        if company_slug and config_path.is_file():
-            from src.model.financial_model import load_config
-
-            company_config = load_config(config_path).get("company", {}) or {}
-            preset["ticker"] = str(company_config.get("ticker") or "")
         return {
             "preset": preset,
             "metrics": metric_catalog(self.project_root, company_slug),
@@ -153,22 +202,12 @@ class SegmentRequestStore:
 
     def prepare(self, payload: dict[str, Any]) -> str:
         requested_slug = str(payload.get("template_company") or "").strip()
-        known_templates = {
-            path.stem: path for path in (self.project_root / "inputs").glob("*.md")
-            if not path.name.startswith("_")
-        }
-        if requested_slug not in known_templates:
+        if not requested_slug:
             raise OperationError("Elige una empresa de la lista disponible.")
 
-        preset = _parse_preset(known_templates[requested_slug])
+        preset = _company_preset(self.project_root, requested_slug)
         company = _text(preset.get("company"), "el nombre de la empresa")
         ticker = str(preset.get("ticker") or "").strip()
-        config_path = self.project_root / "configs" / f"{requested_slug}.yaml"
-        if config_path.is_file():
-            from src.model.financial_model import load_config
-
-            company_config = load_config(config_path).get("company", {}) or {}
-            ticker = str(company_config.get("ticker") or ticker)
         ir_url = _text(
             preset.get("ir_url"),
             "la fuente histórica configurada para esta empresa",
@@ -225,7 +264,13 @@ class SegmentRequestStore:
         csv_path = request_dir / "analyst_metrics.csv"
         metadata_path = request_dir / "request.json"
 
-        markdown = [f"# {company}", f"IR: {ir_url}", f"Analyst-Company: {ticker or company}", ""]
+        markdown = [
+            f"# {company}",
+            f"Issuer-Slug: {requested_slug}",
+            f"IR: {ir_url}",
+            f"Analyst-Company: {ticker or company}",
+            "",
+        ]
         for section in sections:
             markdown.append(f'## {section["name"]}')
             for row in section["rows"]:

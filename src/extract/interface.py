@@ -598,7 +598,7 @@ def _parse_metric_input(raw: str | list[str] | None) -> list[str] | None:
 
 
 def _load_metric_defs(config: str | Path | None):
-    """Load metric definitions, preferring sport.yaml if no config specified."""
+    """Load the universal base plus rows for the selected company only."""
     from src.shared.paths import CONFIGS_DIR as here_configs
     if config is not None:
         cfg_path = Path(config)
@@ -620,27 +620,19 @@ def _load_metric_defs(config: str | Path | None):
                 cfg_path = candidate
                 break
 
-    try:
-        from src.model.sport_metrics import get_sport_metrics
-        base = get_sport_metrics()
-    except ImportError:
-        from src.model.financial_model import METRICS
-        base = METRICS
+    from src.model.financial_model import METRICS
+    base = list(METRICS)
 
     if cfg_path:
         try:
             from src.model.financial_model import apply_config, load_config
             cfg = load_config(cfg_path)
-            # apply_config merges overrides and custom_metrics
-            from src.model.financial_model import METRICS
+            # apply_config merges overrides and custom_metrics.  Do not append
+            # SPORT_EXTENDED_METRICS here: those rows used to leak into every
+            # company and made the Launchpad catalog look SPORT-specific.
             base = apply_config(METRICS, cfg)
-            # Re-add sport extended metrics not in config
-            try:
-                from src.model.sport_metrics import SPORT_EXTENDED_METRICS
-                existing_keys = {m.key for m in base}
-                base = base + [m for m in SPORT_EXTENDED_METRICS if m.key not in existing_keys]
-            except ImportError:
-                pass
+            from src.model.analyst_model_metrics import apply_analyst_model_metrics
+            base = apply_analyst_model_metrics(base, cfg_path.stem)
         except Exception as e:
             print(f"Warning: could not load config {cfg_path}: {e}", file=sys.stderr)
 
