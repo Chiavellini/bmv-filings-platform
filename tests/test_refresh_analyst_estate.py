@@ -15,6 +15,16 @@ def test_refresh_builds_registry_directed_estate_commands(tmp_path: Path, monkey
         alpha_go_index_path=estate / "indexes" / "alpha_go.db",
     )
     monkeypatch.setattr(refresh, "_require_estate", lambda: bridge)
+    original_is_file = Path.is_file
+
+    def installed_runtime(path: Path) -> bool:
+        if path.name in {"refresh-quarterly-estate", "process-estate-outbox"}:
+            return True
+        if path.name == "python" and path.parent.name == "bin":
+            return True
+        return original_is_file(path)
+
+    monkeypatch.setattr(Path, "is_file", installed_runtime)
     calls: list[tuple[str, list[str], Path, bool]] = []
 
     def capture(label, argv, *, cwd, dry_run):
