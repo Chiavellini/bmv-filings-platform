@@ -145,6 +145,16 @@ main { max-width: 1184px; margin: 0 auto; padding: 18px 28px 70px; }
 .quiet-action { padding: 11px 13px; border-radius: 10px; color: var(--muted); background: transparent; font-size: 12px; font-weight: 650; }
 .quiet-action:hover { color: var(--ink); background: rgba(11,24,48,.055); }
 .split-actions, .button-row { display: flex; align-items: center; gap: 8px; margin-top: 24px; }
+.module-list { margin-top: 22px; display: grid; gap: 10px; }
+.module-option { width: 100%; padding: 14px 15px; display: flex; align-items: center; justify-content: space-between; gap: 14px; text-align: left; border: 1px solid var(--line); border-radius: 14px; color: inherit; background: rgba(255,255,255,.62); cursor: pointer; transition: border-color .15s ease, background .15s ease, transform .1s ease; }
+.module-option:hover { border-color: rgba(41,120,255,.4); background: rgba(41,120,255,.06); transform: translateY(-1px); }
+.module-option:active { transform: translateY(0); }
+.module-option span { display: block; min-width: 0; }
+.module-option b { display: block; font-size: 14px; font-weight: 700; letter-spacing: -.01em; }
+.module-option small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.module-option i { flex: none; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; color: var(--white); background: var(--blue); font-style: normal; font-size: 16px; }
+.module-option:hover i { background: var(--blue-deep); }
+.module-option:disabled { cursor: not-allowed; opacity: .42; }
 .split-actions .primary-action { flex: 1; margin-top: 0; }
 .button-row .primary-action { flex: 1; }
 

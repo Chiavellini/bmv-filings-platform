@@ -144,8 +144,9 @@ def test_console_serves_launchpad_and_bootstrap(console_server: str) -> None:
     assert "Todo lo que necesitas" not in html
     assert "Cada herramienta conserva su propio espacio" not in html
     assert "Lanzadores de proyectos" in html
-    assert 'href="./app.css?v=10"' in html
-    assert 'src="./app.js?v=10"' in html
+    assert 'href="./app.css?v=11"' in html
+    assert 'src="./app.js?v=11"' in html
+    assert html.count('class="module-option" data-dialog=') == 2
     assert "EXTRACTOR" in html
     assert "FÁBRICA DE MODELOS" not in html
     assert 'data-dialog="extractor-dialog"' in html
