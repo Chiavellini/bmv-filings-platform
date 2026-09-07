@@ -101,6 +101,16 @@ def test_mutating_operations_require_exact_confirmation() -> None:
     validate_confirmation(operation, "WRITE ESTATE")
 
 
+def _wait_for(manager: JobManager, job_id: str):
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        job = manager.get(job_id)
+        if job and job.status not in {"queued", "running"}:
+            return job
+        time.sleep(0.02)
+    raise AssertionError("job did not finish")
+
+
 def test_job_manager_runs_argv_and_persists_log(tmp_path: Path, monkeypatch) -> None:
     operation = Operation("test", "Test operation", "test", "test operation")
 
@@ -110,19 +120,64 @@ def test_job_manager_runs_argv_and_persists_log(tmp_path: Path, monkeypatch) -> 
     monkeypatch.setattr("src.analyst_console.jobs.operation_command", command)
     manager = JobManager(ROOT, tmp_path / "state", {})
     created = manager.create("test", {})
+    job = _wait_for(manager, created["id"])
 
-    deadline = time.monotonic() + 3
-    while time.monotonic() < deadline:
-        job = manager.get(created["id"])
-        if job and job.status not in {"queued", "running"}:
-            break
-        time.sleep(0.02)
-
-    assert job is not None
     assert job.status == "completed"
     assert job.exit_code == 0
+    assert job.summary is None
+    assert job.detail is None
     assert "job finished" in manager.log_text(job.id)
     assert (tmp_path / "state" / "jobs" / f"{job.id}.json").is_file()
+    assert "summary" in job.public() and "detail" in job.public()
+
+
+def test_job_manager_reads_extract_summary_and_failure_detail(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project = tmp_path / "project"
+    summary_dir = project / "outputs" / "extractor" / "0123456789abcdef"
+    summary_dir.mkdir(parents=True)
+    (summary_dir / "a_observaciones.xlsx").write_bytes(b"xlsx")
+    summary = {"found": 2, "requested": 3, "missing": [{"key": "ebitda", "label": "EBITDA"}]}
+    (summary_dir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
+
+    commands = {
+        "pdf_extract": ["/usr/bin/printf", "Periodo: 2025-2T\n"],
+        "boom": ["/bin/sh", "-c", 'echo "working…"; echo "ERROR: No se pudo leer el PDF" >&2; exit 1'],
+        "silent": ["/bin/sh", "-c", "exit 3"],
+    }
+
+    def command(_root, key, *_args, **_kwargs):
+        return Operation(key, key, "models", key), commands[key], tmp_path
+
+    monkeypatch.setattr("src.analyst_console.jobs.operation_command", command)
+    manager = JobManager(project, tmp_path / "state", {})
+
+    extract = _wait_for(manager, manager.create("pdf_extract", {"request": "0123456789abcdef"})["id"])
+    assert extract.status == "completed"
+    assert extract.summary == summary
+    assert extract.message == "2 de 3 métricas encontradas"
+    assert extract.public()["summary"]["found"] == 2
+
+    failed = _wait_for(manager, manager.create("boom", {})["id"])
+    assert failed.status == "failed"
+    assert failed.detail == "No se pudo leer el PDF"
+    assert failed.message == "Requiere atención"
+
+    silent = _wait_for(manager, manager.create("silent", {})["id"])
+    assert silent.status == "failed"
+    assert silent.detail is None
+
+    # Job files written before the summary/detail fields existed still load.
+    legacy = {
+        "id": "legacy000001", "operation": "estate_check", "label": "Revisar", "node": "estate",
+        "status": "completed", "created_at": "2026-01-01T00:00:00+00:00", "started_at": None,
+        "finished_at": None, "exit_code": 0, "message": "Completado", "params": {}, "artifacts": [],
+    }
+    (tmp_path / "state" / "jobs" / "legacy000001.json").write_text(json.dumps(legacy), encoding="utf-8")
+    reloaded = JobManager(project, tmp_path / "state", {})
+    assert reloaded.get("legacy000001") is not None
+    assert reloaded.get("legacy000001").summary is None
 
 
 @pytest.fixture
@@ -144,8 +199,12 @@ def test_console_serves_launchpad_and_bootstrap(console_server: str) -> None:
     assert "Todo lo que necesitas" not in html
     assert "Cada herramienta conserva su propio espacio" not in html
     assert "Lanzadores de proyectos" in html
-    assert 'href="./app.css?v=10"' in html
-    assert 'src="./app.js?v=10"' in html
+    assert 'href="./app.css?v=12"' in html
+    assert 'src="./app.js?v=12"' in html
+    assert html.count('class="module-option" data-dialog=') == 2
+    assert 'data-open="latest_extract"' in html
+    assert 'id="extractor-file" type="file" accept="application/pdf,.pdf" multiple' in html
+    assert 'id="extractor-files"' in html
     assert "EXTRACTOR" in html
     assert "FÁBRICA DE MODELOS" not in html
     assert 'data-dialog="extractor-dialog"' in html

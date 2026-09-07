@@ -142,6 +142,12 @@ def test_catalog_and_custom_metrics_are_extracted(sandbox: Path) -> None:
     assert "disabled: true" in config
     assert (request_dir / "work" / "2025-2T.pdf").is_file()
 
+    written = json.loads((output_dir / "summary.json").read_text(encoding="utf-8"))
+    assert written["found"] == 2 and written["requested"] == 2
+    assert written["periods"] == ["2025-2T"]
+    assert written["sources"] == ["Reporte_2T25.pdf"]
+    assert written["missing"] == []
+
 
 def test_period_override_and_filename_inference(sandbox: Path) -> None:
     request_dir = _request_dir(sandbox, period="2024-FY")
@@ -166,12 +172,76 @@ def test_output_format_selection(sandbox: Path) -> None:
     csv_only = _request_dir(sandbox, format="csv")
     csv_dir = sandbox / "outputs" / "extractor" / "csv"
     cli.run_request(csv_only, csv_dir)
-    assert sorted(path.suffix for path in csv_dir.iterdir()) == [".csv"]
+    assert sorted(path.suffix for path in csv_dir.iterdir()) == [".csv", ".json"]
 
     xlsx_only = _request_dir(sandbox / "x", format="xlsx")
     xlsx_dir = sandbox / "outputs" / "extractor" / "xlsx"
     cli.run_request(xlsx_only, xlsx_dir)
-    assert sorted(path.suffix for path in xlsx_dir.iterdir()) == [".xlsx"]
+    assert sorted(path.suffix for path in xlsx_dir.iterdir()) == [".json", ".xlsx"]
+
+
+def _upload_dir(root: Path, upload_id: str, filename: str, lines: list[str], period_guess) -> None:
+    folder = root / upload_id
+    folder.mkdir(parents=True)
+    (folder / "source.pdf").write_bytes(_tiny_pdf(lines))
+    (folder / "upload.json").write_text(
+        json.dumps({"upload": upload_id, "filename": filename, "size": 1, "period_guess": period_guess}),
+        encoding="utf-8",
+    )
+
+
+def test_several_pdfs_yield_one_row_per_period(sandbox: Path) -> None:
+    root = sandbox / "state" / "extractor"
+    _upload_dir(root, "aaaaaaaaaaaaaaa1", "Reporte_1T25.pdf",
+                ["Ingresos totales 4,000 3,500", "Ventas magicas 100 90"], "2025-1T")
+    _upload_dir(root, "aaaaaaaaaaaaaaa2", "Reporte_2T25.pdf",
+                ["Ingresos totales 5,000 4,500"], "2025-2T")
+    _upload_dir(root, "aaaaaaaaaaaaaaa3", "informe.pdf", ["Ingresos totales 6,000 5,000"], None)
+    request_dir = root / "bbbbbbbbbbbbbbb1"
+    request_dir.mkdir()
+    request = {
+        "sources": [
+            {"upload": "aaaaaaaaaaaaaaa1", "filename": "Reporte_1T25.pdf", "period": "2025-1T"},
+            {"upload": "aaaaaaaaaaaaaaa2", "filename": "Reporte_2T25.pdf", "period": "2025-2T"},
+            {"upload": "aaaaaaaaaaaaaaa3", "filename": "informe.pdf", "period": "2025-FY"},
+        ],
+        "company": "", "config_slug": "", "metrics": ["revenue"],
+        "custom_metrics": ["Ventas magicas"], "format": "both", "read_tables": False,
+    }
+    (request_dir / "request.json").write_text(json.dumps(request), encoding="utf-8")
+    output_dir = sandbox / "outputs" / "extractor" / request_dir.name
+
+    summary = cli.run_request(request_dir, output_dir)
+    assert summary["periods"] == ["2025-1T", "2025-2T", "2025-FY"]
+    assert summary["sources"] == ["Reporte_1T25.pdf", "Reporte_2T25.pdf", "informe.pdf"]
+    assert summary["found"] == 2
+    assert sorted(path.name for path in (request_dir / "work").glob("*.pdf")) == [
+        "2025-1T.pdf", "2025-2T.pdf", "2025-FY.pdf",
+    ]
+    csv_path = output_dir / "reporte_1t25_y_2_mas_observaciones.csv"
+    rows = _rows(csv_path)
+    revenue = {row["period"]: float(row["current"]) for row in rows if row["metric"] == "revenue"}
+    assert revenue == {"2025-1T": 4000.0, "2025-2T": 5000.0, "2025-FY": 6000.0}
+    magic = [row for row in rows if row["metric"] == "custom_ventas_magicas"]
+    assert [row["period"] for row in magic] == ["2025-1T"]
+
+    resumen = _summary_rows(output_dir / "reporte_1t25_y_2_mas_observaciones.xlsx")
+    assert ["Archivos", "Reporte_1T25.pdf, Reporte_2T25.pdf, informe.pdf"] in [row[:2] for row in resumen]
+    assert ["Periodos", "2025-1T, 2025-2T, 2025-FY"] in [row[:2] for row in resumen]
+    states = {row[0]: row[3] for row in resumen if row and row[0] in {"revenue", "custom_ventas_magicas"}}
+    assert states == {"revenue": "Encontrada (3/3 periodos)", "custom_ventas_magicas": "Encontrada (1/3 periodos)"}
+    latest = {row[0]: row[5] for row in resumen if row and row[0] == "revenue"}
+    assert latest == {"revenue": "2025-FY"}
+
+    # A missing source PDF or a period collision is refused before extraction.
+    (root / "aaaaaaaaaaaaaaa3" / "source.pdf").unlink()
+    with pytest.raises(cli.ExtractionError, match="informe.pdf ya no está disponible"):
+        cli.run_request(request_dir, output_dir)
+    request["sources"] = request["sources"][:2]
+    request["sources"][1]["period"] = "2025-1T"
+    (request_dir / "request.json").write_text(json.dumps(request), encoding="utf-8")
+    with pytest.raises(cli.ExtractionError, match="mismo periodo"):
+        cli.run_request(request_dir, output_dir)
 
 
 def test_zero_hits_still_produce_readable_outputs(sandbox: Path, capsys) -> None:

@@ -143,10 +143,16 @@ def test_prepare_validates_the_request_contract(tmp_path: Path) -> None:
         "format": "csv",
         "read_tables": False,
     })
-    assert request_id == upload
-    request = json.loads(
-        (tmp_path / "state" / "extractor" / upload / "request.json").read_text(encoding="utf-8")
+    assert request_id != upload
+    request_dir = tmp_path / "state" / "extractor" / request_id
+    assert request_dir.stat().st_mode & 0o777 == 0o700
+    assert not (request_dir / "source.pdf").exists()
+    request = json.loads((request_dir / "request.json").read_text(encoding="utf-8"))
+    assert request["sources"] == [{"upload": upload, "filename": "foo_3T24.pdf", "period": "2024-FY"}]
+    claim = json.loads(
+        (tmp_path / "state" / "extractor" / upload / "claimed_by.json").read_text(encoding="utf-8")
     )
+    assert claim["request"] == request_id
     assert request["metrics"] == ["revenue", "ebitda"]
     assert request["custom_metrics"] == ["Ventas mismas tiendas", "Clientes"]
     assert request["period"] == "2024-FY"
@@ -185,6 +191,14 @@ def test_resolve_request_and_operation_argv(
     request_dir, metadata = resolve_extractor_request(state, request_id)
     assert request_dir == (state / "extractor" / request_id).resolve()
     assert metadata["metrics"] == ["revenue"]
+    assert metadata["sources"][0]["upload"] == upload
+
+    # A request whose uploaded PDF disappeared cannot be resolved into a job.
+    gone = store.save_upload("Reporte_1T25.pdf", PDF)["upload"]
+    gone_request = store.prepare(_base_request(gone))
+    (state / "extractor" / gone / "source.pdf").unlink()
+    with pytest.raises(OperationError, match="ya no está disponible"):
+        resolve_extractor_request(state, gone_request)
 
     with pytest.raises(OperationError, match="directorio de trabajo"):
         operation_command(ROOT, "pdf_extract", {"request": request_id})
@@ -209,6 +223,70 @@ def test_resolve_request_and_operation_argv(
     assert all(";" not in token for token in argv)
 
 
+def test_prepare_accepts_several_uploads_with_distinct_periods(tmp_path: Path) -> None:
+    store = ExtractorRequestStore(ROOT, tmp_path / "state")
+    first = store.save_upload("Reporte_1T25.pdf", PDF)["upload"]
+    second = store.save_upload("Reporte_2T25.pdf", PDF)["upload"]
+    unknown = store.save_upload("informe.pdf", PDF)["upload"]
+    base = {"company": "", "metrics": ["revenue"], "custom_metrics": [], "format": "both", "read_tables": True}
+
+    with pytest.raises(OperationError, match="Primero sube"):
+        store.prepare({**base, "uploads": []})
+    with pytest.raises(OperationError, match="repetido"):
+        store.prepare({**base, "uploads": [{"upload": first}, {"upload": first}]})
+    with pytest.raises(OperationError, match="mismo periodo"):
+        store.prepare({**base, "uploads": [{"upload": first, "period": "2025-2T"}, {"upload": second}]})
+    with pytest.raises(OperationError, match="No se detectó el periodo de informe.pdf"):
+        store.prepare({**base, "uploads": [{"upload": first}, {"upload": unknown}]})
+    with pytest.raises(OperationError, match="Reporte_2T25.pdf debe tener el formato"):
+        store.prepare({**base, "uploads": [{"upload": first}, {"upload": second, "period": "Q2"}]})
+    with pytest.raises(OperationError, match="como máximo 12"):
+        store.prepare({**base, "uploads": [{"upload": first}] * 13})
+
+    # A single file without a detectable period is still accepted (slug fallback).
+    single = store.prepare({**base, "uploads": [{"upload": unknown}]})
+    single_request = json.loads(
+        (tmp_path / "state" / "extractor" / single / "request.json").read_text(encoding="utf-8")
+    )
+    assert single_request["sources"] == [{"upload": unknown, "filename": "informe.pdf", "period": ""}]
+
+    request_id = store.prepare({
+        **base,
+        "uploads": [{"upload": second, "period": " 2025-4t "}, {"upload": first}],
+    })
+    request = json.loads(
+        (tmp_path / "state" / "extractor" / request_id / "request.json").read_text(encoding="utf-8")
+    )
+    assert request["sources"] == [
+        {"upload": second, "filename": "Reporte_2T25.pdf", "period": "2025-4T"},
+        {"upload": first, "filename": "Reporte_1T25.pdf", "period": "2025-1T"},
+    ]
+    assert request["filename"] == "Reporte_2T25.pdf"
+    assert request["period"] == "2025-4T"
+    for upload in (first, second):
+        assert (tmp_path / "state" / "extractor" / upload / "claimed_by.json").is_file()
+
+    # Claimed uploads survive pruning even when old; the request dir is never pruned.
+    old = time.time() - 3 * 24 * 3600
+    for folder in (first, second, request_id):
+        os.utime(tmp_path / "state" / "extractor" / folder, (old, old))
+    store.save_upload("new.pdf", PDF)
+    for folder in (first, second, request_id):
+        assert (tmp_path / "state" / "extractor" / folder).exists()
+
+
+def test_known_artifact_exposes_the_latest_extract(tmp_path: Path) -> None:
+    from src.analyst_console.server import ConsoleApplication
+
+    application = ConsoleApplication(tmp_path / "project", tmp_path / "state")
+    assert application.known_artifact("latest_extract") is None
+    folder = tmp_path / "project" / "outputs" / "extractor" / "0123456789abcdef"
+    folder.mkdir(parents=True)
+    (folder / "summary.json").write_text("{}", encoding="utf-8")
+    (folder / "a_observaciones.xlsx").write_bytes(b"xlsx")
+    assert application.known_artifact("latest_extract") == folder / "a_observaciones.xlsx"
+
+
 def test_latest_extract_prefers_the_newest_output(tmp_path: Path) -> None:
     assert latest_extract(tmp_path) is None
     folder = tmp_path / "outputs" / "extractor" / "0123456789abcdef"
@@ -222,9 +300,17 @@ def test_latest_extract_prefers_the_newest_output(tmp_path: Path) -> None:
     assert latest_extract(tmp_path) == newer
 
 
+_STATE_DIRS: dict[str, Path] = {}
+
+
+def state_dir_for(base: str) -> Path:
+    return _STATE_DIRS[base]
+
+
 @pytest.fixture
 def console_server(tmp_path: Path):
     server = create_server(project_root=ROOT, state_dir=tmp_path / "state", port=0)
+    _STATE_DIRS[f"http://127.0.0.1:{server.server_port}"] = tmp_path / "state"
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -309,7 +395,10 @@ def test_bridge_accepts_private_uploads_and_creates_extract_jobs(
     with urlopen(job_request, timeout=3) as response:
         assert response.status == 202
         assert json.load(response)["operation"] == "pdf_extract"
-    assert created == [("pdf_extract", {"request": upload["upload"]})]
+    assert len(created) == 1 and created[0][0] == "pdf_extract"
+    request_id = created[0][1]["request"]
+    assert request_id != upload["upload"]
+    assert (state_dir_for(console_server) / "extractor" / request_id / "request.json").is_file()
 
     rejected = Request(
         f"{console_server}/api/extractor/jobs",

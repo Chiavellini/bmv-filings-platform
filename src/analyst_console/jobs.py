@@ -32,6 +32,8 @@ class Job:
     message: str = "En espera"
     params: dict[str, Any] = field(default_factory=dict)
     artifacts: list[str] = field(default_factory=list)
+    summary: dict[str, Any] | None = None
+    detail: str | None = None
 
     def public(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -155,13 +157,19 @@ class JobManager:
                         text=True,
                         check=False,
                     )
-                artifacts = self._artifacts_for(job, before) if completed.returncode == 0 else []
+                succeeded = completed.returncode == 0
+                artifacts = self._artifacts_for(job, before) if succeeded else []
+                summary = self._summary_for(job) if succeeded else None
+                detail = None if succeeded else self._failure_detail(log_path)
                 with self._lock:
                     job.exit_code = completed.returncode
-                    job.status = "completed" if completed.returncode == 0 else "failed"
+                    job.status = "completed" if succeeded else "failed"
+                    job.summary = summary
+                    job.detail = detail
                     job.message = (
-                        "Listo para abrir" if completed.returncode == 0 and artifacts
-                        else "Completado" if completed.returncode == 0
+                        _summary_message(summary) or "Listo para abrir"
+                        if succeeded and artifacts
+                        else "Completado" if succeeded
                         else "Requiere atención"
                     )
                     job.artifacts = [str(path) for path in artifacts]
@@ -173,8 +181,34 @@ class JobManager:
                 with self._lock:
                     job.status = "failed"
                     job.message = f"No se pudo ejecutar: {type(exc).__name__}"
+                    job.detail = str(exc)[:200] or None
                     job.finished_at = _now()
                     self._write(job)
+
+    def _summary_for(self, job: Job) -> dict[str, Any] | None:
+        if job.operation != "pdf_extract":
+            return None
+        request = str(job.params.get("request") or "")
+        path = self.project_root / "outputs" / "extractor" / request / "summary.json"
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    @staticmethod
+    def _failure_detail(log_path: Path, max_chars: int = 200) -> str | None:
+        try:
+            lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return None
+        # Skip the two-line header the runner writes before the process output.
+        body = [line.strip() for line in lines[2:] if line.strip()]
+        if not body:
+            return None
+        errors = [line for line in body if line.startswith("ERROR:")]
+        chosen = errors[-1][len("ERROR:"):].strip() if errors else body[-1]
+        return chosen[:max_chars] or None
 
     def _artifact_snapshot(self) -> dict[Path, int]:
         result: dict[Path, int] = {}
@@ -237,6 +271,15 @@ class JobManager:
         if not path.is_file() or not any(path.is_relative_to(root) for root in allowed_roots):
             return None
         return path
+
+
+def _summary_message(summary: dict[str, Any] | None) -> str | None:
+    if not summary:
+        return None
+    found, requested = summary.get("found"), summary.get("requested")
+    if not isinstance(found, int) or not isinstance(requested, int):
+        return None
+    return f"{found} de {requested} métricas encontradas"
 
 
 class _NullLock:

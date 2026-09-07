@@ -64,13 +64,25 @@ metrics as observations:
    table reading on or off) and runs
    `scripts/extract_pdf_observations.py <request> --output-dir outputs/extractor/<id>`.
 
+Several PDFs can go into one request (up to 12), for example four quarters of
+the same issuer. Each file keeps its own period, inferred from the filename and
+editable in the file list; with more than one file every period must be present
+and distinct, because the shared pipeline collapses files that resolve to the
+same period. The request itself lives in its own private directory and only
+references the uploaded files.
+
 The script writes `<archivo>_observaciones.csv` (one row per metric per period
 with value, prior, unit, confidence, validation and source snippet) and/or
 `<archivo>_observaciones.xlsx` with an `Observaciones` sheet and a `Resumen`
-sheet listing every requested metric as found or not found. A run with no
-evidence still completes so the analyst can open the summary. The Tier-4 LLM
-fallback stays off unless the script is invoked with `--llm` and an
-`ANTHROPIC_API_KEY` is configured.
+sheet listing every requested metric as found or not found (with the number of
+periods covered when several files were processed). A `summary.json` next to
+them feeds the launchpad: the completion toast reports how many metrics were
+found and which ones lack evidence, the card shows *Extrayendo…* while a run is
+in progress, and *Abrir último resultado* reopens the newest output. When a job
+fails, the toast shows the last error line of its log. A run with no evidence
+still completes so the analyst can open the summary. The Tier-4 LLM fallback
+stays off unless the script is invoked with `--llm` and an `ANTHROPIC_API_KEY`
+is configured.
 
 ### Segments model requests
 

@@ -145,6 +145,30 @@ main { max-width: 1184px; margin: 0 auto; padding: 18px 28px 70px; }
 .quiet-action { padding: 11px 13px; border-radius: 10px; color: var(--muted); background: transparent; font-size: 12px; font-weight: 650; }
 .quiet-action:hover { color: var(--ink); background: rgba(11,24,48,.055); }
 .split-actions, .button-row { display: flex; align-items: center; gap: 8px; margin-top: 24px; }
+.module-list { margin-top: 22px; display: grid; gap: 10px; }
+.module-option { width: 100%; padding: 14px 15px; display: flex; align-items: center; justify-content: space-between; gap: 14px; text-align: left; border: 1px solid var(--line); border-radius: 14px; color: inherit; background: rgba(255,255,255,.62); cursor: pointer; transition: border-color .15s ease, background .15s ease, transform .1s ease; }
+.module-option:hover { border-color: rgba(41,120,255,.4); background: rgba(41,120,255,.06); transform: translateY(-1px); }
+.module-option:active { transform: translateY(0); }
+.module-option span { display: block; min-width: 0; }
+.module-option b { display: block; font-size: 14px; font-weight: 700; letter-spacing: -.01em; }
+.module-option small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.module-option i { flex: none; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; color: var(--white); background: var(--blue); font-style: normal; font-size: 16px; }
+.module-option:hover i { background: var(--blue-deep); }
+.module-option:disabled { cursor: not-allowed; opacity: .42; }
+.open-latest { align-self: flex-start; margin-top: 10px; padding: 8px 10px; color: var(--blue-deep); }
+.file-list { margin: 0 0 6px; padding: 0; list-style: none; display: grid; gap: 6px; }
+.file-list:empty { display: none; }
+.file-row { display: flex; align-items: center; gap: 12px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 11px; background: var(--white); }
+.file-row > span { flex: 1; min-width: 0; }
+.file-row b { display: block; overflow: hidden; font-size: 12px; font-weight: 650; white-space: nowrap; text-overflow: ellipsis; }
+.file-row small { display: block; color: var(--muted); font-size: 10px; }
+.file-row label { flex: none; margin: 0; display: flex; align-items: center; gap: 6px; font-size: 10px; }
+.file-row input { width: 108px; height: 34px; margin: 0; padding: 0 9px; font-size: 12px; text-transform: uppercase; }
+.file-row .file-remove { flex: none; width: 28px; height: 28px; border: 0; border-radius: 50%; color: var(--muted); background: rgba(11,24,48,.055); cursor: pointer; font-size: 16px; line-height: 1; }
+.file-row .file-remove:hover { color: #b24330; background: rgba(178,67,48,.1); }
+.field-note { margin: 16px 0; color: var(--muted); font-size: 11px; font-weight: 650; }
+.field-note b { display: block; color: var(--ink); }
+.field-note small { display: block; margin-top: 5px; font-weight: 450; line-height: 1.4; }
 .split-actions .primary-action { flex: 1; margin-top: 0; }
 .button-row .primary-action { flex: 1; }
 

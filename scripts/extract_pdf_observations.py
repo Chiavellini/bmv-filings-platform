@@ -27,7 +27,7 @@ if str(ROOT) not in sys.path:
 import yaml  # noqa: E402
 
 from src.model.financial_model import _N, load_config  # noqa: E402
-from src.shared.report_index import infer_period_label  # noqa: E402
+from src.shared.report_index import infer_period_label, period_sort_key  # noqa: E402
 
 
 LONG_COLUMNS = [
@@ -50,6 +50,7 @@ SPANISH_HEADERS = {
 LOW_CONFIDENCE = 0.5
 _KEY_RE = re.compile(r"[^a-z0-9]+")
 _LABEL_RE = re.compile(r"^20\d{2}-(?:[1-4]T|FY)$")
+_UPLOAD_RE = re.compile(r"^[0-9a-f]{16}$")
 
 
 class ExtractionError(RuntimeError):
@@ -120,34 +121,89 @@ def build_config(request: dict, *, read_tables: bool) -> tuple[dict, list[str]]:
     return config, custom_keys
 
 
-def period_label(request: dict) -> str:
-    override = str(request.get("period") or "").strip().upper()
+def _label_for(filename: str, override: str, *, allow_fallback: bool) -> str:
+    override = str(override or "").strip().upper()
     if override:
         if not _LABEL_RE.fullmatch(override):
             raise ExtractionError(f"Periodo no válido: {override}")
         return override
-    filename = str(request.get("filename") or "documento.pdf")
     guessed = infer_period_label(Path(filename).stem)
     if guessed:
         return guessed
-    fallback = slug_key(Path(filename).stem)
-    return fallback or "documento"
+    if not allow_fallback:
+        raise ExtractionError(f"No se detectó el periodo de {filename}; escríbelo (ej. 2025-2T).")
+    return slug_key(Path(filename).stem) or "documento"
+
+
+def request_sources(request_dir: Path, request: dict) -> list[dict]:
+    """Return ``[{path, filename, label}]`` for every PDF in the request."""
+    raw = request.get("sources")
+    if isinstance(raw, list) and raw:
+        root = request_dir.parent.resolve()
+        sources = []
+        for entry in raw:
+            if not isinstance(entry, dict):
+                raise ExtractionError("request.json está dañado.")
+            upload = str(entry.get("upload") or "")
+            filename = str(entry.get("filename") or "documento.pdf")
+            if not _UPLOAD_RE.fullmatch(upload):
+                raise ExtractionError("request.json está dañado.")
+            path = (root / upload / "source.pdf").resolve()
+            if not path.is_relative_to(root) or not path.is_file():
+                raise ExtractionError(f"El PDF de {filename} ya no está disponible.")
+            sources.append({"path": path, "filename": filename, "period": entry.get("period")})
+    else:
+        path = request_dir / "source.pdf"
+        if not path.is_file():
+            raise ExtractionError("No se encontró el PDF de la solicitud.")
+        sources = [{
+            "path": path,
+            "filename": str(request.get("filename") or "documento.pdf"),
+            "period": request.get("period"),
+        }]
+    single = len(sources) == 1
+    labels: dict[str, str] = {}
+    for source in sources:
+        label = _label_for(source["filename"], source["period"] or "", allow_fallback=single)
+        if label in labels:
+            raise ExtractionError(
+                f"{labels[label]} y {source['filename']} apuntan al mismo periodo ({label})."
+            )
+        labels[label] = source["filename"]
+        source["label"] = label
+    return sources
+
+
+def period_label(request: dict) -> str:
+    """Period label of a single-source request (kept for compatibility)."""
+    filename = str(request.get("filename") or "documento.pdf")
+    return _label_for(filename, request.get("period") or "", allow_fallback=True)
+
+
+def materialize_work_pdfs(request_dir: Path, sources: list[dict]) -> list[Path]:
+    work = request_dir / "work"
+    work.mkdir(exist_ok=True)
+    for stale in work.glob("*.pdf"):
+        stale.unlink()
+    targets = []
+    for source in sources:
+        target = work / f"{source['label']}.pdf"
+        try:
+            os.link(source["path"], target)
+        except OSError:
+            shutil.copyfile(source["path"], target)
+        targets.append(target)
+    return targets
 
 
 def materialize_work_pdf(request_dir: Path, label: str) -> Path:
+    """Single-source helper kept for compatibility with older callers."""
     source = request_dir / "source.pdf"
     if not source.is_file():
         raise ExtractionError("No se encontró el PDF de la solicitud.")
-    work = request_dir / "work"
-    work.mkdir(exist_ok=True)
-    target = work / f"{label}.pdf"
-    if target.exists():
-        target.unlink()
-    try:
-        os.link(source, target)
-    except OSError:
-        shutil.copyfile(source, target)
-    return target
+    return materialize_work_pdfs(
+        request_dir, [{"path": source, "filename": source.name, "label": label}]
+    )[0]
 
 
 # ---------------------------------------------------------------------------
@@ -238,6 +294,13 @@ def write_xlsx(path: Path, rows: list[dict], requested: list[dict], info: dict) 
     header_rows = [
         ("Archivo", info.get("filename")),
         ("Periodo", info.get("period")),
+    ]
+    if info.get("multi"):
+        header_rows = [
+            ("Archivos", ", ".join(info.get("sources") or [])),
+            ("Periodos", ", ".join(info.get("periods") or [])),
+        ]
+    header_rows += [
         ("Empresa", info.get("company") or "Genérica"),
         ("Generado", info.get("generated_at")),
         ("Métricas solicitadas", len(requested)),
@@ -255,7 +318,7 @@ def write_xlsx(path: Path, rows: list[dict], requested: list[dict], info: dict) 
             item["key"],
             item["label"],
             item["origin"],
-            "Encontrada" if item["found"] else "No encontrada",
+            item.get("state") or ("Encontrada" if item["found"] else "No encontrada"),
             item.get("value"),
             item.get("period"),
             item.get("confidence"),
@@ -274,39 +337,53 @@ def write_xlsx(path: Path, rows: list[dict], requested: list[dict], info: dict) 
 
 
 def summarize_requested(
-    request: dict, custom_keys: list[str], rows: list[dict], label_lookup: dict[str, str],
+    request: dict,
+    custom_keys: list[str],
+    rows: list[dict],
+    label_lookup: dict[str, str],
+    periods: list[str] | None = None,
 ) -> list[dict]:
     by_key: dict[str, dict] = {}
+    periods_by_key: dict[str, set[str]] = {}
     for row in rows:
         key = str(row.get("metric"))
+        if row.get("current") is None:
+            continue
+        periods_by_key.setdefault(key, set()).add(str(row.get("period")))
         previous = by_key.get(key)
-        if previous is None or (row.get("confidence") or 0) > (previous.get("confidence") or 0):
+        if previous is None or period_sort_key(str(row.get("period"))) >= period_sort_key(
+            str(previous.get("period"))
+        ):
             by_key[key] = row
-    requested = []
-    for key in request.get("metrics") or []:
+    total_periods = len(periods or [])
+
+    def item(key: str, label: str, origin: str) -> dict:
         found = by_key.get(key)
-        requested.append({
+        hits = len(periods_by_key.get(key, ()))
+        return {
             "key": key,
-            "label": label_lookup.get(key, key),
-            "origin": "catálogo",
+            "label": label,
+            "origin": origin,
             "found": found is not None,
+            "periods_found": hits,
+            "state": (
+                "No encontrada" if found is None
+                else f"Encontrada ({hits}/{total_periods} periodos)" if total_periods > 1
+                else "Encontrada"
+            ),
             "value": found.get("current") if found else None,
             "period": found.get("period") if found else None,
             "confidence": found.get("confidence") if found else None,
             "unit": found.get("unit") if found else None,
-        })
-    for key, text in zip(custom_keys, request.get("custom_metrics") or []):
-        found = by_key.get(key)
-        requested.append({
-            "key": key,
-            "label": str(text),
-            "origin": "adicional",
-            "found": found is not None,
-            "value": found.get("current") if found else None,
-            "period": found.get("period") if found else None,
-            "confidence": found.get("confidence") if found else None,
-            "unit": found.get("unit") if found else None,
-        })
+        }
+
+    requested = [
+        item(key, label_lookup.get(key, key), "catálogo") for key in request.get("metrics") or []
+    ]
+    requested += [
+        item(key, str(text), "adicional")
+        for key, text in zip(custom_keys, request.get("custom_metrics") or [])
+    ]
     return requested
 
 
@@ -354,8 +431,11 @@ def run_request(
         raise ExtractionError(f"Formato no válido: {output_format}")
     tables = bool(request.get("read_tables", True)) if read_tables is None else read_tables
 
-    label = period_label(request)
-    work_pdf = materialize_work_pdf(request_dir, label)
+    sources = request_sources(request_dir, request)
+    work_pdfs = materialize_work_pdfs(request_dir, sources)
+    periods = [source["label"] for source in sources]
+    label = periods[0]
+    source_arg = work_pdfs[0] if len(work_pdfs) == 1 else request_dir / "work"
     config, custom_keys = build_config(request, read_tables=tables)
     config_path = request_dir / "extractor.yaml"
     config_path.write_text(
@@ -369,7 +449,7 @@ def run_request(
     long_csv.unlink(missing_ok=True)
     try:
         run_pipeline(
-            work_pdf,
+            source_arg,
             metrics=metric_keys,
             config=config_path,
             output_csv=long_csv,
@@ -383,11 +463,15 @@ def run_request(
     rows = load_long_rows(long_csv)
     rows.sort(key=lambda row: (str(row.get("period")), str(row.get("metric"))))
     requested = summarize_requested(
-        request, custom_keys, rows, _catalog_labels(str(request.get("config_slug") or "")),
+        request, custom_keys, rows,
+        _catalog_labels(str(request.get("config_slug") or "")),
+        periods,
     )
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    stem = slug_key(Path(str(request.get("filename") or "documento.pdf")).stem) or "documento"
+    stem = slug_key(Path(sources[0]["filename"]).stem) or "documento"
+    if len(sources) > 1:
+        stem = f"{stem}_y_{len(sources) - 1}_mas"
     written: list[Path] = []
     if output_format in {"both", "csv"}:
         csv_path = output_dir / f"{stem}_observaciones.csv"
@@ -400,22 +484,34 @@ def run_request(
             rows,
             requested,
             {
-                "filename": request.get("filename"),
+                "filename": sources[0]["filename"],
                 "period": label,
+                "multi": len(sources) > 1,
+                "sources": [source["filename"] for source in sources],
+                "periods": periods,
                 "company": request.get("company"),
                 "generated_at": _now(),
             },
         )
         written.append(xlsx_path)
 
-    return {
+    summary = {
         "period": label,
+        "periods": periods,
+        "sources": [source["filename"] for source in sources],
         "observations": len(rows),
         "requested": len(requested),
         "found": sum(1 for item in requested if item["found"]),
-        "missing": [item["key"] for item in requested if not item["found"]],
+        "missing": [
+            {"key": item["key"], "label": item["label"]} for item in requested if not item["found"]
+        ],
         "outputs": [str(path) for path in written],
+        "generated_at": _now(),
     }
+    (output_dir / "summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    return summary
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -442,7 +538,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Observaciones: {summary['observations']}")
     print(f"Métricas encontradas: {summary['found']} de {summary['requested']}")
     if summary["missing"]:
-        print("Sin evidencia: " + ", ".join(summary["missing"]))
+        print("Sin evidencia: " + ", ".join(item["key"] for item in summary["missing"]))
     for path in summary["outputs"]:
         print(f"Saved → {path}")
     return 0
