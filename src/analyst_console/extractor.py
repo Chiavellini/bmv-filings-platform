@@ -15,6 +15,7 @@ from .segments import metric_catalog
 
 
 MAX_UPLOAD_BYTES = 60 * 1024 * 1024
+MAX_SOURCES = 12
 MAX_METRICS = 200
 MAX_CUSTOM_METRICS = 40
 MAX_CUSTOM_LENGTH = 80
@@ -97,7 +98,7 @@ class ExtractorRequestStore:
             try:
                 if not folder.is_dir() or not _REQUEST_RE.fullmatch(folder.name):
                     continue
-                if (folder / "request.json").exists():
+                if (folder / "request.json").exists() or (folder / "claimed_by.json").exists():
                     continue
                 if folder.stat().st_mtime > cutoff:
                     continue
@@ -147,12 +148,61 @@ class ExtractorRequestStore:
 
     # -- requests ----------------------------------------------------------
 
-    def prepare(self, payload: dict[str, Any]) -> str:
-        folder = self._upload_dir(payload.get("upload"))
+    @staticmethod
+    def _upload_metadata(folder: Path) -> dict[str, Any]:
         try:
-            upload = json.loads((folder / "upload.json").read_text(encoding="utf-8"))
+            metadata = json.loads((folder / "upload.json").read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            upload = {}
+            return {}
+        return metadata if isinstance(metadata, dict) else {}
+
+    def _sources(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        raw = payload.get("uploads")
+        if raw is None:
+            raw = [{"upload": payload.get("upload"), "period": payload.get("period")}]
+        if not isinstance(raw, list) or not raw:
+            raise OperationError("Primero sube un PDF.")
+        if len(raw) > MAX_SOURCES:
+            raise OperationError(f"Sube como máximo {MAX_SOURCES} archivos por solicitud.")
+        sources: list[dict[str, Any]] = []
+        for entry in raw:
+            if not isinstance(entry, dict):
+                raise OperationError("La lista de archivos no es válida.")
+            folder = self._upload_dir(entry.get("upload"))
+            if any(source["upload"] == folder.name for source in sources):
+                raise OperationError("Hay un archivo repetido en la solicitud.")
+            upload = self._upload_metadata(folder)
+            filename = str(upload.get("filename") or "documento.pdf")
+            period = str(entry.get("period") or "").strip().upper()
+            if period and not _PERIOD_RE.fullmatch(period):
+                raise OperationError(
+                    f"El periodo de {filename} debe tener el formato 2025-2T o 2025-FY."
+                )
+            sources.append({
+                "upload": folder.name,
+                "filename": filename,
+                "period": period or str(upload.get("period_guess") or ""),
+                "period_guess": upload.get("period_guess"),
+                "folder": folder,
+            })
+        if len(sources) > 1:
+            seen: dict[str, str] = {}
+            for source in sources:
+                if not source["period"]:
+                    raise OperationError(
+                        f"No se detectó el periodo de {source['filename']}; escríbelo (ej. 2025-2T)."
+                    )
+                previous = seen.get(source["period"])
+                if previous:
+                    raise OperationError(
+                        f"{previous} y {source['filename']} apuntan al mismo periodo "
+                        f"({source['period']}); asigna periodos distintos."
+                    )
+                seen[source["period"]] = source["filename"]
+        return sources
+
+    def prepare(self, payload: dict[str, Any]) -> str:
+        sources = self._sources(payload)
 
         company = str(payload.get("company") or "").strip()
         config_slug = ""
@@ -189,8 +239,12 @@ class ExtractorRequestStore:
             raise OperationError("Elige al menos una métrica o escribe una adicional.")
 
         period = str(payload.get("period") or "").strip().upper()
-        if period and not _PERIOD_RE.fullmatch(period):
-            raise OperationError("El periodo debe tener el formato 2025-2T o 2025-FY.")
+        if len(sources) == 1 and not payload.get("uploads"):
+            if period and not _PERIOD_RE.fullmatch(period):
+                raise OperationError("El periodo debe tener el formato 2025-2T o 2025-FY.")
+            sources[0]["period"] = period or str(sources[0]["period_guess"] or "")
+        else:
+            period = sources[0]["period"]
 
         output_format = str(payload.get("format") or "both").strip().lower()
         if output_format not in FORMATS:
@@ -200,23 +254,34 @@ class ExtractorRequestStore:
         if not isinstance(read_tables, bool):
             raise OperationError("La opción de tablas no es válida.")
 
+        request_id = uuid.uuid4().hex[:16]
+        request_dir = self.root / request_id
+        request_dir.mkdir(mode=0o700)
+        first = sources[0]
         request = {
-            "upload": folder.name,
-            "filename": str(upload.get("filename") or "documento.pdf"),
+            "sources": [
+                {"upload": source["upload"], "filename": source["filename"], "period": source["period"]}
+                for source in sources
+            ],
+            "upload": first["upload"],
+            "filename": first["filename"],
+            "period": first["period"] if len(sources) > 1 else period,
+            "period_guess": first["period_guess"],
             "company": company,
             "config_slug": config_slug,
             "metrics": metrics,
             "custom_metrics": custom,
-            "period": period,
-            "period_guess": upload.get("period_guess"),
             "format": output_format,
             "read_tables": read_tables,
             "created_at": _now(),
         }
-        (folder / "request.json").write_text(
+        (request_dir / "request.json").write_text(
             json.dumps(request, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
-        return folder.name
+        claim = json.dumps({"request": request_id, "claimed_at": _now()}) + "\n"
+        for source in sources:
+            (source["folder"] / "claimed_by.json").write_text(claim, encoding="utf-8")
+        return request_id
 
 
 def resolve_extractor_request(state_dir: Path, request_id: str) -> tuple[Path, dict[str, Any]]:
@@ -226,9 +291,8 @@ def resolve_extractor_request(state_dir: Path, request_id: str) -> tuple[Path, d
     request_dir = (root / request_id).resolve()
     if not request_dir.is_relative_to(root):
         raise OperationError("La solicitud del Extractor no es válida.")
-    source = request_dir / "source.pdf"
     metadata_path = request_dir / "request.json"
-    if not source.is_file() or not metadata_path.is_file():
+    if not metadata_path.is_file():
         raise OperationError("La solicitud del Extractor ya no está disponible.")
     try:
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -236,6 +300,18 @@ def resolve_extractor_request(state_dir: Path, request_id: str) -> tuple[Path, d
         raise OperationError("La solicitud del Extractor está dañada.") from exc
     if not isinstance(metadata, dict):
         raise OperationError("La solicitud del Extractor está dañada.")
+    sources = metadata.get("sources")
+    if isinstance(sources, list) and sources:
+        for source in sources:
+            upload_id = str((source or {}).get("upload") or "") if isinstance(source, dict) else ""
+            if not _REQUEST_RE.fullmatch(upload_id):
+                raise OperationError("La solicitud del Extractor está dañada.")
+            if not (root / upload_id / "source.pdf").is_file():
+                raise OperationError(
+                    "Uno de los PDF de la solicitud ya no está disponible. Súbelo de nuevo."
+                )
+    elif not (request_dir / "source.pdf").is_file():
+        raise OperationError("La solicitud del Extractor ya no está disponible.")
     return request_dir, metadata
 
 

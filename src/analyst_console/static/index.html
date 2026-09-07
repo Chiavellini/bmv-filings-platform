@@ -12,8 +12,8 @@
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./icon-512.png">
-  <link rel="stylesheet" href="./app.css?v=11">
-  <script src="./app.js?v=11" defer></script>
+  <link rel="stylesheet" href="./app.css?v=12">
+  <script src="./app.js?v=12" defer></script>
 </head>
 <body>
   <div class="ambient ambient-one" aria-hidden="true"></div>
@@ -76,6 +76,7 @@
             <i aria-hidden="true">→</i>
           </button>
         </div>
+        <button class="quiet-action open-latest" id="open-latest-extract" data-open="latest_extract" type="button" hidden>Abrir último resultado ↗</button>
       </article>
 
       <article class="launch-card wide-card" data-node="soft">
@@ -168,19 +169,17 @@
       </header>
       <div class="model-body">
         <div class="request-basics extractor-basics">
-          <label class="file-field">Archivo PDF
-            <input id="extractor-file" type="file" accept="application/pdf,.pdf">
-            <small id="extractor-file-status">Ningún archivo seleccionado.</small>
+          <label class="file-field">Archivos PDF
+            <input id="extractor-file" type="file" accept="application/pdf,.pdf" multiple>
+            <small id="extractor-file-status" role="status" aria-live="polite">Ningún archivo seleccionado. Puedes subir varios trimestres a la vez.</small>
           </label>
+          <ul id="extractor-files" class="file-list" aria-label="Archivos subidos"></ul>
           <div class="field-grid">
             <label>Empresa (opcional)
               <select id="extractor-company"><option value="">Genérica · sin configuración de empresa</option></select>
               <small>Agrega las métricas certificadas y los patrones de esa empresa.</small>
             </label>
-            <label>Periodo (opcional)
-              <input id="extractor-period" type="text" autocomplete="off" spellcheck="false" placeholder="Ej. 2025-2T o 2025-FY">
-              <small>Se detecta del nombre del archivo; corrígelo si hace falta.</small>
-            </label>
+            <div class="field-note"><b>Periodo por archivo</b><small>Se detecta del nombre (ej. Reporte_2T25.pdf → 2025-2T). Corrígelo en la lista si hace falta; con varios archivos cada uno necesita un periodo distinto.</small></div>
           </div>
           <div class="field-grid">
             <fieldset class="radio-row">

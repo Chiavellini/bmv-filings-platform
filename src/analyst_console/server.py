@@ -512,6 +512,8 @@ class ConsoleApplication:
             ]
         elif target == "latest_model":
             paths = list((self.project_root / "outputs" / "latest").glob("*.xlsx"))
+        elif target == "latest_extract":
+            return latest_extract(self.project_root)
         else:
             return None
         return _latest(paths)

@@ -5,7 +5,7 @@ const state = {
   pendingConfirmation: null,
   poll: null,
   segmentSetup: null,
-  extractor: { setup: null, upload: null },
+  extractor: { setup: null, uploads: [] },
 };
 const MAX_UPLOAD_BYTES = 60 * 1024 * 1024;
 
@@ -215,12 +215,29 @@ function customMetricLines() {
 
 function updateExtractorSummary() {
   const count = extractorPicker.selected.size + customMetricLines().length;
-  const upload = state.extractor.upload;
-  $("#extractor-summary").textContent = !upload
+  const uploads = state.extractor.uploads;
+  $("#extractor-summary").textContent = !uploads.length
     ? "Sube un PDF para continuar"
     : count
-      ? `${count} métrica${count === 1 ? "" : "s"} · ${upload.filename}`
+      ? `${count} métrica${count === 1 ? "" : "s"} · ${uploads.length === 1 ? uploads[0].filename : `${uploads.length} archivos`}`
       : "Elige al menos una métrica";
+}
+
+function renderExtractorFiles() {
+  const list = $("#extractor-files");
+  list.innerHTML = state.extractor.uploads.map((item, index) => `
+    <li class="file-row" data-index="${index}">
+      <span><b>${escapeHtml(item.filename)}</b><small>${escapeHtml(formatSize(item.size))}${item.period_guess ? ` · periodo detectado ${escapeHtml(item.period_guess)}` : " · sin periodo detectado"}</small></span>
+      <label>Periodo<input type="text" class="file-period" value="${escapeHtml(item.period)}" placeholder="2025-2T" autocomplete="off" spellcheck="false" aria-label="Periodo de ${escapeHtml(item.filename)}"></label>
+      <button class="file-remove" type="button" aria-label="Quitar ${escapeHtml(item.filename)}">×</button>
+    </li>
+  `).join("");
+  const status = $("#extractor-file-status");
+  const total = state.extractor.uploads.length;
+  if (total) {
+    status.textContent = `${total} archivo${total === 1 ? "" : "s"} listo${total === 1 ? "" : "s"}. Puedes agregar más.`;
+  }
+  updateExtractorSummary();
 }
 
 function extractorCompanies() {
@@ -251,70 +268,88 @@ async function loadExtractorSetup(company = "") {
   }
 }
 
-function resetExtractorUpload(statusText = "Ningún archivo seleccionado.") {
-  state.extractor.upload = null;
+function resetExtractorUpload(statusText = "Ningún archivo seleccionado. Puedes subir varios trimestres a la vez.") {
+  state.extractor.uploads = [];
   $("#extractor-file").value = "";
   $("#extractor-file-status").textContent = statusText;
-  $("#extractor-period").value = "";
-  updateExtractorSummary();
+  renderExtractorFiles();
 }
 
 async function uploadExtractorFile(file) {
-  if (!file) {
-    resetExtractorUpload();
-    return;
-  }
+  const status = $("#extractor-file-status");
   const isPdf = /\.pdf$/i.test(file.name) || file.type === "application/pdf";
   if (!isPdf) {
-    resetExtractorUpload("Elige un archivo PDF.");
-    toast("Elige un archivo PDF.", true);
-    return;
+    toast(`${file.name}: elige un archivo PDF.`, true);
+    return false;
   }
   if (file.size > MAX_UPLOAD_BYTES) {
-    resetExtractorUpload("El PDF supera el límite de 60 MB.");
-    toast("El PDF supera el límite de 60 MB.", true);
-    return;
+    toast(`${file.name}: supera el límite de 60 MB.`, true);
+    return false;
   }
-  const status = $("#extractor-file-status");
-  const generate = $("#generate-extract");
-  state.extractor.upload = null;
+  if (state.extractor.uploads.some(item => item.name === file.name && item.size === file.size)) {
+    return true;
+  }
   status.textContent = `Subiendo ${file.name} (${formatSize(file.size)})…`;
-  generate.disabled = true;
-  updateExtractorSummary();
   try {
     const payload = await api(`/api/extractor/upload?filename=${encodeURIComponent(file.name)}`, {
       method: "POST",
       headers: { "Content-Type": "application/pdf" },
       body: file,
     });
-    state.extractor.upload = payload;
-    $("#extractor-period").value = payload.period_guess || "";
-    status.textContent = `${payload.filename} · ${formatSize(payload.size)} · ${
-      payload.period_guess ? `periodo detectado ${payload.period_guess}` : "escribe el periodo si lo conoces"
-    }`;
+    state.extractor.uploads.push({ ...payload, name: file.name, period: payload.period_guess || "" });
+    return true;
   } catch (error) {
-    resetExtractorUpload("No se pudo subir el archivo.");
-    toast(error.message, true);
+    toast(`${file.name}: ${error.message}`, true);
+    return false;
+  }
+}
+
+async function uploadExtractorFiles(files) {
+  if (!files.length) return;
+  const generate = $("#generate-extract");
+  generate.disabled = true;
+  try {
+    for (const file of files) await uploadExtractorFile(file);
   } finally {
     generate.disabled = false;
-    updateExtractorSummary();
+    $("#extractor-file").value = "";
+    renderExtractorFiles();
+    if (!state.extractor.uploads.length) {
+      $("#extractor-file-status").textContent = "Ningún archivo seleccionado. Puedes subir varios trimestres a la vez.";
+    }
   }
 }
 
 function collectExtractorRequest() {
   return {
-    upload: state.extractor.upload?.upload || "",
+    uploads: state.extractor.uploads.map(item => ({
+      upload: item.upload,
+      period: (item.period || "").trim().toUpperCase(),
+    })),
     company: $("#extractor-company").value,
     metrics: [...extractorPicker.selected],
     custom_metrics: customMetricLines(),
-    period: $("#extractor-period").value.trim().toUpperCase(),
     format: $('input[name="extractor-format"]:checked')?.value || "both",
     read_tables: $("#extractor-tables").checked,
   };
 }
 
+function extractorResultToast(job, opened) {
+  const summary = job.summary;
+  if (!summary || typeof summary.found !== "number") {
+    return { text: opened ? "Observaciones extraídas y abiertas." : `${job.label}: ${job.message.toLocaleLowerCase("es-MX")}.`, error: false };
+  }
+  const parts = [`${summary.found} de ${summary.requested} métrica${summary.requested === 1 ? "" : "s"} encontrada${summary.found === 1 ? "" : "s"}`];
+  const missing = (summary.missing || []).map(item => item.label || item.key);
+  if (missing.length) {
+    parts.push(`sin evidencia: ${missing.slice(0, 4).join(", ")}${missing.length > 4 ? "…" : ""}`);
+  }
+  if (opened) parts.push("abierto en Excel");
+  return { text: parts.join(" · ") + ".", error: summary.found === 0 };
+}
+
 async function launchExtractorJob() {
-  if (!state.extractor.upload) {
+  if (!state.extractor.uploads.length) {
     toast("Primero sube un PDF.", true);
     return null;
   }
@@ -363,13 +398,20 @@ function renderBootstrap(payload) {
   status($("#estate-status"), payload.estate.connected ? "Conectado" : "Desconectado", payload.estate.connected ? "ready" : "warning");
   status($("#soft-status"), payload.nodes.soft.core_available ? (payload.nodes.soft.updated || "Disponible") : "Falta generar", payload.nodes.soft.core_available ? "ready" : "warning");
   const models = payload.nodes.models;
-  status(
-    $("#models-status"),
-    models.extractor_latest_available
-      ? `Último extracto ${models.extractor_updated}`
-      : models.latest_available ? `Última hoja ${models.updated}` : "Listo",
-    "ready",
-  );
+  const busy = (payload.jobs || []).find(job =>
+    ["queued", "running"].includes(job.status) && ["pdf_extract", "segments_model"].includes(job.operation));
+  if (busy) {
+    status($("#models-status"), busy.operation === "pdf_extract" ? "Extrayendo…" : "Generando hoja…", "running");
+  } else {
+    status(
+      $("#models-status"),
+      models.extractor_latest_available
+        ? `Último extracto ${models.extractor_updated}`
+        : models.latest_available ? `Última hoja ${models.updated}` : "Listo",
+      "ready",
+    );
+  }
+  $("#open-latest-extract").hidden = !models.extractor_latest_available;
   const estateToggle = $("#estate-toggle");
   estateToggle.dataset.mode = payload.estate.connected ? "disconnect" : "connect";
   estateToggle.textContent = payload.estate.connected ? "Desconectar y expulsar" : "Conectar Estate";
@@ -446,17 +488,26 @@ function ensurePolling(watchedJobId = null, openResult = false) {
       clearInterval(state.poll);
       if (watched.status === "completed") {
         if (openResult && watched.has_artifact) {
+          let opened = false;
           try {
             await api(`/api/jobs/${watched.id}/open`, { method: "POST", body: "{}" });
-            toast(watched.operation === "pdf_extract"
-              ? "Observaciones extraídas y abiertas."
-              : "Hoja de segmentos terminada y abierta en Excel.");
+            opened = true;
           } catch (error) { toast(error.message, true); }
+          if (watched.operation === "pdf_extract") {
+            const result = extractorResultToast(watched, opened);
+            toast(result.text, result.error);
+          } else if (opened) {
+            toast("Hoja de segmentos terminada y abierta en Excel.");
+          }
+        } else if (watched.operation === "pdf_extract") {
+          const result = extractorResultToast(watched, false);
+          toast(result.text, result.error);
         } else {
           toast(`${watched.label}: ${watched.message.toLocaleLowerCase("es-MX")}.`);
         }
       } else {
-        toast(`${watched.label}: ${watched.message.toLocaleLowerCase("es-MX")}.`, true);
+        const reason = watched.detail || watched.message.toLocaleLowerCase("es-MX");
+        toast(`${watched.label}: ${reason}${/[.!?]$/.test(reason) ? "" : "."}`, true);
       }
       return;
     }
@@ -598,7 +649,23 @@ $("#model-form").addEventListener("submit", async event => {
 });
 
 bindMetricPicker(extractorPicker);
-$("#extractor-file").addEventListener("change", event => uploadExtractorFile(event.target.files?.[0] || null));
+$("#extractor-file").addEventListener("change", event => uploadExtractorFiles([...(event.target.files || [])]));
+$("#extractor-files").addEventListener("input", event => {
+  if (!event.target.matches(".file-period")) return;
+  const row = event.target.closest(".file-row");
+  const item = state.extractor.uploads[Number(row?.dataset.index)];
+  if (item) item.period = event.target.value;
+});
+$("#extractor-files").addEventListener("click", event => {
+  const remove = event.target.closest(".file-remove");
+  if (!remove) return;
+  const row = remove.closest(".file-row");
+  state.extractor.uploads.splice(Number(row.dataset.index), 1);
+  renderExtractorFiles();
+  if (!state.extractor.uploads.length) {
+    $("#extractor-file-status").textContent = "Ningún archivo seleccionado. Puedes subir varios trimestres a la vez.";
+  }
+});
 $("#extractor-company").addEventListener("change", event => loadExtractorSetup(event.target.value));
 $("#extractor-custom").addEventListener("input", updateExtractorSummary);
 $("#extractor-form").addEventListener("submit", async event => {
