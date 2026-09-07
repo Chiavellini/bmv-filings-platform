@@ -21,6 +21,7 @@ from urllib.parse import parse_qs, urlparse
 from estate_bridge import BRIDGE_ENV, ESTATE_ROOT_ENV, REPORTS_VIEW_ENV, load_estate_bridge
 from estate_volume import ESTATE_ID_ENV, inspect_estate_environment, read_estate_id
 
+from .extractor import MAX_UPLOAD_BYTES, ExtractorRequestStore, latest_extract
 from .jobs import JobManager
 from .operations import (
     OPERATIONS,
@@ -140,6 +141,10 @@ def _relative_time(path: Path | None) -> str | None:
     if seconds < 86400:
         return f"hace {seconds // 3600} h"
     return f"hace {seconds // 86400} d"
+
+
+class UploadTooLarge(OperationError):
+    """The declared upload size exceeds the launchpad limit."""
 
 
 class AlphaLauncher:
@@ -426,6 +431,7 @@ class ConsoleApplication:
         self.environment["ANALYST_CONSOLE_STATE_DIR"] = str(self.state_dir)
         self.jobs = JobManager(self.project_root, self.state_dir, self.environment)
         self.segments = SegmentRequestStore(self.project_root, self.state_dir)
+        self.extractor = ExtractorRequestStore(self.project_root, self.state_dir)
         self.alpha = AlphaLauncher(self.project_root, self.state_dir, self.environment)
         self.estate = EstateDevice(
             self.project_root,
@@ -470,6 +476,7 @@ class ConsoleApplication:
         core = self.project_root / "soft" / "outputs" / "_master" / "soft_coverage_master.html"
         dense = self.project_root / "soft" / "outputs" / "_master" / "soft_coverage_dense.html"
         segment = _latest(list((self.project_root / "outputs" / "latest").glob("*.xlsx")))
+        extract = latest_extract(self.project_root)
         active = sum(job["status"] in {"queued", "running"} for job in self.jobs.list(100))
         return {
             "estate": estate,
@@ -483,6 +490,8 @@ class ConsoleApplication:
                 "models": {
                     "latest_available": segment is not None,
                     "updated": _relative_time(segment),
+                    "extractor_latest_available": extract is not None,
+                    "extractor_updated": _relative_time(extract),
                 },
             },
             "companies": company_catalog(self.project_root),
@@ -567,6 +576,25 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             raise OperationError("La solicitud debe contener un objeto.")
         return payload
 
+    def _raw_body(self, max_bytes: int) -> bytes:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError as exc:
+            raise OperationError("La longitud de la solicitud no es válida.") from exc
+        if length <= 0:
+            raise OperationError("El archivo está vacío.")
+        if length > max_bytes:
+            raise UploadTooLarge("El PDF supera el límite de 60 MB.")
+        chunks: list[bytes] = []
+        remaining = length
+        while remaining > 0:
+            chunk = self.rfile.read(min(remaining, 1_048_576))
+            if not chunk:
+                raise OperationError("La transferencia del archivo se interrumpió.")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return b"".join(chunks)
+
     def _allowed_origins(self) -> set[str]:
         configured = str(
             self.server.application.environment.get(
@@ -649,7 +677,22 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             return
         route = urlparse(self.path)
         try:
+            if route.path == "/api/extractor/upload":
+                filename = parse_qs(route.query).get("filename", [""])[0]
+                data = self._raw_body(MAX_UPLOAD_BYTES)
+                self._json(
+                    self.server.application.extractor.save_upload(filename, data),
+                    HTTPStatus.CREATED,
+                )
+                return
             body = self._body()
+            if route.path == "/api/extractor/jobs":
+                request_id = self.server.application.extractor.prepare(body)
+                job = self.server.application.jobs.create(
+                    "pdf_extract", {"request": request_id}
+                )
+                self._json(job, HTTPStatus.ACCEPTED)
+                return
             if route.path == "/api/jobs":
                 operation_key = str(body.get("operation") or "")
                 if operation_key == "estate_refresh_all":
@@ -698,6 +741,8 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                 self._json({"opened": True})
                 return
             self._error("No se encontró la ruta.", HTTPStatus.NOT_FOUND)
+        except UploadTooLarge as exc:
+            self._error(str(exc), HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
         except OperationError as exc:
             self._error(str(exc))
         except Exception as exc:  # noqa: BLE001 - keep the local UI usable on unexpected failures

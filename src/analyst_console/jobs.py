@@ -182,7 +182,7 @@ class JobManager:
             if not base.is_dir():
                 continue
             for path in base.rglob("*"):
-                if path.is_file() and path.suffix.lower() in {".xlsx", ".html", ".md", ".json"}:
+                if path.is_file() and path.suffix.lower() in {".xlsx", ".csv", ".html", ".md", ".json"}:
                     try:
                         result[path.resolve()] = path.stat().st_mtime_ns
                     except OSError:
@@ -195,6 +195,12 @@ class JobManager:
             candidates = list((self.project_root / "soft" / "outputs").glob("*/excel/*.xlsx"))
         elif job.operation == "segments_model":
             candidates = list((self.project_root / "outputs" / "latest").glob("*.xlsx"))
+        elif job.operation == "pdf_extract":
+            folder = (
+                self.project_root / "outputs" / "extractor"
+                / str(job.params.get("request") or "")
+            )
+            candidates = sorted(folder.glob("*.xlsx")) + sorted(folder.glob("*.csv"))
         elif job.operation == "soft_master":
             candidates = [
                 self.project_root / "soft" / "outputs" / "_master" / "soft_coverage_master.html",
@@ -213,6 +219,7 @@ class JobManager:
             if before.get(resolved) != mtime or job.operation in {
                 "soft_model",
                 "segments_model",
+                "pdf_extract",
                 "soft_master",
             }:
                 changed.append(resolved)

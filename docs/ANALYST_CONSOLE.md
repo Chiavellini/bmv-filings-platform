@@ -40,7 +40,39 @@ Reinstall or remove the bridge with:
 .venv/bin/python scripts/install_analyst_console.py uninstall
 ```
 
-## Segments model requests
+## Extractor
+
+The **EXTRACTOR** card groups the two workbook-producing flows. Both run in the
+local bridge with allowlisted argv arrays and never leave the Mac.
+
+### PDF observations
+
+**Extraer de un PDF** takes one analyst-supplied PDF and returns the requested
+metrics as observations:
+
+1. The browser uploads the PDF to `POST /api/extractor/upload` as a raw
+   `application/pdf` body (60 MB limit, `%PDF-` magic check, sanitized
+   basename). The bridge stores it privately under
+   `data/analyst_console/extractor/<id>/source.pdf` and answers with the period
+   inferred from the filename (for example `Reporte_2T25.pdf` → `2025-2T`).
+2. The analyst chooses catalog metrics (the universal financial registry plus
+   the selected company's certified rows) and may add free-text metric names,
+   one per line. Free-text names are searched by their exact label through the
+   deterministic table/regex tiers and surface with lower confidence.
+3. `POST /api/extractor/jobs` validates the request (metric keys, optional
+   company, optional `YYYY-NT`/`YYYY-FY` period override, CSV/Excel/both,
+   table reading on or off) and runs
+   `scripts/extract_pdf_observations.py <request> --output-dir outputs/extractor/<id>`.
+
+The script writes `<archivo>_observaciones.csv` (one row per metric per period
+with value, prior, unit, confidence, validation and source snippet) and/or
+`<archivo>_observaciones.xlsx` with an `Observaciones` sheet and a `Resumen`
+sheet listing every requested metric as found or not found. A run with no
+evidence still completes so the analyst can open the summary. The Tier-4 LLM
+fallback stays off unless the script is invoked with `--llm` and an
+`ANTHROPIC_API_KEY` is configured.
+
+### Segments model requests
 
 **Generar una hoja de segmentos** starts from the canonical issuer universe and
 collects the ordered sections, financial metrics, and calculated rows. The

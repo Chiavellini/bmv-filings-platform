@@ -39,7 +39,7 @@ compatible.
 | Acquisition | `.venv` | `.venv/bin/refresh-quarterly-estate audit --json` |
 | Estate | `.venv` | `.venv/bin/python scripts/check_estate_connection.py` |
 | Outbox delivery | `.venv` | `.venv/bin/process-estate-outbox status --database data/document_estate/catalog.db --json` |
-| Extractor | `.venv` | `.venv/bin/python scripts/build_segments.py inputs/<company>.md --analyst-metrics <request.xlsx>` |
+| Extractor | `.venv` | `.venv/bin/python scripts/build_segments.py inputs/<company>.md --analyst-metrics <request.xlsx>` or `.venv/bin/python scripts/extract_pdf_observations.py <request_dir> --output-dir outputs/extractor/<id>` |
 | Alpha Go | `alpha-go/.venv312` | `cd alpha-go && .venv312/bin/python -m streamlit run app/streamlit_app.py` |
 | Soft | `soft/.venv` (Python 3.11.13) | `cd soft && .venv/bin/python -m pytest -q -m "not network and not model"` |
 | Earnings | `earnings/.venv` (Python 3.11.13) | `cd earnings && .venv/bin/python -m pytest -q -m "not network and not model"` |
@@ -58,9 +58,10 @@ or restarting the computer.
 
 GitHub Pages supplies the launchpad interface. A loopback-only bridge installed
 once on the destination Mac performs the actions a browser cannot: starting
-Alpha Go, generating workbooks, running allowlisted estate operations, and
-safely ejecting the USB. The bridge starts automatically at login and never
-needs to be launched by the analyst.
+Alpha Go, generating workbooks, extracting metrics from an uploaded PDF into
+CSV or Excel, running allowlisted estate operations, and safely ejecting the
+USB. The bridge starts automatically at login and never needs to be launched by
+the analyst.
 
 See [`docs/ANALYST_CONSOLE.md`](docs/ANALYST_CONSOLE.md) for destination-Mac
 preparation and the security boundary.
