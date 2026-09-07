@@ -4,7 +4,13 @@ Deliberately deferred items, recorded so they are decisions rather than
 surprises. Each entry says what is wrong, why it was not fixed, and what fixing
 it would cost. Nothing here blocks day-to-day use; several block *distribution*.
 
-Last reviewed: 2026-07-29.
+Last reviewed: 2026-09-07.
+
+Re-verified during the pre-delivery sweep: every claim below was checked against
+the tree rather than carried forward. Items 4 and 5 had drifted out of date in
+one direction and item 3 in the other. This file did not previously mention the
+Analyst Console or the Extractor, which were merged after its prior review; see
+item 11.
 
 ---
 
@@ -48,8 +54,10 @@ This is a direct consequence of issue #1 and disappears when the rename happens.
 
 `alpha-go/` and `soft/` each carry a copy-fork of seven root packages
 (`download, parse, extract, shared, model, excel, eval`), maintained by their own
-`scripts/vendor_sync.py`. Current divergence from root: **alpha-go 26 files**,
-**soft 8 files**.
+`scripts/vendor_sync.py`. Divergence from root, measured 2026-09-07: **alpha-go 49 entries**,
+**soft 39 entries** (`src/extract` alone accounts for 26 and 21). The previously
+recorded "alpha-go 26 / soft 8" understated soft by roughly five times, so treat
+any re-sync as more destructive than the old numbers suggest.
 
 `vendor_sync.py --sync` is `rmtree` + `copytree`. Running it today would discard
 those divergences — including Soft's herdez extraction fixes — with no warning.
@@ -63,22 +71,36 @@ into root or discarded. `src/extract/xbrl_facts.py` exists in three versions
 (root 386 lines, alpha-go 244, earnings/vendor 244); `src/excel/segments_sheet.py`
 in three (1603 / 847 / 847).
 
-## 4. Company-specific logic is spread across five layers
+## 4. Company-specific logic is spread across four layers
 
 Onboarding one company currently touches all of:
 
 1. `configs/<slug>.yaml`
-2. `src/extract/<slug>.py` (7 such modules: gmexico, soriana, herdez, orbia, lab, liverpool, gruma)
+2. `src/extract/<slug>.py` — **13 such modules** as of 2026-09-07 (ac, becle,
+   femsa, gmexico, gruma, herdez, kimber, kof, lab, liverpool, orbia, soriana,
+   tbbb), registered through `src/extract/custom_registry.py`
 3. `src/model/sport_metrics.py` (one company's registry inside a shared package)
-4. a hardcoded 17-company dict in `src/eval/compare_extractions.py:68-393`
-5. `scripts/build_excels.py:38-40` (a hardcoded 3-company table)
+4. a hardcoded company dict in `src/eval/compare_extractions.py`
+
+The former fifth layer, `scripts/build_excels.py`, was deleted (see item 5), so
+this is now four layers rather than five — but layer 2 has nearly doubled since
+this was written, which makes consolidating layer 4 more valuable, not less.
 
 Layer 4 in particular duplicates what `configs/*.yaml` already declares and must
 be edited in lockstep. Consolidating these is a design change, not plumbing.
 
-## 5. Dead and single-use scripts (~2,900 LOC)
+## 5. Dead and single-use scripts — RESOLVED 2026-09-07
 
-Inventoried, not removed — deletion is your call:
+Every path inventoried here has since been deleted. Verified absent:
+`scripts/orbia_tailored.py`, `_review.py`, `_verify.py`, `migrate_layout.py`,
+`build_excels.py`, `_probe.py`, `scripts/materialize.py`.
+
+`src/shared/materialize.py` intentionally survives as a library — it still backs
+the autouse warm-up fixture in `tests/conftest.py` — but its standalone CLI is
+gone, so the commands in `docs/DEV_SETUP.md` that invoked it were dead and have
+been removed.
+
+The original inventory is kept below for provenance:
 
 | Path | LOC | Status |
 |---|---:|---|
@@ -88,8 +110,8 @@ Inventoried, not removed — deletion is your call:
 | `scripts/_probe.py` | 178 | Marked "DEV ONLY, not part of the pipeline" |
 | `scripts/materialize.py` + `src/shared/materialize.py` | 173 | iCloud file warmer; `docs/DEV_SETUP.md` says it is unnecessary after moving to a non-synced disk, yet it is still an autouse fixture in `tests/conftest.py` |
 
-`scripts/build_excels.py` was removed from the phase manifest's declared commands
-because it pointed at a nonexistent output directory. The file itself remains.
+`scripts/build_excels.py` was first removed from the phase manifest's declared
+commands, then deleted outright. `scripts/build_segments.py` supersedes it.
 
 ## 6. Duplicated corpora across subprojects (~21 GB)
 
@@ -208,3 +230,48 @@ real and has been purged (catalog backed up first to
 `catalog.db.pre-acme-purge-2026-08-07.backup`); the residual manifest
 SHA/count mismatch that remains afterward is the expected behavior described
 above, not further leakage.
+
+## 11. The Analyst Console is the least-tested surface, and the only one the analyst sees
+
+Added 2026-09-07. `src/analyst_console/` plus `scripts/install_analyst_console.py`
+and `scripts/extract_pdf_observations.py` were merged after every handoff
+document and after this file's previous review, so nothing above covers them.
+
+The root README calls the launchpad icon "the only visible entry point" for the
+analyst. Behind it sits a loopback HTTP bridge that accepts a 60 MB file upload,
+executes allowlisted argv arrays as subprocesses, installs a login-persistent
+launchd agent, and exposes estate-mutating operations behind confirmation
+phrases and a process-wide writer lock. Its "Actualizar biblioteca completa"
+action runs a real fleet refresh, outbox drain, and Alpha index update against
+the production estate.
+
+Two structural constraints worth knowing before changing anything:
+
+- **Port 8765 cannot be overridden at runtime.** It is hardcoded in five places,
+  including the Content-Security-Policy of the published GitHub Pages asset
+  (`src/analyst_console/static/index.html`, `connect-src http://127.0.0.1:8765`).
+  The hosted launchpad can only ever talk to that port, so changing it means
+  rebuilding and republishing the static assets. Local testing must serve a
+  modified copy of the assets rather than rebinding the bridge. Port 8501
+  (Streamlit) is likewise fixed, with no fallback if either port is taken.
+- **`ANALYST_CONSOLE_PAGES_ORIGIN` is the only runtime knob**, and the origin
+  `https://chiavellini.github.io` is hardcoded in both the installer and the
+  server. Moving the repository to a different GitHub organization breaks the
+  CORS allowlist and the Pages URL together.
+
+Coverage today is `tests/test_analyst_console.py` and
+`tests/test_analyst_console_extractor.py`. Both now inherit the global estate
+env-isolation fixture added to `tests/conftest.py` on 2026-09-07, which they
+previously lacked.
+
+On 2026-09-07 the security boundary was additionally exercised against a live
+bridge on a scratch port: CORS on reads, the `X-Analyst-Console` CSRF header on
+writes, the `%PDF-` magic-byte check, filename sanitization against path
+traversal, period inference, upload containment, and honest degradation with no
+estate attached all behave as documented. Results are recorded in
+[the 2026-09-07 release gate](deployment/RELEASE_GATE_2026-09-07.md).
+
+**Still unverified:** the `install_analyst_console.py` install/uninstall round
+trip, launchd survival across logout, the real GitHub Pages origin reaching the
+bridge on 8765, and every estate-backed launchpad action. Those need the console
+installed and the estate mounted, so they belong to the second-machine run.
