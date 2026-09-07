@@ -144,8 +144,17 @@ def test_console_serves_launchpad_and_bootstrap(console_server: str) -> None:
     assert "Todo lo que necesitas" not in html
     assert "Cada herramienta conserva su propio espacio" not in html
     assert "Lanzadores de proyectos" in html
-    assert 'href="./app.css?v=9"' in html
-    assert 'src="./app.js?v=9"' in html
+    assert 'href="./app.css?v=10"' in html
+    assert 'src="./app.js?v=10"' in html
+    assert "EXTRACTOR" in html
+    assert "FÁBRICA DE MODELOS" not in html
+    assert 'data-dialog="extractor-dialog"' in html
+    assert "Extraer de un PDF" in html
+    assert 'id="extractor-file" type="file"' in html
+    assert 'name="extractor-format"' in html
+    # Closing a dialog with × must never submit its form (it used to launch a job).
+    assert html.count('class="dialog-close" value="cancel" aria-label="Cerrar" type="button"') == 4
+    assert 'aria-label="Cerrar">' not in html
     assert 'content="http://127.0.0.1:8765"' in html
     assert 'href="./" aria-label="Inicio del lanzador BMV"' in html
     assert "connect-src http://127.0.0.1:8765" in html

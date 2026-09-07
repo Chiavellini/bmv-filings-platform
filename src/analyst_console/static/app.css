@@ -188,6 +188,22 @@ select, input { width: 100%; height: 46px; margin-top: 7px; padding: 0 12px; bor
 .metric-choice small { display: block; margin-top: 3px; color: var(--muted); font-size: 9px; }
 .empty-metrics { grid-column: 1 / -1; margin: 0; padding: 30px; color: var(--muted); text-align: center; font-size: 11px; }
 .contract-note { margin: 14px 2px 0; color: var(--muted); font-size: 11px; line-height: 1.45; }
+.extractor-basics { padding-bottom: 12px; }
+.field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 18px; }
+.file-field input[type="file"] { height: auto; padding: 12px; border-style: dashed; background: var(--white); cursor: pointer; }
+.file-field input[type="file"]::file-selector-button { margin-right: 12px; padding: 7px 11px; border: 0; border-radius: 8px; color: var(--white); background: var(--navy); font: inherit; font-size: 11px; font-weight: 650; cursor: pointer; }
+.file-field small { color: var(--blue-deep); }
+fieldset.radio-row { margin: 16px 0; padding: 0; border: 0; min-width: 0; color: var(--muted); font-size: 11px; font-weight: 650; }
+fieldset.radio-row legend { padding: 0; margin-bottom: 12px; }
+.radio-row label { display: inline-flex; align-items: center; gap: 7px; margin: 0 18px 0 0; color: var(--ink); font-size: 12px; font-weight: 500; cursor: pointer; }
+.radio-row input, .check-row input { width: auto; height: auto; margin: 0; }
+.check-row { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; }
+.check-row input { margin-top: 2px; }
+.check-row span { color: var(--ink); font-size: 12px; font-weight: 500; }
+.check-row small { color: var(--muted); }
+textarea { width: 100%; min-height: 96px; margin-top: 7px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; color: var(--ink); background: rgba(255,255,255,.76); font: inherit; font-size: 12px; line-height: 1.5; resize: vertical; }
+textarea:focus-visible { outline: 3px solid rgba(41,120,255,.35); outline-offset: 3px; }
+.custom-metrics { margin-top: 22px; }
 .menu-action { width: 100%; padding: 15px 4px; display: flex; align-items: center; justify-content: space-between; text-align: left; border-bottom: 1px solid var(--line); background: transparent; }
 .menu-action:last-child { border-bottom: 0; }
 .menu-action span { display: block; }
@@ -230,6 +246,7 @@ select, input { width: 100%; height: 46px; margin-top: 7px; padding: 0 12px; bor
   .model-footer .primary-action { width: 100%; min-width: 0; }
   .metrics-heading { align-items: flex-start; flex-direction: column; }
   .metric-list { grid-template-columns: 1fr; }
+  .field-grid { grid-template-columns: 1fr; }
   footer { padding: 22px 18px; }
 }
 

@@ -5,7 +5,9 @@ const state = {
   pendingConfirmation: null,
   poll: null,
   segmentSetup: null,
+  extractor: { setup: null, upload: null },
 };
+const MAX_UPLOAD_BYTES = 60 * 1024 * 1024;
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -80,29 +82,64 @@ function presetMetricKeys(payload) {
   ));
 }
 
-function renderMetricList() {
-  const search = $("#metric-search").value.trim().toLocaleLowerCase("es-MX");
-  const selected = state.segmentSetup.selectedMetrics;
-  const metrics = [...state.segmentSetup.metrics]
+function createMetricPicker({ search, list, count, summary }) {
+  return { search: $(search), list: $(list), count: $(count), summary, metrics: [], selected: new Set() };
+}
+
+function renderMetricPicker(picker) {
+  const search = picker.search.value.trim().toLocaleLowerCase("es-MX");
+  const metrics = [...picker.metrics]
     .sort((a, b) => a.label.localeCompare(b.label, "es-MX"))
     .filter(metric => `${metric.label} ${sectionLabel(metric.section)}`.toLocaleLowerCase("es-MX").includes(search));
-  $("#metric-list").innerHTML = metrics.map(metric => `
+  picker.list.innerHTML = metrics.map(metric => `
     <label class="metric-choice">
-      <input type="checkbox" value="${escapeHtml(metric.key)}"${selected.has(metric.key) ? " checked" : ""}>
+      <input type="checkbox" value="${escapeHtml(metric.key)}"${picker.selected.has(metric.key) ? " checked" : ""}>
       <span><b>${escapeHtml(metric.label)}</b><small>${escapeHtml(sectionLabel(metric.section))}</small></span>
     </label>
   `).join("") || '<p class="empty-metrics">No hay métricas que coincidan con la búsqueda.</p>';
-  const count = selected.size;
-  $("#metric-selection-count").textContent = `${count} seleccionada${count === 1 ? "" : "s"}`;
-  $("#model-summary").textContent = count
-    ? `${count} métrica${count === 1 ? "" : "s"} · Hoja Segments`
-    : "Selecciona al menos una métrica";
+  const count = picker.selected.size;
+  picker.count.textContent = `${count} seleccionada${count === 1 ? "" : "s"}`;
+  if (picker.summary) picker.summary(count);
+}
+
+function bindMetricPicker(picker) {
+  picker.search.addEventListener("input", () => renderMetricPicker(picker));
+  picker.list.addEventListener("change", event => {
+    if (!event.target.matches('input[type="checkbox"]')) return;
+    if (event.target.checked) picker.selected.add(event.target.value);
+    else picker.selected.delete(event.target.value);
+    renderMetricPicker(picker);
+  });
+}
+
+const segmentPicker = createMetricPicker({
+  search: "#metric-search",
+  list: "#metric-list",
+  count: "#metric-selection-count",
+  summary: count => {
+    $("#model-summary").textContent = count
+      ? `${count} métrica${count === 1 ? "" : "s"} · Hoja Segments`
+      : "Selecciona al menos una métrica";
+  },
+});
+
+const extractorPicker = createMetricPicker({
+  search: "#extractor-metric-search",
+  list: "#extractor-metric-list",
+  count: "#extractor-metric-count",
+  summary: () => updateExtractorSummary(),
+});
+
+function renderMetricList() {
+  renderMetricPicker(segmentPicker);
 }
 
 function renderSegmentSetup(payload) {
   state.segmentSetup = payload;
   state.segmentSetup.selectedMetrics = presetMetricKeys(payload);
-  $("#metric-search").value = "";
+  segmentPicker.metrics = payload.metrics;
+  segmentPicker.selected = state.segmentSetup.selectedMetrics;
+  segmentPicker.search.value = "";
   renderMetricList();
 }
 
@@ -157,6 +194,155 @@ async function launchSegmentJob() {
   }
 }
 
+function formatSize(bytes) {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${bytes} B`;
+}
+
+function customMetricLines() {
+  const seen = new Set();
+  return $("#extractor-custom").value.split(/\r?\n/)
+    .map(line => line.replace(/\s+/g, " ").trim())
+    .filter(line => {
+      if (!line) return false;
+      const marker = line.toLocaleLowerCase("es-MX");
+      if (seen.has(marker)) return false;
+      seen.add(marker);
+      return true;
+    });
+}
+
+function updateExtractorSummary() {
+  const count = extractorPicker.selected.size + customMetricLines().length;
+  const upload = state.extractor.upload;
+  $("#extractor-summary").textContent = !upload
+    ? "Sube un PDF para continuar"
+    : count
+      ? `${count} métrica${count === 1 ? "" : "s"} · ${upload.filename}`
+      : "Elige al menos una métrica";
+}
+
+function extractorCompanies() {
+  const select = $("#extractor-company");
+  const selected = select.value;
+  select.innerHTML = '<option value="">Genérica · sin configuración de empresa</option>'
+    + (state.bootstrap?.companies?.segments || []).map(row =>
+      `<option value="${escapeHtml(row.slug)}">${escapeHtml(row.name)}</option>`
+    ).join("");
+  if ([...select.options].some(option => option.value === selected)) select.value = selected;
+}
+
+async function loadExtractorSetup(company = "") {
+  const generate = $("#generate-extract");
+  generate.disabled = true;
+  try {
+    const payload = await api(`/api/segments/setup?company=${encodeURIComponent(company)}`);
+    state.extractor.setup = payload;
+    const valid = new Set(payload.metrics.map(metric => metric.key));
+    extractorPicker.metrics = payload.metrics;
+    extractorPicker.selected = new Set([...extractorPicker.selected].filter(key => valid.has(key)));
+    extractorPicker.search.value = "";
+    renderMetricPicker(extractorPicker);
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    generate.disabled = false;
+  }
+}
+
+function resetExtractorUpload(statusText = "Ningún archivo seleccionado.") {
+  state.extractor.upload = null;
+  $("#extractor-file").value = "";
+  $("#extractor-file-status").textContent = statusText;
+  $("#extractor-period").value = "";
+  updateExtractorSummary();
+}
+
+async function uploadExtractorFile(file) {
+  if (!file) {
+    resetExtractorUpload();
+    return;
+  }
+  const isPdf = /\.pdf$/i.test(file.name) || file.type === "application/pdf";
+  if (!isPdf) {
+    resetExtractorUpload("Elige un archivo PDF.");
+    toast("Elige un archivo PDF.", true);
+    return;
+  }
+  if (file.size > MAX_UPLOAD_BYTES) {
+    resetExtractorUpload("El PDF supera el límite de 60 MB.");
+    toast("El PDF supera el límite de 60 MB.", true);
+    return;
+  }
+  const status = $("#extractor-file-status");
+  const generate = $("#generate-extract");
+  state.extractor.upload = null;
+  status.textContent = `Subiendo ${file.name} (${formatSize(file.size)})…`;
+  generate.disabled = true;
+  updateExtractorSummary();
+  try {
+    const payload = await api(`/api/extractor/upload?filename=${encodeURIComponent(file.name)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/pdf" },
+      body: file,
+    });
+    state.extractor.upload = payload;
+    $("#extractor-period").value = payload.period_guess || "";
+    status.textContent = `${payload.filename} · ${formatSize(payload.size)} · ${
+      payload.period_guess ? `periodo detectado ${payload.period_guess}` : "escribe el periodo si lo conoces"
+    }`;
+  } catch (error) {
+    resetExtractorUpload("No se pudo subir el archivo.");
+    toast(error.message, true);
+  } finally {
+    generate.disabled = false;
+    updateExtractorSummary();
+  }
+}
+
+function collectExtractorRequest() {
+  return {
+    upload: state.extractor.upload?.upload || "",
+    company: $("#extractor-company").value,
+    metrics: [...extractorPicker.selected],
+    custom_metrics: customMetricLines(),
+    period: $("#extractor-period").value.trim().toUpperCase(),
+    format: $('input[name="extractor-format"]:checked')?.value || "both",
+    read_tables: $("#extractor-tables").checked,
+  };
+}
+
+async function launchExtractorJob() {
+  if (!state.extractor.upload) {
+    toast("Primero sube un PDF.", true);
+    return null;
+  }
+  const request = collectExtractorRequest();
+  if (!request.metrics.length && !request.custom_metrics.length) {
+    toast("Elige al menos una métrica o escribe una adicional.", true);
+    return null;
+  }
+  try {
+    const job = await api("/api/extractor/jobs", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+    toast(`${job.label}: tarea iniciada.`);
+    closeDialogs();
+    resetExtractorUpload();
+    $("#extractor-custom").value = "";
+    extractorPicker.selected = new Set();
+    renderMetricPicker(extractorPicker);
+    await refresh();
+    ensurePolling(job.id, true);
+    return job;
+  } catch (error) {
+    toast(error.message, true);
+    return null;
+  }
+}
+
 function renderBootstrap(payload) {
   state.bridgeAvailable = true;
   state.bootstrap = payload;
@@ -176,7 +362,14 @@ function renderBootstrap(payload) {
   status($("#alpha-status"), payload.alpha.running ? "Ejecutándose" : payload.alpha.installed ? "Listo" : "Requiere instalación", payload.alpha.running ? "running" : payload.alpha.installed ? "ready" : "warning");
   status($("#estate-status"), payload.estate.connected ? "Conectado" : "Desconectado", payload.estate.connected ? "ready" : "warning");
   status($("#soft-status"), payload.nodes.soft.core_available ? (payload.nodes.soft.updated || "Disponible") : "Falta generar", payload.nodes.soft.core_available ? "ready" : "warning");
-  status($("#models-status"), payload.nodes.models.latest_available ? `Último ${payload.nodes.models.updated}` : "Listo", "ready");
+  const models = payload.nodes.models;
+  status(
+    $("#models-status"),
+    models.extractor_latest_available
+      ? `Último extracto ${models.extractor_updated}`
+      : models.latest_available ? `Última hoja ${models.updated}` : "Listo",
+    "ready",
+  );
   const estateToggle = $("#estate-toggle");
   estateToggle.dataset.mode = payload.estate.connected ? "disconnect" : "connect";
   estateToggle.textContent = payload.estate.connected ? "Desconectar y expulsar" : "Conectar Estate";
@@ -185,14 +378,14 @@ function renderBootstrap(payload) {
     ? `USB ${payload.estate.volume_name} conectado. Ya puedes usar Alpha, modelos y matrices.`
     : "Conecta el USB para usar la biblioteca de reportes y sus índices.";
   modelCompanies();
+  extractorCompanies();
 }
 
 function setLocalControls(enabled) {
   const selectors = [
     "#launch-alpha",
     "#estate-toggle",
-    '[data-dialog="model-dialog"]',
-    '[data-dialog="estate-dialog"]',
+    "[data-dialog]",
     "[data-operation]",
     "[data-confirm-operation]",
     "[data-open]",
@@ -255,7 +448,9 @@ function ensurePolling(watchedJobId = null, openResult = false) {
         if (openResult && watched.has_artifact) {
           try {
             await api(`/api/jobs/${watched.id}/open`, { method: "POST", body: "{}" });
-            toast("Hoja de segmentos terminada y abierta en Excel.");
+            toast(watched.operation === "pdf_extract"
+              ? "Observaciones extraídas y abiertas."
+              : "Hoja de segmentos terminada y abierta en Excel.");
           } catch (error) { toast(error.message, true); }
         } else {
           toast(`${watched.label}: ${watched.message.toLocaleLowerCase("es-MX")}.`);
@@ -318,6 +513,9 @@ document.addEventListener("click", async event => {
   if (dialogButton) {
     if (dialogButton.dataset.dialog === "model-dialog" && !state.segmentSetup) {
       await loadSegmentSetup($("#segments-template").value);
+    }
+    if (dialogButton.dataset.dialog === "extractor-dialog" && !state.extractor.setup) {
+      await loadExtractorSetup($("#extractor-company").value);
     }
     $("#" + dialogButton.dataset.dialog).showModal();
     return;
@@ -392,17 +590,20 @@ $("#estate-toggle").addEventListener("click", async () => {
 });
 
 $("#segments-template").addEventListener("change", event => loadSegmentSetup(event.target.value));
-$("#metric-search").addEventListener("input", renderMetricList);
-$("#metric-list").addEventListener("change", event => {
-  if (!event.target.matches('input[type="checkbox"]')) return;
-  if (event.target.checked) state.segmentSetup.selectedMetrics.add(event.target.value);
-  else state.segmentSetup.selectedMetrics.delete(event.target.value);
-  renderMetricList();
-});
+bindMetricPicker(segmentPicker);
 $("#model-form").addEventListener("submit", async event => {
   event.preventDefault();
   const job = await launchSegmentJob();
   if (job) closeDialogs();
+});
+
+bindMetricPicker(extractorPicker);
+$("#extractor-file").addEventListener("change", event => uploadExtractorFile(event.target.files?.[0] || null));
+$("#extractor-company").addEventListener("change", event => loadExtractorSetup(event.target.value));
+$("#extractor-custom").addEventListener("input", updateExtractorSummary);
+$("#extractor-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  await launchExtractorJob();
 });
 
 $("#confirm-input").addEventListener("input", event => {

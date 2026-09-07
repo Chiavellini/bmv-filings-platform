@@ -87,6 +87,12 @@ OPERATIONS = {
             company_source="segments",
         ),
         Operation(
+            "pdf_extract",
+            "Extraer observaciones de un PDF",
+            "models",
+            "Extrae las métricas elegidas de un PDF subido y genera CSV y/o Excel.",
+        ),
+        Operation(
             "soft_master",
             "Actualizar matriz de cobertura",
             "soft",
@@ -206,6 +212,23 @@ def operation_command(
             else:
                 argv = [str(root_python), "scripts/build_segments.py", f"inputs/{company}.md"]
                 cwd = project_root
+    elif key == "pdf_extract":
+        from .extractor import resolve_extractor_request
+
+        raw_state_dir = (environment or {}).get("ANALYST_CONSOLE_STATE_DIR")
+        if not raw_state_dir:
+            raise OperationError("El lanzador no tiene un directorio de trabajo configurado.")
+        request_dir, _metadata = resolve_extractor_request(
+            Path(raw_state_dir).resolve(), str(params.get("request") or "")
+        )
+        argv = [
+            str(root_python),
+            "scripts/extract_pdf_observations.py",
+            str(request_dir),
+            "--output-dir",
+            f"outputs/extractor/{request_dir.name}",
+        ]
+        cwd = project_root
     elif key == "soft_master":
         argv = [
             str(soft_python),
