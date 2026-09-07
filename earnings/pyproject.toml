@@ -1,3 +1,8 @@
+# Interpreter: Python 3.11.13, pinned in earnings/.python-version and enforced
+# by CI and scripts/certify_clean_clone.py. There is no [project] table here
+# because earnings is run-by-path, not installed, so requires-python would be
+# inert.
+#
 # earnings is run-by-path, not installed. This file exists so the subproject
 # carries its own pytest configuration instead of silently inheriting the root
 # project's [tool.pytest.ini_options] — which previously made `rootdir` resolve

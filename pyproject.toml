@@ -58,4 +58,5 @@ pythonpath = ["."]
 testpaths = ["tests"]
 markers = [
     "network: tests that hit the real network",
+    "model: tests that load a heavy model (LLM / embeddings)",
 ]

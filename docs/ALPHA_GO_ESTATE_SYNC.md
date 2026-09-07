@@ -56,7 +56,7 @@ R/.venv/bin/python -m src.consumers.cli run --apply \
   --alpha-corpus E/projections/alpha-go \
   --alpha-index E/indexes/alpha_go.db \
   --alpha-config R/alpha-go/configs/alpha_go.yaml \
-  --alpha-target-id portable-estate-v1 \
+  --alpha-target-id portable-estate-v2 \
   --alpha-python R/alpha-go/.venv/bin/python --json
 ```
 
@@ -75,7 +75,7 @@ R/.venv/bin/python -m src.consumers.cli reconcile-alpha --apply \
   --alpha-corpus E/projections/alpha-go \
   --alpha-index E/indexes/alpha_go.db \
   --alpha-config R/alpha-go/configs/alpha_go.yaml \
-  --alpha-target-id portable-estate-v1 \
+  --alpha-target-id portable-estate-v2 \
   --alpha-python R/alpha-go/.venv/bin/python --json
 ```
 
@@ -88,7 +88,7 @@ R/.venv/bin/python -m src.consumers.cli audit-alpha \
   --alpha-corpus E/projections/alpha-go \
   --alpha-index E/indexes/alpha_go.db \
   --alpha-config R/alpha-go/configs/alpha_go.yaml \
-  --alpha-target-id portable-estate-v1 \
+  --alpha-target-id portable-estate-v2 \
   --alpha-python R/alpha-go/.venv/bin/python --json
 
 R/.venv/bin/python -m src.consumers.cli status \

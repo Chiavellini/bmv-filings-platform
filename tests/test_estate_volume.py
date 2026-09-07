@@ -118,3 +118,68 @@ def test_partial_identity_configuration_is_rejected(tmp_path: Path) -> None:
     )
     assert not status.healthy
     assert "must be configured together" in "; ".join(status.problems)
+
+
+# ---------------------------------------------------------------------------
+# identity_verified — "nothing was checked" must not read as "checked and fine"
+# ---------------------------------------------------------------------------
+
+
+def test_identity_verified_when_sentinel_matches(tmp_path: Path) -> None:
+    estate = tmp_path / "estate"
+    _sentinel(estate)
+
+    status = inspect_estate_volume(
+        estate,
+        mount_root=tmp_path,
+        expected_estate_id=ESTATE_ID,
+        require_mountpoint=False,
+    )
+
+    assert status.healthy
+    assert status.identity_verified
+
+
+def test_identity_unverified_when_nothing_is_configured(tmp_path: Path) -> None:
+    """The fail-open case: a bare directory passes ``healthy`` on its own.
+
+    Without the mount root and estate ID there is no sentinel read and no
+    mountpoint requirement, so an ordinary directory sitting where the USB
+    should be is accepted. ``healthy`` cannot express that; ``identity_verified``
+    must.
+    """
+    estate = tmp_path / "estate"
+    estate.mkdir()  # no sentinel at all
+
+    status = inspect_estate_volume(estate, require_mountpoint=False)
+
+    assert status.healthy, "no configuration means no problems to report"
+    assert not status.identity_verified
+
+
+def test_identity_unverified_when_only_one_variable_is_set(tmp_path: Path) -> None:
+    estate = tmp_path / "estate"
+    _sentinel(estate)
+
+    status = inspect_estate_volume(
+        estate, expected_estate_id=ESTATE_ID, require_mountpoint=False
+    )
+
+    assert not status.identity_verified
+    assert any("configured together" in problem for problem in status.problems)
+
+
+def test_identity_unverified_on_wrong_estate_id(tmp_path: Path) -> None:
+    estate = tmp_path / "estate"
+    _sentinel(estate, estate_id="00000000-0000-0000-0000-000000000000")
+
+    status = inspect_estate_volume(
+        estate,
+        mount_root=tmp_path,
+        expected_estate_id=ESTATE_ID,
+        require_mountpoint=False,
+    )
+
+    assert not status.healthy
+    assert not status.identity_verified
+    assert any("estate ID mismatch" in problem for problem in status.problems)

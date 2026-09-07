@@ -280,14 +280,14 @@ python3 scripts/process_estate_outbox.py run --apply \
   --enable-alpha-go \
   --alpha-corpus data/document_estate/projections/alpha-go \
   --alpha-index data/document_estate/indexes/alpha_go.db \
-  --alpha-target-id portable-estate-v1 --json
+  --alpha-target-id portable-estate-v2 --json
 
 # Authoritative periodic reconciliation for searchable legacy/no-event writes.
 python3 scripts/process_estate_outbox.py reconcile-alpha --apply \
   --estate-root data/document_estate \
   --alpha-corpus data/document_estate/projections/alpha-go \
   --alpha-index data/document_estate/indexes/alpha_go.db \
-  --alpha-target-id portable-estate-v1 --json
+  --alpha-target-id portable-estate-v2 --json
 
 # Read-only coverage proof after the drain and reconciliation.
 python3 scripts/process_estate_outbox.py audit-alpha \

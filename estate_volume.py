@@ -34,6 +34,24 @@ class EstateVolumeStatus:
     def healthy(self) -> bool:
         return not self.problems
 
+    @property
+    def identity_verified(self) -> bool:
+        """True only when the sentinel UUID was actually read and matched.
+
+        With neither ``PDFS_ESTATE_MOUNT_ROOT`` nor ``PDFS_ESTATE_ID`` set, no
+        sentinel is read and no mountpoint is required, so an ordinary directory
+        at the expected path is accepted.  That is correct for checkout-relative
+        development, but on a host that consumes the real estate it means an
+        unmounted USB can pass unnoticed.  ``healthy`` alone cannot distinguish
+        the two; this can.
+        """
+        return (
+            not self.problems
+            and self.expected_estate_id is not None
+            and self.observed_estate_id is not None
+            and self.observed_estate_id == self.expected_estate_id
+        )
+
     def require_healthy(self) -> None:
         if self.problems:
             raise EstateVolumeError("; ".join(self.problems))
