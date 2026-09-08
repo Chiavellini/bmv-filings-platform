@@ -33,7 +33,7 @@ All four suites with `-m "not network and not model"`, `.env` absent.
 
 | Module | Result | Fresh-clone baseline 2026-08-04 |
 |---|---|---|
-| Root | **1,090 passed, 197 skipped, 4 deselected** | 1,038 passed, 197 skipped |
+| Root | **1,093 passed, 197 skipped, 4 deselected** | 1,038 passed, 197 skipped |
 | Alpha Go | **489 passed, 3 skipped, 3 deselected** | 483 passed, 3 skipped |
 | Soft | **326 passed, 2 skipped, 1 deselected** | 326 passed, 2 skipped |
 | Earnings | **116 passed, 3 skipped** | 116 passed, 3 skipped |
@@ -105,6 +105,40 @@ That cost was judged not worth paying for a developer's own username in their ow
 repository, so personal-path findings **in committed history** are reported as
 warnings. Personal paths in the candidate, and secrets anywhere including
 history, remain errors. Covered by three tests in `tests/test_audit_git_payload.py`.
+
+## Clean-clone certification — the delivery proof
+
+`scripts/certify_clean_clone.py --scope all`, certifying committed HEAD
+`e59c18d3` from an isolated checkout. This is the gate that actually models the
+handover: it clones HEAD into a temporary repository, refuses to proceed if any
+external attachment is present (`data/document_estate`, `data/reports`, the
+Alpha corpus/index) or if `estate.json` names an absolute `estate_root`, builds
+each module from its **declared dependencies only**, and runs every suite in a
+hermetic environment (reduced `PATH`, empty `HOME`, `PDFS_MATERIALIZE=0`,
+`PDFS_DOCUMENT_ESTATE` and `PDFS_REPORTS_DIR` deliberately absent). A suite that
+reports `passed == 0` fails the gate rather than passing vacuously.
+
+```
+==> Checking the all-module delivery contract
+==> Proving no external document estate or legacy corpus is attached
+    root platform  passed=1093 failed=0 skipped=197 errors=0 collection_errors=0
+    alpha-go       passed=489  failed=0 skipped=3   errors=0 collection_errors=0
+    soft           passed=326  failed=0 skipped=2   errors=0 collection_errors=0
+    earnings       passed=116  failed=0 skipped=3   errors=0 collection_errors=0
+ALL-MODULE CLEAN-CHECKOUT CERTIFICATION PASSED
+```
+
+Interpreters were passed explicitly, because `shutil.which` would not have found
+a 3.12 at all on this machine before this gate, and `python3.11` on `PATH`
+resolves to 3.11.16 rather than the certified 3.11.13:
+
+```bash
+.venv/bin/python scripts/certify_clean_clone.py --scope all \
+  --python-root   "$(command -v python3.13)" \
+  --python-alpha  "$HOME/.local/bin/python3.12" \
+  --python-soft   /opt/homebrew/bin/python3.11 \
+  --python-earnings /opt/homebrew/bin/python3.11
+```
 
 ## Analyst Console — security boundary verified locally
 
