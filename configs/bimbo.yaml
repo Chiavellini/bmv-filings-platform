@@ -97,6 +97,25 @@ metric_overrides:
       # the FY-summary "Net Sales" line can no longer win over the quarter.
       - regex: '^\s*Net\s+Sales\s+([\d,]{4,})\s+([\d,]{4,})'
         source: table
+  net_income:
+    patterns:
+      # Bimbo's income statement prints THREE lines containing "NET INCOME":
+      #   NET INCOME BEFORE TAXES              4,443  3,544
+      #   INCOME (LOSS) FROM CONTINUED OPERATIONS 2,799  2,229
+      #   NET MAJORITY INCOME                  2,362  1,785
+      # The generic `net_income` regexes require a number straight after the
+      # label, so they correctly decline all three. The positional `table` tier
+      # then matched the FIRST one by label similarity and returned pre-tax
+      # income as "Utilidad Neta" -- 4,443 against a true 2,362, an 88% error
+      # that shipped as validated=True, flagged=False (1Q26, verified against
+      # the filing's income statement).
+      # "Net Majority Income" (utilidad neta mayoritaria) is the headline figure
+      # Bimbo reports in its own highlights table, so anchor to it.
+      - regex: '(?im)^\s*NET\s+MAJORITY\s+INCOME\s+\(?([\d,]{3,})\)?\s+\(?([\d,]{3,})\)?'
+        source: table
+      # Spanish-language filings use the same concept.
+      - regex: '(?im)^\s*Utilidad\s+Neta\s+Mayoritaria\s+\(?([\d,]{3,})\)?\s+\(?([\d,]{3,})\)?'
+        source: table
   gross_profit:
     patterns:
       # 2018+ summary table: "Gross Profit 48,488 50,684 ..."

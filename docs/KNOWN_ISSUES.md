@@ -271,7 +271,59 @@ traversal, period inference, upload containment, and honest degradation with no
 estate attached all behave as documented. Results are recorded in
 [the 2026-09-07 release gate](deployment/RELEASE_GATE_2026-09-07.md).
 
+On 2026-09-08 every control was additionally exercised against a live bridge,
+driving the real launchpad in a browser. That pass found and fixed six defects
+invisible to the test suite -- the launchpad being welded to port 8765, a
+`bootstrap()` that re-parsed the issuer registry on every 1.8 s poll, Alpha Go
+reporting `running: True` forever after a crash (unreaped zombie), an empty
+coverage matrix reporting success, and two estate-write gaps. Details and the
+verified-working list are in
+[the 2026-09-07 release gate](deployment/RELEASE_GATE_2026-09-07.md).
+
 **Still unverified:** the `install_analyst_console.py` install/uninstall round
 trip, launchd survival across logout, the real GitHub Pages origin reaching the
-bridge on 8765, and every estate-backed launchpad action. Those need the console
-installed and the estate mounted, so they belong to the second-machine run.
+bridge on 8765, and every estate-backed launchpad action (connect,
+disconnect+eject, `segments_model` end to end, and the success paths of the two
+destructive operations). Those need the console installed and the estate mounted,
+so they belong to the second-machine run.
+
+## 12. The positional table tier can match a label that merely contains the target
+
+Found 2026-09-08 while extracting a real filing through the Analyst Console.
+
+Grupo Bimbo's income statement carries three lines containing "NET INCOME":
+
+```text
+NET INCOME BEFORE TAXES                  4,443  3,544
+INCOME (LOSS) FROM CONTINUED OPERATIONS  2,799  2,229
+NET MAJORITY INCOME                      2,362  1,785
+```
+
+The generic `net_income` patterns in `src/model/financial_model.py` require a
+number immediately after the label, so they correctly declined all three. The
+extraction cascade then fell through to the positional `table` tier, which
+matched **the first one** by label similarity and returned pre-tax income as
+"Utilidad Neta" — 4,443 against a true 2,362, an **88% overstatement**.
+
+It shipped as `validated=True, flagged=False`. The only signal that anything was
+weaker than usual was `confidence: 0.6` versus 0.85 for the metrics resolved by
+`regex_table`, and that number is not surfaced to the analyst anywhere in the
+launchpad.
+
+`configs/bimbo.yaml` now pins `net_income` to NET MAJORITY INCOME (the figure
+Bimbo reports in its own highlights table), and `tests/test_bimbo_net_income.py`
+covers it without needing a PDF.
+
+**The general case is still open.** Any metric whose label is a prefix or
+substring of a different line in the same statement can be mismatched this way,
+for any company without an explicit `metric_overrides` entry — which is most of
+the 179-issuer universe. Two things would each have caught it:
+
+1. Rejecting a positional match whose matched label carries qualifying words the
+   target does not (`BEFORE TAXES`, `FROM CONTINUED OPERATIONS`, `ADJUSTED`).
+2. Surfacing confidence in the extractor output the analyst reads, so a 0.6 among
+   0.85s is visible rather than buried in a CSV column.
+
+Neither is done. Until then, treat any extraction for an unconfigured company as
+requiring the STRONG verification gate in `docs/VERIFICATION.md` before use, and
+prefer companies that have a `metric_overrides` block.

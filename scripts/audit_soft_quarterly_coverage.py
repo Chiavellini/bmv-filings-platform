@@ -20,9 +20,11 @@ from estate_bridge import load_estate_bridge  # noqa: E402
 ESTATE_BRIDGE = load_estate_bridge(project_root=ROOT)
 SOFT = ROOT / "soft"
 DEFAULT_ESTATE = ESTATE_BRIDGE.catalog_path
-DEFAULT_JSON = (
-    ESTATE_BRIDGE.estate_root / "coverage" / "soft_quarterly_coverage.json"
-)
+# Report destination is repo-local on purpose: this is a read-only audit of the
+# estate, exposed in the launchpad as "Revisar cobertura Soft". Defaulting it into
+# the estate made a review button write to the shipped USB with no confirmation and
+# no writer lock. Pass --json/--markdown to place it elsewhere deliberately.
+DEFAULT_JSON = ROOT / "outputs" / "coverage" / "soft_quarterly_coverage.json"
 
 
 def _soft_universe() -> dict[str, dict]:
@@ -75,6 +77,13 @@ def _period_key(period: str) -> tuple[int, int]:
 def audit(estate_path: Path, floor: int = 20) -> dict:
     universe = _soft_universe()
     aliases = _ticker_aliases()
+    # A missing catalog otherwise reaches the analyst as a bare
+    # "sqlite3.OperationalError: unable to open database file".
+    if not estate_path.is_file():
+        raise SystemExit(
+            f"ERROR: no encuentro el catálogo del Estate en {estate_path}. "
+            "Conecta el USB Estate antes de revisar la cobertura."
+        )
     conn = sqlite3.connect(f"file:{estate_path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     rows = conn.execute("""

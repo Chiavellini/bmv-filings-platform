@@ -31,12 +31,16 @@ assuming.
 
 All four suites with `-m "not network and not model"`, `.env` absent.
 
-| Module | Result | Fresh-clone baseline 2026-08-04 |
-|---|---|---|
-| Root | **1,093 passed, 197 skipped, 4 deselected** | 1,038 passed, 197 skipped |
-| Alpha Go | **489 passed, 3 skipped, 3 deselected** | 483 passed, 3 skipped |
-| Soft | **326 passed, 2 skipped, 1 deselected** | 326 passed, 2 skipped |
-| Earnings | **116 passed, 3 skipped** | 116 passed, 3 skipped |
+| Module | 2026-09-07 | After the 2026-09-08 functional pass | Fresh-clone baseline 2026-08-04 |
+|---|---|---|---|
+| Root | 1,093 passed, 197 skipped | **1,106 passed, 197 skipped, 4 deselected** | 1,038 passed, 197 skipped |
+| Alpha Go | 489 passed, 3 skipped | **489 passed, 3 skipped, 3 deselected** | 483 passed, 3 skipped |
+| Soft | 326 passed, 2 skipped | **328 passed, 2 skipped, 1 deselected** | 326 passed, 2 skipped |
+| Earnings | 116 passed, 3 skipped | **116 passed, 3 skipped** | 116 passed, 3 skipped |
+
+The 2026-09-08 increases are the regression tests that shipped with that pass's
+fixes (root +13, soft +2). Skip counts are unchanged in all four modules, which
+is the signal that matters: no test started skipping to make a failure go away.
 
 Zero failures in any module. Skip counts match the previous fresh-clone gate
 exactly in all four; the higher pass counts are tests added since, including the
@@ -164,6 +168,97 @@ across logout, the real GitHub Pages origin reaching the bridge on 8765, and
 every estate-backed launchpad action (Alpha Go launch, workbook generation,
 estate operations, USB eject). Those need the console installed and the estate
 mounted, so they belong to the second-machine run.
+
+## Analyst Console — full functional pass, 2026-09-08
+
+The 2026-09-07 entry above recorded only the console's *security boundary*. Every
+control has since been exercised against a live bridge on a scratch port, driving
+the real launchpad in a browser. The production bridge on 8765 stayed up and was
+never contacted. Six defects were found and fixed; five of them are invisible from
+the test suite because they only appear when the UI is actually used.
+
+### Extraction accuracy — the one that matters most
+
+Extracting `Grupo Bimbo Reports 1Q26 Results__VFF.pdf` (a real filing) through the
+console returned **6 of 6 metrics**, five of them exactly right. `net_income` was
+**4,443 against a true 2,362 — an 88% overstatement.**
+
+Bimbo's income statement carries three lines containing "NET INCOME": `NET INCOME
+BEFORE TAXES` (4,443), `INCOME FROM CONTINUED OPERATIONS` (2,799), and `NET
+MAJORITY INCOME` (2,362). The generic patterns require a number immediately after
+the label, so they correctly declined all three; the looser positional `table` tier
+then matched the first by label similarity. It shipped as `validated=True,
+flagged=False` at confidence 0.6.
+
+`configs/bimbo.yaml` now pins the metric to NET MAJORITY INCOME — the figure Bimbo
+reports in its own highlights table. Re-run: `2,362 / 1,785` via `regex_table` at
+confidence 0.85. All six values then matched the filing exactly.
+
+**The generalisable risk remains:** the positional `table` tier can match a label
+that merely *contains* the target, and nothing downstream flags it. Every company
+without an explicit `metric_overrides` entry is exposed to this. Confidence 0.6 was
+the only signal, and it is not surfaced to the analyst.
+
+### Defects found and fixed
+
+| # | Defect | Consequence before the fix |
+|---|---|---|
+| 1 | The launchpad was welded to port 8765 | Response header sets `connect-src 'self'`, the document meta pinned `8765`; browsers enforce the **intersection**, so on any other port every fetch was blocked. The console could not run if 8765 was taken, with no fallback. `LOCAL_API` now follows the serving origin. |
+| 2 | `bootstrap()` re-parsed the 179-issuer registry on every call | 8.8 s cold, 0.7-1.5 s warm — and the UI polls it **every 1.8 s**. First load appeared to hang. Now mtime-cached and warmed on a startup thread: **0.002-0.036 s**. |
+| 3 | Alpha Go reported `running: True` forever after a crash | The child is spawned with Popen and never waited on, so on exit it becomes a zombie — and `os.kill(pid, 0)` succeeds for zombies. `launch()` short-circuited on the stale pid, returned success, and the launchpad navigated the analyst away from itself to a dead `127.0.0.1:8501`. Only a bridge restart cleared it. `_pid()` now reaps. |
+| 4 | An empty coverage matrix reported success | `soft_master` on a checkout without `soft/data/reports/` produced **157 companies and 0 of 3,925 cells populated**, exited 0, and the console showed a green "listo para abrir" and opened the blank file. Its own log already said "0 with data · filled 0 (0.0%)". It now fails before writing anything, so no blank artifact exists to open. |
+| 5 | `soft_expand_apply` had no preconditions | It downloads filings into the estate but went straight to `jobs.create` with no estate check and no active-job check, unlike `estate_refresh_all`. Its only de-facto protection was an unrelated crash. Now gated by `prepare_estate_write`. |
+| 6 | Two "review" buttons wrote to the estate | `soft_coverage_audit` and `soft_expand_plan` defaulted their reports into the estate root while registered `mutates=False` — so they took no writer lock and could write concurrently with `estate_refresh_all`, which holds it believing it is the only writer. Both now default under `outputs/`. |
+
+Plus: `soft_expand_plan` and `soft_coverage_audit` crashed with raw
+`FileNotFoundError` / `sqlite3.OperationalError` tracebacks on a clean checkout;
+both now fail with an actionable Spanish message. And `jobs.py` listed
+`soft_coverage_dense.html` as a `soft_master` artifact, which `build_master.py`
+never writes.
+
+### One more, found by the pass itself
+
+Running the console left an **empty** `data/reports/ac/` behind (a failed
+`segments_model` run creates the directory before failing). `tests/_corpus.py`
+accepted `any(target.iterdir())`, so that single empty directory satisfied the
+corpus gate and un-skipped 17 tests, which then failed for want of data they
+never had: **17 failed, 1,102 passed, 180 skipped**. Removing the directory
+restored **1,102 passed, 197 skipped, 0 failed**.
+
+That inverts the contract the module documents -- a skip means "I do not have
+this data", a failure means "this code is broken" -- and
+`scripts/certify_clean_clone.py` treats any failure on a data-less clone as a
+release defect, so a stray directory could fail a release certification.
+`has_corpus()` now requires actual files.
+
+### Verified working
+
+Upload (magic bytes, 60 MB cap, filename sanitisation against traversal, period
+inference from the real filename → `2026-1T`); metric catalog loading and company
+switching (61 generic → 65 for bimbo); search filtering; selection counter with
+correct pluralisation; both client-side submit guards, each sending **zero**
+requests; the confirmation dialog rejecting all five near-miss phrase variants
+(case, double space, leading/trailing space, truncation) and enabling only on an
+exact match; both destructive operations refusing server-side with **zero jobs
+created**; clean failure surfacing for every estate-dependent operation; job
+polling, completion toasts and artifact auto-open; and both artifact-opening
+actions.
+
+### Known behaviour, not defects
+
+- The launchpad's poll is throttled while the tab is in the background and catches
+  up when it is fronted. Standard browser behaviour; it self-heals.
+- With the estate unmounted **no control is disabled** — every estate button stays
+  clickable and fails only via a red toast. Worth a product decision.
+- If the browser blocks the popup, "Abrir Alpha" navigates the *launchpad tab
+  itself* to Alpha Go, so the analyst loses the launchpad.
+
+### Still unverified
+
+Everything requiring the USB: `estate_check`/`estate_audit` success paths,
+`segments_model` end to end, connect / disconnect+eject, and the two destructive
+operations' success paths. Plus `install_analyst_console.py`, launchd survival, and
+the real GitHub Pages origin — all of which belong to the second-machine run.
 
 ## What this gate does *not* prove
 
