@@ -37,3 +37,33 @@ def test_snippet_html_integration():
     snip = make_snippet("Management cited pricing pressure.", ["pricing"], window=80)
     html = snippet_html(snip)
     assert "<mark>pricing</mark>" in html
+
+
+# --- sentence-tone underlines (second, independent visual channel) ---------------------------
+
+def test_tone_spans_underline_and_nest_marks_inside():
+    text = "Sales grew. Costs hurt."
+    html = spans_to_html(text, [(0, 5)], tones=[(0, 11, "positive"), (12, 23, "negative")])
+    assert html.startswith("<span style='text-decoration:underline;text-decoration-color:#3fb950")
+    assert "<mark>Sales</mark> grew.</span>" in html
+    assert "text-decoration-color:#f85149" in html and html.endswith("Costs hurt.</span>")
+    assert html.count("<span") == html.count("</span>") == 2
+
+
+def test_mark_straddling_a_tone_boundary_is_split_not_broken():
+    text = "ab cd"
+    html = spans_to_html(text, [(1, 4)], tones=[(0, 2, "negative")])
+    # the mark [1,4) crosses the tone end at 2 → two marks, well-nested
+    assert html == ("<span style='" + __import__("app.components.highlight", fromlist=["TONE_STYLES"])
+                    .TONE_STYLES["negative"] + "'>a<mark>b</mark></span><mark> c</mark>d")
+
+
+def test_neutral_tones_and_none_leave_output_unchanged():
+    text = "plain & simple"
+    assert spans_to_html(text, [(0, 5)], tones=[(0, 14, "neutral")]) == spans_to_html(text, [(0, 5)])
+    assert spans_to_html(text, [(0, 5)], tones=[]) == spans_to_html(text, [(0, 5)])
+
+
+def test_active_mark_kept_with_tones():
+    html = spans_to_html("x y", [(0, 1), (2, 3)], active=1, tones=[(0, 3, "positive")])
+    assert html.count("background:#ffb300") == 1 and "<mark style=" in html

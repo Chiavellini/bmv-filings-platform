@@ -1,0 +1,70 @@
+# Ask agents — prompt templates the Ask panel offers as one-click starting points.
+#
+# Each agent fills a question template with the analyst's current scope and runs it through the
+# same plan → retrieve → cite pipeline as a typed question (src/qa/ask.py). Nothing here is an
+# autonomous "agent": it is a reviewed question, scoped to the sidebar, answered from the corpus
+# with citations — or, without an LLM key, returned as the numbered evidence pack.
+#
+# Fields:
+#   key          stable id
+#   name         what the pill says
+#   description  one line under the name
+#   mode         ask      → run the template as a question
+#               redline  → deterministic quarter-over-quarter diff (no LLM needed)
+#   template     question text; {company} is replaced by the scoped company's display name
+#                (or "the company" when the scope is broader than one issuer)
+#   needs_company  true → the pill asks for a single company scope before running
+version: 1
+agents:
+  - key: latest_event_summary
+    name: Latest event summary
+    description: Takeaways and implications from the company's most recent filing or event.
+    mode: ask
+    needs_company: true
+    template: >-
+      What are the key takeaways and implications from {company}'s most recent results or
+      relevant event? Cover results, drivers, guidance and any notable one-offs.
+
+  - key: key_themes
+    name: Key themes
+    description: The recurring themes management keeps coming back to.
+    mode: ask
+    needs_company: false
+    template: >-
+      What are the key themes management of {company} emphasizes across recent filings, and how
+      does the wording on each theme evolve over time?
+
+  - key: earnings_sentiment_changes
+    name: Earnings tone changes
+    description: Where management's tone turned more positive or more cautious, quarter over quarter.
+    mode: ask
+    needs_company: true
+    template: >-
+      How has the tone of {company}'s management commentary changed across the most recent
+      quarters — which topics turned more positive, which more cautious, and what wording signals
+      the shift?
+
+  - key: bull_bear
+    name: Bull & bear debates
+    description: The strongest supporting and opposing evidence in the corpus, side by side.
+    mode: ask
+    needs_company: true
+    template: >-
+      Lay out the bull case and the bear case for {company} using only evidence in the filings:
+      list the strongest supporting points for each side with citations.
+
+  - key: anticipatory_qa
+    name: Anticipatory Q&A
+    description: The questions analysts are likely to ask next, from recent performance and trends.
+    mode: ask
+    needs_company: true
+    template: >-
+      Based on {company}'s recent performance, guidance and disclosed risks, what questions are
+      analysts likely to ask management next, and what does the corpus already say about each?
+
+  - key: redline
+    name: Quarter-over-quarter redline
+    description: What changed between two consecutive filings — added, removed, reworded — with tone.
+    mode: redline
+    needs_company: true
+    template: ""

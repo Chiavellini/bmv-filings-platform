@@ -32,6 +32,7 @@ if str(_ROOT) not in sys.path:
 import yaml  # noqa: E402
 import streamlit as st  # noqa: E402
 
+from app.components import ask as ask_panel  # noqa: E402
 from app.components import panels  # noqa: E402
 from app.components import upload as upload_panel  # noqa: E402
 from src.corpus.doc_types import load_taxonomy  # noqa: E402
@@ -43,7 +44,75 @@ from src.shared.paths import ESTATE_BRIDGE  # noqa: E402
 
 _CONFIG_PATH = _ROOT / "configs" / "alpha_go.yaml"
 _BMV_CATALOG_PATH = _ROOT / "configs" / "bmv_corpus.yaml"
-_EXPLORE_MODES = ("Search", "Trends")
+_EXPLORE_MODES = ("Search", "Trends", "Ask")
+_URL_SEEDED = "_url_seeded"
+# Shareable-link contract: the address bar mirrors the search (q), the scope (co/dt/ind — the
+# sidebar widgets' own values) and the open document (doc). Restored once per session.
+_URL_KEYS = ("q", "co", "dt", "ind", "doc")
+
+
+def _state_from_params(params) -> dict:
+    """Session-state updates that restore a shareable link's search (pure; ``params`` is a mapping)."""
+    def _get(k):
+        v = params.get(k) if hasattr(params, "get") else None
+        return v if isinstance(v, str) else (v[0] if isinstance(v, (list, tuple)) and v else None)
+
+    def _split(v):
+        return [x for x in (v or "").split(",") if x]
+
+    out: dict = {}
+    if (q := _get("q")):
+        out["query"] = q
+    if (co := _split(_get("co"))):
+        out["flt-companies"] = co
+    if (dt := _split(_get("dt"))):
+        out["flt-doctypes"] = dt
+    if (ind := _split(_get("ind"))):
+        out["flt-industries"] = ind
+    if (doc := _get("doc")):
+        out["_pending_reader_doc"] = doc
+    return out
+
+
+def _params_from_state(*, query: str, companies: list, doc_type_labels: list,
+                       industries: list, reader_doc: "str | None") -> dict:
+    """Query-parameter payload for the current search state (pure inverse of the above)."""
+    out: dict = {}
+    if (query or "").strip():
+        out["q"] = query.strip()
+    if companies:
+        out["co"] = ",".join(companies)
+    if doc_type_labels:
+        out["dt"] = ",".join(doc_type_labels)
+    if industries:
+        out["ind"] = ",".join(industries)
+    if reader_doc:
+        out["doc"] = reader_doc
+    return out
+
+
+def _seed_state_from_url() -> None:
+    """Apply a shareable link once per session, before the widgets it targets are created."""
+    if st.session_state.get(_URL_SEEDED):
+        return
+    st.session_state[_URL_SEEDED] = True
+    try:
+        updates = _state_from_params(st.query_params)
+    except Exception:  # noqa: BLE001 — a malformed link must never break the page
+        return
+    for k, v in updates.items():
+        st.session_state[k] = v
+
+
+def _sync_url(desired: dict) -> None:
+    """Mirror the current search into the address bar (no rerun) when it changed."""
+    try:
+        current = {k: st.query_params.get(k) for k in _URL_KEYS}
+        current = {k: v for k, v in current.items() if v}
+        if current != desired:
+            st.query_params.from_dict(desired)
+    except Exception:  # noqa: BLE001 — cosmetic; never fail the page over the URL
+        return
 
 
 def _valid_multiselect_state(value, options: list[str]) -> list[str]:
@@ -109,6 +178,11 @@ def _runtime_config() -> dict:
     if _BMV_CATALOG_PATH.exists():
         catalog = yaml.safe_load(_BMV_CATALOG_PATH.read_text(encoding="utf-8")) or {}
         config["company_catalog"] = catalog.get("companies", [])
+        # The 50×50 coverage contract the company card measures each issuer against.
+        config["coverage_contract"] = {
+            k: catalog[k] for k in ("target_documents_per_company",
+                                    "target_news_documents_per_company",
+                                    "minimum_quarterlies", "minimum_annuals") if k in catalog}
     index = config.setdefault("index", {})
     if db_path := os.getenv("ALPHA_GO_INDEX_DB"):
         index["db_path"] = db_path
@@ -206,6 +280,9 @@ def _page_search() -> None:
 
     def industry_label(value: str) -> str:
         return value.replace("_", " ").title()
+
+    _seed_state_from_url()
+    panels.apply_pending_state(st.session_state)   # scope chips / "try wording" from last run
 
     if model_name == "hashing":
         st.warning(
@@ -366,10 +443,21 @@ def _page_search() -> None:
                     horizontal=True, label_visibility="collapsed", key="explore-mode")
     if mode == "Search":
         panels.render_search(st, retriever, query=query, filters=filters, limit=limit,
-                             search_cfg=config.get("search"))
+                             search_cfg=config.get("search"), doc_type_label=taxonomy.label_for,
+                             app_config=config)
+    elif mode == "Ask":
+        ask_panel.render_ask(st, retriever, store, query=query, filters=filters, config=config,
+                             facets=facets, company_label=company_label,
+                             doc_type_label=taxonomy.label_for)
     else:
         panels.render_trends(st, store, term=query, filters=filters,
                              suggestions=_suggestions(index_revision))
+
+    _sync_url(_params_from_state(
+        query=query, companies=list(company_scope), doc_type_labels=list(picked_doc_labels),
+        industries=list(industries), reader_doc=st.session_state.get("reader_doc")))
+    if (query or "").strip():
+        st.caption("🔗 The address bar mirrors this search, scope and open document — copy it to share.")
 
 
 def _page_upload() -> None:
