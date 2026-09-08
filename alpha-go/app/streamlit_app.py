@@ -33,6 +33,7 @@ import yaml  # noqa: E402
 import streamlit as st  # noqa: E402
 
 from app.components import ask as ask_panel  # noqa: E402
+from app.components import grid as grid_panel  # noqa: E402
 from app.components import panels  # noqa: E402
 from app.components import upload as upload_panel  # noqa: E402
 from src.corpus.doc_types import load_taxonomy  # noqa: E402
@@ -44,7 +45,7 @@ from src.shared.paths import ESTATE_BRIDGE  # noqa: E402
 
 _CONFIG_PATH = _ROOT / "configs" / "alpha_go.yaml"
 _BMV_CATALOG_PATH = _ROOT / "configs" / "bmv_corpus.yaml"
-_EXPLORE_MODES = ("Search", "Trends", "Ask")
+_EXPLORE_MODES = ("Search", "Trends", "Ask", "Grid")
 _URL_SEEDED = "_url_seeded"
 # Shareable-link contract: the address bar mirrors the search (q), the scope (co/dt/ind — the
 # sidebar widgets' own values) and the open document (doc). Restored once per session.
@@ -449,6 +450,10 @@ def _page_search() -> None:
         ask_panel.render_ask(st, retriever, store, query=query, filters=filters, config=config,
                              facets=facets, company_label=company_label,
                              doc_type_label=taxonomy.label_for)
+    elif mode == "Grid":
+        grid_panel.render_grid(st, retriever, store, query=query, filters=filters, config=config,
+                               facets=facets, company_label=company_label,
+                               doc_type_label=taxonomy.label_for)
     else:
         panels.render_trends(st, store, term=query, filters=filters,
                              suggestions=_suggestions(index_revision))

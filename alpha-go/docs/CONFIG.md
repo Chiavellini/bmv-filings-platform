@@ -50,6 +50,10 @@ qa:                           # optional; the ONLY LLM-using feature
 | `index.expand_synonyms` | toggle deterministic synonym expansion (vendored `metric_search.yaml`) |
 | `search.{keyword,semantic}_weight` | RRF weighting between the two scorers |
 | `qa.enabled` | master switch for the LLM Q&A phase (default `false`) |
+| `grid.max_rows` / `grid.max_columns` / `grid.max_cells` | Grid cost ceilings — documents, questions, and the cap on cells (hence LLM calls) per run. Config may lower these; the hard ceilings in `src/qa/grid.py` cannot be raised. |
+| `grid.chunk_size` | cells run per Streamlit script run before the page reruns itself (keeps a long batch interruptible) |
+| `grid.confirm_threshold` | LLM calls above which a run needs an explicit confirmation tick |
+| `grid.top_k` | passages retrieved per cell (a cell is scoped to one document) |
 
 ## Reused per-company configs
 

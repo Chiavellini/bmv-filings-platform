@@ -326,3 +326,17 @@ summary:
   base_url: https://api.deepseek.com
   api_key_env: DEEPSEEK_API_KEY
   cache: true
+
+# --- Grid (Phase D) — Ask, batched over a document set ---------------------------------------
+# Rows are documents, columns are questions; each cell runs the qa pipeline scoped to ONE
+# document, so the provider/model/key come from the `qa` block above — a cell IS an Ask.
+# These numbers are the cost guardrail and are HARD CEILINGS: config may lower them, never
+# raise them (src/qa/grid.py clamps, and plan_run refuses a matrix over max_cells rather than
+# silently truncating it).
+grid:
+  max_rows: 12             # documents per grid
+  max_columns: 6           # questions per grid
+  max_cells: 24            # ceiling on rows × columns, i.e. on LLM calls per full run
+  chunk_size: 4            # cells per script run, so a long batch never freezes the page
+  confirm_threshold: 8     # above this many real LLM calls, the run needs an explicit tick
+  top_k: 6                 # passages per cell (a cell searches one document, not the corpus)

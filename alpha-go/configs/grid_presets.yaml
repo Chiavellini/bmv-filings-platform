@@ -1,0 +1,61 @@
+# Grid presets — question sets the Grid offers as one-click starting points.
+#
+# A grid is rows of documents × columns of questions. Each cell runs the SAME plan → retrieve →
+# cite pipeline as a typed Ask question (src/qa/ask.py), scoped to that one document. Nothing
+# here is autonomous: it is a reviewed set of questions, answered from the corpus with citations
+# — or, without an LLM key, the best-matching passage per document, clearly labelled as evidence
+# rather than an answer.
+#
+# Fields:
+#   key          stable id
+#   name         what the pill says
+#   description  one line under the name
+#   questions    the columns, in order; at most `grid.max_columns` (6) are used
+#
+# Keep question wording literal and corpus-shaped. The sub-query decomposition strips
+# interrogatives and adds vetted ES/EN equivalents, so a question phrased in the language of the
+# filings retrieves better than a clever one.
+version: 1
+presets:
+  - key: quarterly_scorecard
+    name: Quarterly scorecard
+    description: The standard read of a quarter — growth, margin, mix, guidance, one-offs.
+    questions:
+      - How did revenue change, and what drivers does management give for the change?
+      - How did the operating margin move, and what reason is given?
+      - What is said about volume versus price and mix?
+      - What guidance or outlook is given, and for what period?
+      - What one-off or non-recurring items are flagged?
+
+  - key: risk_and_liquidity
+    name: Risk & liquidity
+    description: Leverage, refinancing, currency exposure and contingencies.
+    questions:
+      - What is said about net debt, leverage or the net debt to EBITDA ratio?
+      - What is said about refinancing, debt maturities or new financing?
+      - What is said about foreign exchange exposure and hedging?
+      - What litigation, regulatory or tax contingencies are disclosed?
+
+  - key: management_tone
+    name: Management tone
+    description: What management leans into, what they flag, and what changed in the wording.
+    questions:
+      - What is management most positive about?
+      - What headwinds or challenges does management flag?
+      - Was guidance raised, reaffirmed, lowered or withdrawn?
+
+  - key: cost_and_pricing
+    name: Cost & pricing
+    description: Input costs and the pricing actions taken against them.
+    questions:
+      - What is said about raw material or input cost pressure?
+      - What pricing actions were taken, and what effect is reported?
+      - What is said about cost savings, efficiencies or productivity programs?
+
+  - key: capital_allocation
+    name: Capital allocation
+    description: Where the cash goes — capex, returns to shareholders, M&A.
+    questions:
+      - What capex plans or amounts are disclosed?
+      - What is said about dividends or share buybacks?
+      - What acquisitions, divestitures or joint ventures are mentioned?

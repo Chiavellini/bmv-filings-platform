@@ -1,4 +1,4 @@
-"""The Explore page exposes only the two supported manual-test surfaces."""
+"""The Explore page exposes only the supported manual-test surfaces."""
 
 import sqlite3
 
@@ -10,10 +10,13 @@ from app.streamlit_app import (
 )
 
 
-def test_explore_modes_are_search_trends_ask():
+def test_explore_modes_are_search_trends_ask_grid():
     # Summary/Financials/News stay out of the mode list (they live inside the reader pane now);
-    # Ask is the third mode (Phase C).
-    assert _EXPLORE_MODES == ("Search", "Trends", "Ask")
+    # Ask is the third mode (Phase C) and Grid the fourth (Phase D).
+    assert _EXPLORE_MODES == ("Search", "Trends", "Ask", "Grid")
+    # Grid is APPENDED, never inserted: Search stays the radio's default, and any persisted
+    # "explore-mode" value (including the "Ask" that panels._stage_ask writes) stays valid.
+    assert _EXPLORE_MODES[:3] == ("Search", "Trends", "Ask")
 
 
 def test_cascading_multiselect_discards_values_outside_upstream_scope():

@@ -154,6 +154,32 @@ Built on real data: index of 477 reports / 53,997 chunks / 53,997 MiniLM embeddi
       author-then-score (never tune on held-out). Seed gold (ACME fixture) scores 100% coverage /
       0% boilerplate — a hermetic smoke; add real company targets for discriminating numbers.
 
+## Phase D — the Grid (Ask, batched over a document set)
+
+- [x] `src/qa/grid.py`: rows are documents, columns are questions, and a cell is one `run_ask`
+      scoped to a single document (`SearchFilters(doc_ids=[doc_id])`). No retrieval, synthesis,
+      citation or caching is re-implemented — Phase C's pipeline is the cell engine.
+- [x] **Cost guardrails, in `src/` so the UI cannot bypass them.** `limits()` clamps config to
+      hard ceilings (12 rows / 6 questions / 24 cells — config may lower, never raise);
+      `plan_run` *refuses* an over-cap matrix instead of truncating it, and `run_batch` raises
+      `GridLimitError`. Only unanswered cells run, so adding a row or a column is incremental.
+      Runs above 8 real LLM calls need an explicit confirmation that fails closed when the
+      checkbox widget is absent.
+- [x] **Nothing computes on a rerun.** A batch runs only while `_grid_run` is in session state,
+      written in exactly one place — the Run button. Batches run `chunk_size` cells per script
+      run and rerun themselves, so the page stays responsive, Stop works, and an interrupted run
+      keeps every finished cell.
+- [x] Honest cells. `run_ask` swallows provider failures and returns the evidence pack, which is
+      indistinguishable from the offline path — so `run_cell` compares against `llm_ready` and
+      reports a broken call as `error`, never as a legitimate evidence cell. Without a key each
+      cell is the document's best-matching passage, labelled as evidence rather than an answer;
+      a document that never mentions the topic reads "not mentioned", never a blank.
+- [x] `configs/grid_presets.yaml` (5 question sets, `agents.yaml` shape); matrix + citations CSV
+      export with evidence cells prefixed `[evidence]`; rows seeded from the documents ticked in
+      the Search rail. Grid is the fourth Explore mode, appended so Search stays the default.
+- [x] Tests: `tests/test_grid.py` (29), `tests/test_grid_panel.py` (23) — including the
+      cost-safety regression test that renders against a retriever which raises on any search.
+
 ## Cross-cutting invariants (all phases)
 
 - Vendored packages are never edited in place — re-sync via `scripts/vendor_sync.py`.
