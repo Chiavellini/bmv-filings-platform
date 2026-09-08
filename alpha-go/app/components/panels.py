@@ -165,9 +165,38 @@ def _literal_terms(query: str) -> list[str]:
     return [phrase] if phrase else []
 
 
+def _widget(st, name: str):
+    """A Streamlit API by name, or ``None`` when the host (or the test stand-in) lacks it.
+
+    The panels are rendered against a minimal ``_FakeSt`` in the unit tests, so every
+    newer/optional widget is looked up this way and skipped when absent.
+    """
+    return getattr(st, name, None)
+
+
+_TONES_KEY = "reader-tones"          # session flag: underline sentence sentiment in the reader
+
+
+def _tones_enabled(st) -> bool:
+    return bool(st.session_state.get(_TONES_KEY, True))
+
+
+@functools.lru_cache(maxsize=2048)
+def _window_tones_cached(win_text: str) -> "tuple[tuple[int, int, str], ...]":
+    """Sentence tone spans for one reader window (memoized: reruns re-render the same window)."""
+    from src.qa.topics import sentence_tones
+
+    return tuple(sentence_tones(win_text))
+
+
 def _render_context(st, *, markdown_path: str, char_start: int, char_end: int,
                     key: str, terms: list[str]) -> None:
-    """Inline windowed document view anchored at a match, with match n/N Prev/Next nav."""
+    """Inline windowed document view anchored at a match, with match n/N Prev/Next nav.
+
+    Positive/negative sentences are underlined green/red (lexicon-scored, per sentence) when the
+    reader's "Sentiment underlines" toggle is on — the search-term ``<mark>`` stays a separate
+    channel, so a hit inside a negative sentence reads as a yellow mark on a red underline.
+    """
     from app.components.doc_matches import active_index, merge_spans, window_view
 
     text = _doc_text(markdown_path)
@@ -198,10 +227,125 @@ def _render_context(st, *, markdown_path: str, char_start: int, char_end: int,
     # looks like it does nothing.
     win_text, win_spans, win_active, win_start = window_view(text, spans, idx,
                                                              before=300, after=3500)
-    html = spans_to_html(win_text, win_spans, active=win_active)
+    tones = list(_window_tones_cached(win_text)) if _tones_enabled(st) else None
+    html = spans_to_html(win_text, win_spans, active=win_active, tones=tones)
     st.markdown(f"<div style='{_DOC_STYLE}'>{html}</div>", unsafe_allow_html=True)
-    st.caption(f"chars {win_start:,}–{win_start + len(win_text):,} of {len(text):,} · "
+    tone_note = ""
+    if tones:
+        pos = sum(1 for _, _, lab in tones if lab == "positive")
+        neg = len(tones) - pos
+        tone_note = f" · underlined: {pos} positive / {neg} negative sentence(s)"
+    st.caption(f"chars {win_start:,}–{win_start + len(win_text):,} of {len(text):,}{tone_note} · "
                f"{markdown_path}")
+
+
+# ---------------------------------------------------------------------------------------------
+# Smart Summary (AlphaSense-style) for the selected document: key takeaways + topics + sections.
+# ---------------------------------------------------------------------------------------------
+_TOPIC_PILL_STYLE = (
+    "display:inline-block;margin:0 .35rem .35rem 0;padding:.1rem .55rem;border-radius:12px;"
+    "border:1px solid #2aa198;color:#2aa198;font-size:.8rem"
+)
+
+
+def _smart_summary_memo(st, *, retriever, doc_id: str, markdown_path: str, company: str,
+                        period: "str | None", title: str, max_sentences: int = 5):
+    """Compute (once per doc per session) the extractive summary, topics and sections."""
+    memo = st.session_state.setdefault("_smart_summary_memo", {})
+    if doc_id in memo:
+        return memo[doc_id]
+    from src.qa import summarize
+    from src.qa.topics import document_sections, document_topics
+
+    text = _doc_text(markdown_path)
+    embedder = None
+    boiler = None
+    try:
+        get_embedder = getattr(retriever, "get_embedder", None)
+        embedder = get_embedder() if callable(get_embedder) else None
+    except Exception:  # noqa: BLE001 — centrality is optional; extractive core still works
+        embedder = None
+    try:
+        boiler_fn = getattr(retriever, "_boilerplate_model", None)
+        boiler = boiler_fn() if callable(boiler_fn) else None
+    except Exception:  # noqa: BLE001
+        boiler = None
+    summ = summarize.summarize_document(
+        text, doc_id=doc_id, title=title, company=company, period=period,
+        markdown_path=markdown_path, embedder=embedder, boilerplate=boiler,
+        max_sentences=max_sentences + 1,
+    )
+    # A markdown heading can pass the extractive salience filter (it is short, central and
+    # front-loaded) but it is a title, not a takeaway — the Sections list already shows it.
+    summ.points = [p for p in summ.points if not p.text.lstrip().startswith("#")][:max_sentences]
+    result = {"summary": summ, "topics": document_topics(text),
+              "sections": document_sections(text)}
+    if len(memo) > 32:
+        memo.clear()
+    memo[doc_id] = result
+    return result
+
+
+def _render_smart_summary(st, *, retriever, doc_id: str, markdown_path: str, company: str,
+                          period: "str | None", title: str, terms: "list[str]") -> None:
+    """Collapsible Smart Summary at the top of the reader pane.
+
+    Key takeaways are the offline extractive summary (each with a tone badge and a "Read in
+    context" jump); Topics are curated concepts the document literally discusses, ranked by
+    count, each a button that opens the reader at the first occurrence; Sections list the
+    document's own headings. Everything is deterministic and labelled as such.
+    """
+    expander = _widget(st, "expander")
+    if expander is None:
+        return
+    data = _smart_summary_memo(st, retriever=retriever, doc_id=doc_id,
+                               markdown_path=markdown_path, company=company, period=period,
+                               title=title)
+    summ, topics, sections = data["summary"], data["topics"], data["sections"]
+    if not (summ.points or topics or sections):
+        return
+    label = "🧠 Smart Summary — " + " · ".join(
+        s for s, ok in (("Key takeaways", bool(summ.points)), (f"{len(topics)} topics", bool(topics)),
+                        (f"{len(sections)} sections", bool(sections))) if ok)
+    with expander(label, expanded=True):
+        st.caption("Offline & deterministic: extractive key takeaways (lexicon tone), literal "
+                   "topic counts from the curated concept dictionary, and the document's own "
+                   "headings. No LLM.")
+        jump_key = f"topic-jump-{doc_id}"
+        col_take, col_topics = st.columns([1.6, 1], gap="medium")
+        with col_take:
+            if summ.points:
+                st.markdown("**Key takeaways**")
+                for i, p in enumerate(summ.points):
+                    badge = _sentiment_badge(p.sentiment, "lexicon tone of this passage")
+                    st.markdown(f"<div style='{_SUMMARY_STYLE}'>{badge} &nbsp;"
+                                f"{spans_to_html(p.text, [])}</div>", unsafe_allow_html=True)
+                    if st.button("Read in context", key=f"take-{doc_id}-{i}"):
+                        st.session_state[jump_key] = (p.char_start, p.char_end, [])
+        with col_topics:
+            if topics:
+                st.markdown("**Topics**")
+                st.caption("Literal occurrence counts · click to jump to the first mention")
+                for t in topics:
+                    if st.button(f"{t.label} · {t.count}", key=f"topic-{doc_id}-{t.label}",
+                                 use_container_width=True):
+                        st.session_state[jump_key] = (t.first_offset, t.first_offset + 1,
+                                                      list(t.phrases) or [t.label])
+            if sections:
+                st.markdown("**Sections**")
+                for j, s in enumerate(sections):
+                    if st.button(s.title, key=f"sec-{doc_id}-{j}", use_container_width=True):
+                        st.session_state[jump_key] = (s.offset, s.offset + 1, [])
+        jump = st.session_state.get(jump_key)
+        if jump:
+            cs, ce, jump_terms = jump
+            st.markdown("**In context**")
+            if st.button("Close", key=f"topic-close-{doc_id}"):
+                st.session_state.pop(jump_key, None)
+                st.rerun()
+            else:
+                _render_context(st, markdown_path=markdown_path, char_start=cs, char_end=ce,
+                                key=f"topic-{doc_id}", terms=list(jump_terms) or list(terms))
 
 
 def _open_document(st, *, doc_id: str, markdown_path: str,
@@ -282,8 +426,22 @@ def _doc_row(st, *, doc_id: str, company: str, period: str, doc_type: str,
     extra = [c for c in (companies or []) if c != company]
     also = f" · also {', '.join(c.upper() for c in extra)}" if extra else ""
     label = f"{company.upper()}{also} · {period or '—'} · {doc_type} · {tail}"
-    if st.button(label, key=f"row-{doc_id}", use_container_width=True,
-                 type="primary" if selected else "secondary"):
+    checkbox = _widget(st, "checkbox")
+    if checkbox is not None:
+        col_pick, col_row = st.columns([0.14, 1], gap="small")
+        with col_pick:
+            picked = set(st.session_state.get(_ASK_PICKED_KEY) or [])
+            if checkbox("pick", key=f"pick-{doc_id}", value=doc_id in picked,
+                        label_visibility="collapsed", help="Select for a multi-document question"):
+                picked.add(doc_id)
+            else:
+                picked.discard(doc_id)
+            st.session_state[_ASK_PICKED_KEY] = sorted(picked)
+        target = col_row
+    else:
+        target = st
+    if target.button(label, key=f"row-{doc_id}", use_container_width=True,
+                     type="primary" if selected else "secondary"):
         st.session_state["reader_doc"] = doc_id
         st.rerun()
 
@@ -426,10 +584,376 @@ def _render_mention_evidence(st, *, doc_id: str, markdown_path: str,
     return True
 
 
+# ---------------------------------------------------------------------------------------------
+# Company card (AlphaSense-style issuer overview) — the reader pane's second mode.
+# ---------------------------------------------------------------------------------------------
+_PANE_KEY = "pane-mode"
+_PANE_OPTIONS = ("Document", "Company")
+_STATUS_ICON = {"received": "✅", "expected": "🗓️", "missing": "⚠️"}
+
+
+def _company_memo(st, *, store, slug: str, catalog, display_name: "str | None"):
+    memo = st.session_state.setdefault("_company_memo", {})
+    if slug in memo:
+        return memo[slug]
+    from src.search.company import company_profile
+
+    profile = company_profile(store, slug, catalog=catalog, display_name=display_name)
+    if len(memo) > 32:
+        memo.clear()
+    memo[slug] = profile
+    return profile
+
+
+def _company_trend(st, *, store, slug: str, query: str):
+    """Mentions of the current query per period for one company (memoized like Trends)."""
+    from src.search.trends import mention_trend
+
+    key = (query, ("company", slug), False)
+    memo = st.session_state.setdefault("_trend_memo", {})
+    if key in memo:
+        return memo[key]
+    try:
+        points = mention_trend(store, query, companies=[slug], expand_synonyms=False)
+    except Exception:  # noqa: BLE001 — a stand-in store without memberships: no sparkline
+        points = None
+    if len(memo) > 16:
+        memo.clear()
+    memo[key] = points
+    return points
+
+
+def _render_company_card(st, *, store, slug: str, display_name: "str | None", query: str,
+                         specs: dict, app_config: "dict | None", doc_type_label) -> None:
+    """The issuer overview: identity, holdings, coverage, mention trend, calendar, events,
+    financials and the other companies in the current results. Index-derived only."""
+    from src.search.company import (
+        companies_in_results, coverage_items, expected_reports, trend_change,
+    )
+
+    cfg = app_config or {}
+    profile = _company_memo(st, store=store, slug=slug, catalog=cfg.get("company_catalog"),
+                            display_name=display_name)
+    label = (doc_type_label if callable(doc_type_label) else (lambda k: k))
+
+    ident = " · ".join(x for x in (
+        f"**{profile.name}**", (f"`{profile.ticker}`" if profile.ticker else None),
+        (str(profile.industry).replace("_", " ").title() if profile.industry else None)) if x)
+    st.markdown(ident)
+    st.caption("Company card — derived from the local index and the BMV catalog only; no market "
+               "data. Coverage is measured against configs/bmv_corpus.yaml.")
+
+    metric = _widget(st, "metric")
+    facts = [("Documents", profile.docs_total), ("Filings", profile.filings_total),
+             ("News", profile.news_total), ("Latest period", profile.latest_period or "—"),
+             ("Periods", len(profile.periods))]
+    cols = st.columns(len(facts))
+    for col, (name, value) in zip(cols, facts):
+        with col:
+            if metric is not None:
+                metric(name, value)
+            else:
+                st.markdown(f"**{name}**: {value}")
+
+    col_l, col_r = st.columns([1, 1], gap="medium")
+    with col_l:
+        st.markdown("**Holdings by document type**")
+        for dt, n in profile.docs_by_type.items():
+            st.markdown(f"- {label(dt)} — {n}")
+        if profile.languages:
+            st.caption("Languages: " + ", ".join(f"{k} {v}" for k, v in profile.languages.items()))
+
+        st.markdown("**Coverage vs contract**")
+        progress = _widget(st, "progress")
+        for item in coverage_items(profile, cfg.get("coverage_contract")):
+            tick = "✅" if item.met else "◻️"
+            text = f"{tick} {item.label}: {item.have} / {item.target}"
+            if progress is not None:
+                progress(item.ratio, text=text)
+            else:
+                st.markdown(text)
+
+    with col_r:
+        st.markdown(f"**Document trend** — mentions of “{query.strip()}” per period")
+        points = _company_trend(st, store=store, slug=slug, query=query) if query.strip() else []
+        if points:
+            import pandas as pd
+            from src.shared.report_index import period_sort_key
+
+            df = pd.DataFrame([{"period": p.period, "mentions": p.mentions} for p in points
+                               if p.period != "Undated"])
+            if not df.empty:
+                df = df.groupby("period", as_index=True).sum()
+                df = df.loc[sorted(df.index, key=period_sort_key)]
+                chart = _widget(st, "bar_chart")
+                if chart is not None:
+                    chart(df, height=160)
+                last, prev, pct = trend_change(points)
+                delta = (f"{pct:+.0f}% vs prior period" if pct is not None
+                         else ("new this period" if last and not prev else "no change"))
+                st.caption(f"{int(df['mentions'].sum())} mention(s) across {len(df)} period(s) · "
+                           f"latest {last} · {delta}")
+        elif points is None:
+            st.caption("Trend unavailable for this store.")
+        else:
+            st.caption("No mentions of the current query for this company.")
+
+        st.markdown("**Reporting calendar** (estimated BMV deadlines)")
+        for rep in expected_reports(profile.periods):
+            icon = _STATUS_ICON.get(rep.status, "")
+            st.markdown(f"- {icon} {rep.period} · {rep.deadline.isoformat()} · {rep.status}")
+
+    if profile.recent_events:
+        st.markdown("**Recent events & releases**")
+        for ev in profile.recent_events:
+            when = ev.date or ev.period or "—"
+            text = f"{when} · {label(ev.doc_type)} · {ev.title or ev.doc_id}"
+            if st.button(text, key=f"event-{ev.doc_id}", use_container_width=True):
+                st.session_state["reader_doc"] = ev.doc_id
+                staged = dict(st.session_state.get(_PENDING_SCOPE) or {})
+                staged[_PANE_KEY] = "Document"
+                st.session_state[_PENDING_SCOPE] = staged
+                st.rerun()
+
+    st.markdown("**Financials** (vendored extraction cascade over the parsed prose)")
+    fin_key = f"fin-open-{slug}"
+    if st.button("Load financials" if not st.session_state.get(fin_key) else "Hide financials",
+                 key=f"fin-btn-{slug}"):
+        st.session_state[fin_key] = not st.session_state.get(fin_key, False)
+        st.rerun()
+    if st.session_state.get(fin_key):
+        try:
+            from app.components import financials
+            financials.render_financials_table(st, cfg, slug)
+        except Exception as exc:  # noqa: BLE001 — the cascade must never take the card down
+            st.caption(f"Financials unavailable ({type(exc).__name__}: {exc}).")
+
+    others = companies_in_results(specs)
+    if len(others) > 1:
+        st.markdown(f"**Companies in these results** — {len(others)}")
+        rows = [{"Company": r["company"].upper(), "Documents": r["documents"],
+                 "Mentions": r["mentions"], "Lanes": r["lanes"]} for r in others]
+        dataframe = _widget(st, "dataframe")
+        if dataframe is not None:
+            dataframe(rows, hide_index=True, use_container_width=True)
+        else:
+            for r in rows:
+                st.markdown(f"- {r['Company']} · {r['Documents']} doc(s) · {r['Mentions']} mention(s)")
+        download = _widget(st, "download_button")
+        if download is not None:
+            import csv
+            import io
+
+            buf = io.StringIO()
+            w = csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
+            w.writeheader()
+            w.writerows(rows)
+            download("Download CSV", buf.getvalue(), file_name="alpha-go-companies.csv",
+                     mime="text/csv", key="companies-csv")
+
+
+_SORT_OPTIONS = ("Most mentions", "Newest first", "Oldest first")
+_VIEW_OPTIONS = ("Detailed", "Table")
+
+# Sidebar filter widget keys owned by app/streamlit_app.py. The panel writes them only through
+# the explicit scope shortcuts below ("Only …", zero-result expansions) — each write is followed
+# by st.rerun() so the sidebar widgets pick the value up on their next instantiation.
+_FLT_INDUSTRIES, _FLT_COMPANIES, _FLT_DOCTYPES, _FLT_DOCUMENTS, _FLT_PERIOD = (
+    "flt-industries", "flt-companies", "flt-doctypes", "flt-documents", "flt-period")
+
+
+def _pick(st, label: str, options: "tuple[str, ...]", *, key: str, default: str,
+          help: "str | None" = None) -> str:
+    """Single-choice control: pills when available, else radio, else the default (tests)."""
+    pills = _widget(st, "pills")
+    if pills is not None:
+        chosen = pills(label, list(options), selection_mode="single", default=default, key=key,
+                       help=help, label_visibility="collapsed")
+        return chosen or default
+    radio = _widget(st, "radio")
+    if radio is not None:
+        return radio(label, list(options), index=list(options).index(default), key=key,
+                     horizontal=True, label_visibility="collapsed", help=help)
+    return default
+
+
+def _sort_doc_groups(groups: list, mode: str) -> list:
+    from app.components.linear_results import sort_groups
+
+    if not groups:
+        return []
+    if mode == "Most mentions":
+        return sorted(groups, key=lambda g: (-g.total_matches, g.company, g.period or ""))
+    return sort_groups(groups, newest_first=(mode == "Newest first"))
+
+
+_PENDING_SCOPE = "_pending_scope"     # staged sidebar-widget writes, applied by the app next run
+_PENDING_QUERY = "_pending_query"     # staged query-box rewrite, applied by the app next run
+
+
+def scope_updates(*, companies: "list[str] | None" = None,
+                  doc_type_labels: "list[str] | None" = None, clear_period: bool = False,
+                  clear_documents: bool = False, clear_all: bool = False) -> dict:
+    """Sidebar-key updates for a scope shortcut (pure). A ``None`` value means "drop the key".
+
+    Streamlit forbids writing a widget's session key after that widget was instantiated in the
+    current run, and the sidebar is drawn before the results — so the panel never writes these
+    keys itself; it stages them under ``_PENDING_SCOPE`` and the app applies them at the top
+    of the next run (``app.streamlit_app._apply_pending_state``).
+    """
+    out: dict = {}
+    if clear_all:
+        out.update({_FLT_INDUSTRIES: [], _FLT_COMPANIES: [], _FLT_DOCTYPES: [],
+                    _FLT_DOCUMENTS: [], _FLT_PERIOD: None})
+    if companies is not None:
+        out[_FLT_COMPANIES] = list(companies)
+        out[_FLT_DOCUMENTS] = []
+    if doc_type_labels is not None:
+        out[_FLT_DOCTYPES] = list(doc_type_labels)
+        out[_FLT_DOCUMENTS] = []
+    if clear_period:
+        out[_FLT_PERIOD] = None
+    if clear_documents:
+        out[_FLT_DOCUMENTS] = []
+    return out
+
+
+def apply_pending_state(session_state) -> None:
+    """Apply staged scope/query writes to ``session_state`` (call BEFORE the widgets are built)."""
+    pending = session_state.pop(_PENDING_SCOPE, None) or {}
+    for k, v in pending.items():
+        if v is None:
+            session_state.pop(k, None)
+        else:
+            session_state[k] = v
+    q = session_state.pop(_PENDING_QUERY, None)
+    if q is not None:
+        session_state["query"] = q
+
+
+def _set_scope(st, **kwargs) -> None:
+    """Stage a sidebar scope change (see :func:`scope_updates`) and rerun."""
+    staged = dict(st.session_state.get(_PENDING_SCOPE) or {})
+    staged.update(scope_updates(**kwargs))
+    st.session_state[_PENDING_SCOPE] = staged
+    st.rerun()
+
+
+def _render_zero_result_expansions(st, *, query: str, filters, metric_terms: list,
+                                   alias_terms: list) -> None:
+    """AlphaSense-style one-click ways out of an empty result: widen scope or try wording."""
+    actions = []
+    if filters is not None:
+        if getattr(filters, "period_from", None) or getattr(filters, "period_to", None):
+            actions.append(("Show all periods", dict(clear_period=True)))
+        if getattr(filters, "doc_ids", None):
+            actions.append(("Drop the specific-document filter", dict(clear_documents=True)))
+        if getattr(filters, "doc_types", None):
+            actions.append(("All document types", dict(doc_type_labels=[])))
+        if getattr(filters, "companies", None) or getattr(filters, "industries", None):
+            actions.append(("Search the whole corpus", dict(clear_all=True)))
+    if actions:
+        st.caption("Expand results:")
+        cols = st.columns(len(actions))
+        for col, (label, kwargs) in zip(cols, actions):
+            with col:
+                if st.button(label, key=f"expand-{label}", use_container_width=True):
+                    _set_scope(st, **kwargs)
+    suggestions = list(dict.fromkeys([*metric_terms, *alias_terms]))[:6]
+    if suggestions:
+        st.caption("Try related wording instead:")
+        cols = st.columns(len(suggestions))
+        for col, term in zip(cols, suggestions):
+            with col:
+                if st.button(term, key=f"try-{term}", use_container_width=True):
+                    st.session_state[_PENDING_QUERY] = term
+                    st.rerun()
+
+
+_ASK_PICKED_KEY = "ask_picked"        # doc_ids ticked in the rail for a multi-document question
+
+
+def _stage_ask(st, *, doc_ids: list, question: str) -> None:
+    """Switch to the Ask mode scoped to ``doc_ids`` with ``question`` pre-filled, next run."""
+    staged = dict(st.session_state.get(_PENDING_SCOPE) or {})
+    staged.update({"explore-mode": "Ask", _FLT_DOCUMENTS: list(doc_ids)})
+    st.session_state[_PENDING_SCOPE] = staged
+    st.session_state["_ask_prefill"] = question
+    st.rerun()
+
+
+def _render_scope_chips(st, *, company: str, doc_type: str, doc_type_label,
+                        doc_id: "str | None" = None, query: str = "") -> None:
+    """AlphaSense's per-facet "Only" shortcut, applied to the selected document's facets, plus
+    "Ask about this document" (AlphaSense's chat-with-selected-content)."""
+    label = doc_type_label(doc_type) if callable(doc_type_label) else doc_type
+    if doc_id:
+        if st.button("✨ Ask about this document", key=f"ask-doc-{doc_id}",
+                     help="Open the Ask mode scoped to just this document",
+                     use_container_width=True):
+            _stage_ask(st, doc_ids=[doc_id], question=(query or "").strip())
+    c1, c2, c3 = st.columns(3, gap="small")
+    with c1:
+        if st.button(f"Only {company.upper()}", key=f"only-co-{company}",
+                     help="Scope the search to this company", use_container_width=True):
+            _set_scope(st, companies=[company])
+    with c2:
+        if st.button(f"Only {label}", key=f"only-dt-{doc_type}",
+                     help="Scope the search to this document type", use_container_width=True):
+            _set_scope(st, doc_type_labels=[label])
+    with c3:
+        if st.button("Hits across this company's " + str(label).lower(),
+                     key=f"only-codt-{company}-{doc_type}",
+                     help="Same query, scoped to this company and document type",
+                     use_container_width=True):
+            _set_scope(st, companies=[company], doc_type_labels=[label])
+
+
+def _render_results_table(st, *, rows: list, sel: str) -> None:
+    """Table view of the result rail (AlphaSense's second list mode); selecting a row opens it."""
+    dataframe = _widget(st, "dataframe")
+    if dataframe is None:
+        return
+    import pandas as pd
+
+    df = pd.DataFrame(rows, columns=["Company", "Period", "Type", "Lane", "Mentions", "Tone",
+                                     "doc_id"])
+    try:
+        event = dataframe(
+            df.drop(columns=["doc_id"]), hide_index=True, use_container_width=True,
+            on_select="rerun", selection_mode="single-row", key="results-table",
+        )
+        picked = (event.selection.rows if event is not None and hasattr(event, "selection")
+                  else [])
+    except TypeError:            # an older Streamlit without on_select — static table only
+        dataframe(df.drop(columns=["doc_id"]), hide_index=True, use_container_width=True)
+        picked = []
+    if picked:
+        doc_id = df.iloc[picked[0]]["doc_id"]
+        if doc_id != sel:
+            st.session_state["reader_doc"] = doc_id
+            st.rerun()
+
+
+def _tone_summary(markdown_path: str, spans: list) -> str:
+    """Compact 🟢/🔴 tone tally for a document's mention spans (table view column)."""
+    if not spans:
+        return "—"
+    from src.search.mention_analytics import tone_counts
+
+    counts = tone_counts(list(_mention_tones_cached(markdown_path, tuple(spans[:60]))))
+    return f"🟢{counts['positive']} 🟡{counts['neutral']} 🔴{counts['negative']}"
+
+
 def render_search(st, retriever, *, query: str, filters, limit: int = 20,
-                  search_cfg: "dict | None" = None) -> None:
+                  search_cfg: "dict | None" = None, doc_type_label=None,
+                  app_config: "dict | None" = None) -> None:
     """Search results — linear occurrence view: documents in chronological order, every
-    keyword occurrence shown in document order (k/N), read-in-context inline."""
+    keyword occurrence shown in document order (k/N), read-in-context inline.
+
+    ``doc_type_label`` maps a raw doc_type to the sidebar's display label (the taxonomy's
+    ``label_for``) so the "Only <type>" scope chips write values the sidebar widget accepts.
+    """
     if not query or not query.strip():
         st.caption("Type a query above to search the corpus.")
         return
@@ -462,8 +986,13 @@ def render_search(st, retriever, *, query: str, filters, limit: int = 20,
         st.session_state.pop("reader_doc", None)          # new search → auto-open the top result
         # New search → drop match-nav positions so old navigation state can't bleed into
         # the new result set (the viewer would otherwise open at an arbitrary match).
-        for k in [k for k in st.session_state if k.startswith("m-")]:
+        for k in [k for k in st.session_state if k.startswith("m-") or k.startswith("topic-jump-")]:
             del st.session_state[k]
+        # A shareable link (?q=…&doc=…) names the document to open; honour it on the first
+        # search only, then fall back to the normal "top result" behaviour.
+        pending = st.session_state.pop("_pending_reader_doc", None)
+        if pending:
+            st.session_state["reader_doc"] = pending
 
     from src.index.keyword_index import (
         analog_synonym_phrases,
@@ -473,7 +1002,7 @@ def render_search(st, retriever, *, query: str, filters, limit: int = 20,
     )
     from src.qa.sentiment import sentiment_color
 
-    from app.components.linear_results import group_hits, sort_groups
+    from app.components.linear_results import group_hits
 
     # The primary finder is literal plus vetted direct translations.  Broader curated metric
     # wording remains in the clearly separate related-wording lane below.
@@ -498,11 +1027,26 @@ def render_search(st, retriever, *, query: str, filters, limit: int = 20,
                                    doc_rows=doc_rows, max_docs=docs_shown) if alias_terms else [])
         gcache[docs_shown] = (literal_groups, metric_groups, alias_groups)
 
-    newest_first = (st.toggle("Newest first", value=False, key="sort-newest")
-                    if (literal_groups or metric_groups or alias_groups) else False)
-    literal_groups = sort_groups(literal_groups, newest_first=newest_first) if literal_groups else []
-    metric_groups = sort_groups(metric_groups, newest_first=newest_first) if metric_groups else []
-    alias_groups = sort_groups(alias_groups, newest_first=newest_first) if alias_groups else []
+    any_groups = bool(literal_groups or metric_groups or alias_groups)
+    sort_mode = "Oldest first"
+    view_mode = "Detailed"
+    if any_groups:
+        ctl_sort, ctl_view, ctl_tone = st.columns([2, 1.2, 1.2], gap="small")
+        with ctl_sort:
+            sort_mode = _pick(st, "Sort", _SORT_OPTIONS, key="sort-mode", default="Most mentions",
+                              help="Order of the result list")
+        with ctl_view:
+            view_mode = _pick(st, "View", _VIEW_OPTIONS, key="view-mode", default="Detailed",
+                              help="Detailed rows or a sortable table")
+        with ctl_tone:
+            toggle = _widget(st, "toggle")
+            if toggle is not None:
+                st.session_state.setdefault(_TONES_KEY, True)
+                toggle("Sentiment underlines", key=_TONES_KEY,
+                       help="Underline positive (green) / negative (red) sentences in the reader")
+    literal_groups = _sort_doc_groups(literal_groups, sort_mode)
+    metric_groups = _sort_doc_groups(metric_groups, sort_mode)
+    alias_groups = _sort_doc_groups(alias_groups, sort_mode)
 
     true_docs = len(literal_groups)
     true_occ = sum(g.total_matches for g in literal_groups)
@@ -574,19 +1118,64 @@ def render_search(st, retriever, *, query: str, filters, limit: int = 20,
                    + list(concept_specs))
     if not ordered_ids:
         st.warning("No matches. Try broader terms or clear the sidebar filters.")
+        _render_zero_result_expansions(st, query=query, filters=filters,
+                                       metric_terms=metric_terms, alias_terms=alias_terms)
         return
 
     # Auto-open the top result; the user's pick persists across reruns (reset only on a new search).
+    # A document picked outside the result set (an event from the company card) opens too — as
+    # a plain "browse" entry with no mention evidence, the way AlphaSense opens any filing.
     sel = st.session_state.get("reader_doc")
     if sel not in specs:
-        sel = ordered_ids[0]
-        st.session_state["reader_doc"] = sel
+        browse_row = next((r for r in doc_rows if r["doc_id"] == sel), None) if sel else None
+        if browse_row is not None:
+            specs[sel] = dict(
+                kind="browse", company=browse_row["company"], period=browse_row["period"],
+                doc_type=browse_row["doc_type"], title=browse_row["title"],
+                markdown_path=browse_row["markdown_path"], offset_phrases=[(0, [])], via=[],
+                match_spans=[], total_matches=None, highlight_terms=literal_terms,
+                companies=[browse_row["company"]],
+            )
+        else:
+            sel = ordered_ids[0]
+            st.session_state["reader_doc"] = sel
 
     # ---- Two-pane AlphaSense layout: the results list (left) + the actual document (right) ----
     left, right = st.columns([1, 2.4], gap="medium")
 
+    table_mode = view_mode == "Table" and _widget(st, "dataframe") is not None
     with left:
-        if mention_groups:
+        picked = [d for d in (st.session_state.get(_ASK_PICKED_KEY) or []) if d in specs]
+        if picked:
+            if st.button(f"✨ Ask about {len(picked)} selected document(s)", key="ask-picked",
+                         type="primary", use_container_width=True):
+                _stage_ask(st, doc_ids=picked, question=query.strip())
+        if table_mode:
+            st.markdown(
+                f"**Mentions** ({'bilingual exact' if bilingual_terms else 'exact'}) — "
+                f"{true_occ} across {true_docs} document(s)"
+            )
+            st.caption(_coverage_note(retriever.store, doc_rows))
+            lane_name = {"mention": "Mentions", "expanded": "Related", "analog": "Analog",
+                         "concept": "Concept"}
+            table_rows = []
+            for doc_id in ordered_ids:
+                e = specs[doc_id]
+                table_rows.append([
+                    e["company"].upper(), e["period"] or "—",
+                    (doc_type_label(e["doc_type"]) if callable(doc_type_label) else e["doc_type"]),
+                    lane_name.get(e["kind"], e["kind"]),
+                    e["total_matches"] if e["kind"] == "mention" else None,
+                    _tone_summary(e["markdown_path"], e.get("match_spans", [])),
+                    doc_id,
+                ])
+            _render_results_table(st, rows=table_rows, sel=sel)
+            if true_docs > len(mention_groups):
+                if st.button(f"Show more (+{min(limit, true_docs - len(mention_groups))})",
+                             key="more-docs", use_container_width=True):
+                    st.session_state["_docs_shown"] = docs_shown + limit
+                    st.rerun()
+        elif mention_groups:
             capped = (f" · top {len(mention_groups)} of {true_docs} by relevance"
                       if true_docs > len(mention_groups) else "")
             st.markdown(
@@ -608,7 +1197,7 @@ def render_search(st, retriever, *, query: str, filters, limit: int = 20,
         elif not (metric_groups or analog_groups or concept_specs):
             st.caption("No literal mentions found.")
 
-        if metric_groups:
+        if metric_groups and not table_mode:
             if mention_groups:
                 st.divider()
             st.markdown(
@@ -629,7 +1218,7 @@ def render_search(st, retriever, *, query: str, filters, limit: int = 20,
                          doc_type=g.doc_type, count=None, via=specs[g.doc_id]["via"],
                          selected=g.doc_id == sel, companies=g.companies)
 
-        if analog_groups:
+        if analog_groups and not table_mode:
             if mention_groups or metric_groups:
                 st.divider()
             st.markdown("**Analogs** — curated domain analogs (your analogs.yaml), not the "
@@ -638,7 +1227,7 @@ def render_search(st, retriever, *, query: str, filters, limit: int = 20,
                 _doc_row(st, doc_id=g.doc_id, company=g.company, period=g.period,
                          doc_type=g.doc_type, count=None, via=specs[g.doc_id]["via"],
                          selected=g.doc_id == sel, companies=g.companies)
-        if concept_specs:
+        if concept_specs and not table_mode:
             st.divider()
             st.markdown("**Concepts** — semantic matches from the local embedding model")
             for doc_id, e in concept_specs.items():
@@ -649,7 +1238,28 @@ def render_search(st, retriever, *, query: str, filters, limit: int = 20,
     with right:
         e = specs[sel]
         selected_row = next((r for r in doc_rows if r["doc_id"] == sel), None)
-        st.markdown(f"**{e['company'].upper()}** · {e['period'] or '—'} · {e['doc_type']}")
+        type_label = (doc_type_label(e["doc_type"]) if callable(doc_type_label) else e["doc_type"])
+        title = " ".join(str(e.get("title") or "").split())
+        head_l, head_r = st.columns([2.2, 1], gap="small")
+        with head_l:
+            st.markdown(f"**{e['company'].upper()}** · {e['period'] or '—'} · {type_label}"
+                        + (f" — {title}" if title and title != sel else ""))
+        with head_r:
+            pane = _pick(st, "Pane", _PANE_OPTIONS, key=_PANE_KEY, default="Document",
+                         help="Read the document, or see the issuer's company card")
+        if pane == "Company":
+            _render_company_card(st, store=retriever.store, slug=e["company"],
+                                 display_name=None, query=query, specs=specs,
+                                 app_config=app_config, doc_type_label=doc_type_label)
+            return
+        _render_scope_chips(st, company=e["company"], doc_type=e["doc_type"],
+                            doc_type_label=doc_type_label, doc_id=sel, query=query)
+        if e["kind"] == "browse":
+            st.caption("Opened from the company card — no query evidence in this document; the "
+                       "reader shows it from the top.")
+        _render_smart_summary(st, retriever=retriever, doc_id=sel,
+                              markdown_path=e["markdown_path"], company=e["company"],
+                              period=e["period"], title=title or sel, terms=e["highlight_terms"])
         if (selected_row is not None and "source_format" in selected_row.keys()
                 and selected_row["source_format"] == "news" and selected_row["source_url"]):
             if hasattr(st, "link_button"):
