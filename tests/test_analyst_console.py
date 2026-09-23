@@ -131,6 +131,34 @@ def test_job_manager_runs_argv_and_persists_log(tmp_path: Path, monkeypatch) -> 
     assert "summary" in job.public() and "detail" in job.public()
 
 
+def test_segments_job_surfaces_unverified_candidate(tmp_path: Path, monkeypatch) -> None:
+    """A stale-Estate build hands back its review candidate, clearly labelled."""
+    project = tmp_path / "project"
+    candidate = project / "outputs" / "Soriana" / "excel" / "Soriana_segments.xlsx"
+    candidate.parent.mkdir(parents=True)
+    candidate.write_bytes(b"xlsx")
+    (project / "outputs" / "latest").mkdir(parents=True)
+    (project / "outputs" / "latest" / "Other.xlsx").write_bytes(b"published elsewhere")
+    state = tmp_path / "state"
+    request_id = "0123456789abcdef"
+    request_dir = state / "requests" / request_id
+    request_dir.mkdir(parents=True)
+    result = {"status": "candidate_unverified", "fresh": False, "workbook": str(candidate)}
+    (request_dir / "result.json").write_text(json.dumps(result), encoding="utf-8")
+
+    def command(_root, key, *_args, **_kwargs):
+        return Operation(key, key, "models", key, mutates=True), ["/usr/bin/true"], tmp_path
+
+    monkeypatch.setattr("src.analyst_console.jobs.operation_command", command)
+    manager = JobManager(project, state, {})
+    job = _wait_for(manager, manager.create("segments_model", {"request": request_id})["id"])
+
+    assert job.status == "completed"
+    assert job.artifacts == [str(candidate.resolve())]
+    assert job.message == "Candidato para revisión: frescura del Estate no verificada"
+    assert job.summary["fresh"] is False
+
+
 def test_job_manager_reads_extract_summary_and_failure_detail(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -199,8 +227,8 @@ def test_console_serves_launchpad_and_bootstrap(console_server: str) -> None:
     assert "Todo lo que necesitas" not in html
     assert "Cada herramienta conserva su propio espacio" not in html
     assert "Lanzadores de proyectos" in html
-    assert 'href="./app.css?v=12"' in html
-    assert 'src="./app.js?v=12"' in html
+    assert 'href="./app.css?v=13"' in html
+    assert 'src="./app.js?v=13"' in html
     assert html.count('class="module-option" data-dialog=') == 2
     assert 'data-open="latest_extract"' in html
     assert 'id="extractor-file" type="file" accept="application/pdf,.pdf" multiple' in html
@@ -285,10 +313,13 @@ def test_segments_request_creates_strict_markdown_and_analyst_contract(
         environment={"ANALYST_CONSOLE_STATE_DIR": str(tmp_path / "state")},
     )
     assert operation.key == "segments_model"
-    assert argv[1:3] == ["scripts/build_segments.py", str(request_dir / "input.md")]
+    assert operation.mutates is True  # the directed pre-build sync writes the catalog
+    assert argv[1:3] == ["scripts/console_segments.py", str(request_dir / "input.md")]
+    assert argv[argv.index("--slug") + 1] == "soriana"
     assert "--analyst-metrics" in argv
-    assert "--estate-only" in argv
+    assert argv[argv.index("--result") + 1] == str(request_dir / "result.json")
     assert "--force-download" not in argv
+    assert "--allow-stale-estate" not in argv
     assert cwd == ROOT
 
 
@@ -360,6 +391,56 @@ def test_github_pages_origin_can_reach_local_bridge(console_server: str) -> None
     assert rejected.value.headers["Access-Control-Allow-Origin"] == pages_origin
 
 
+def test_alpha_launch_never_waits_for_streamlit_onboarding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fresh Mac has no ~/.streamlit/credentials.toml; the launch must be headless."""
+    from src.analyst_console import server
+
+    _pretend_project_pythons_are_installed(monkeypatch)
+    captured: dict = {}
+
+    class Finished:
+        pid = 4242
+
+        def poll(self):
+            return 0
+
+    def popen(argv, **kwargs):
+        captured["argv"], captured["kwargs"] = argv, kwargs
+        return Finished()
+
+    monkeypatch.setattr(server.subprocess, "Popen", popen)
+    monkeypatch.setattr(server.AlphaLauncher, "_port_open", staticmethod(lambda: False))
+    index = tmp_path / "alpha_go.db"
+    index.write_bytes(b"")
+    launcher = server.AlphaLauncher(ROOT, tmp_path, {"ALPHA_GO_INDEX_DB": str(index)})
+    with pytest.raises(OperationError, match="no pudo iniciar"):
+        launcher.launch()
+
+    argv = captured["argv"]
+    assert argv[argv.index("--server.headless") + 1] == "true"
+    assert argv[argv.index("--server.address") + 1] == "127.0.0.1"
+    assert captured["kwargs"]["stdin"] is server.subprocess.DEVNULL
+
+
+def test_alpha_launch_requires_the_estate_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Started without the USB, Alpha would keep an empty index after connecting."""
+    from src.analyst_console import server
+
+    _pretend_project_pythons_are_installed(monkeypatch)
+    monkeypatch.setattr(server.AlphaLauncher, "_port_open", staticmethod(lambda: False))
+    monkeypatch.setattr(
+        server.subprocess, "Popen", lambda *_a, **_kw: pytest.fail("must not start Alpha")
+    )
+    environment = {"PDFS_DOCUMENT_ESTATE": str(tmp_path / "unplugged" / "bmv-estate-v1")}
+    launcher = server.AlphaLauncher(ROOT, tmp_path, environment)
+    with pytest.raises(OperationError, match="Conecta el USB Estate"):
+        launcher.launch()
+
+
 def test_console_rejects_non_loopback_binding(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="local"):
         create_server(host="0.0.0.0", state_dir=tmp_path, port=0)
@@ -403,6 +484,107 @@ def test_estate_connect_explains_when_usb_is_absent(monkeypatch) -> None:
     monkeypatch.setattr("src.analyst_console.server.time.sleep", lambda *_a: None)
     with pytest.raises(OperationError, match="No encontré el USB Estate"):
         device.connect()
+
+
+def _fake_usb(volumes: Path, estate_id: str, *, volume: str = "Estate") -> Path:
+    """A mounted-USB-shaped tree: ``<volumes>/<volume>/bmv-estate-v1``."""
+    estate = volumes / volume / "bmv-estate-v1"
+    estate.mkdir(parents=True)
+    (estate / ".bmv-estate-volume.json").write_text(
+        json.dumps({"schema_version": 1, "estate_id": estate_id}), encoding="utf-8"
+    )
+    (estate / "catalog.db").write_bytes(b"")
+    return estate
+
+
+def _fresh_checkout(tmp_path: Path) -> Path:
+    """A project root with the tracked bridge file and no ``.env`` at all."""
+    project = tmp_path / "clone"
+    project.mkdir()
+    (project / "estate.json").write_text(
+        (ROOT / "estate.json").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    return project
+
+
+class _IdleJobs:
+    def active(self):
+        return []
+
+
+def test_estate_connect_from_blank_env_finds_usb_by_sentinel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fresh Mac with no .env must become connected with one click.
+
+    Without a .env the configured estate directory is the repo-local
+    ``document_estate`` default, so discovery has to go by the sentinel; and
+    the mount root and estate ID are validated as a pair, so both must land in
+    the rewritten .env.
+    """
+    estate_id = "56EC1117-38A4-4F38-A135-408F04AF9A89"
+    volumes = tmp_path / "Volumes"
+    (volumes / "Unrelated").mkdir(parents=True)
+    estate = _fake_usb(volumes, estate_id)
+    project = _fresh_checkout(tmp_path)
+    monkeypatch.setattr("estate_volume.os.path.ismount", lambda path: True)
+    monkeypatch.setattr("src.analyst_console.server.subprocess.run", lambda *_a, **_kw: None)
+
+    environment: dict[str, str] = {}
+    device = EstateDevice(project, environment, _IdleJobs(), object(), volumes_root=volumes)
+    result = device.connect()
+
+    assert result["connected"] is True
+    written = dict(
+        line.split("=", 1)
+        for line in (project / ".env").read_text(encoding="utf-8").splitlines()
+    )
+    assert written["PDFS_ESTATE_MOUNT_ROOT"] == str((volumes / "Estate").resolve())
+    assert written["PDFS_DOCUMENT_ESTATE"] == str(estate.resolve())
+    assert written["PDFS_ESTATE_ID"] == estate_id
+    assert written["PDFS_ALPHA_INDEX"] == str(estate.resolve() / "indexes" / "alpha_go.db")
+    assert environment["PDFS_ESTATE_ID"] == estate_id
+
+
+def test_estate_connect_keeps_unrelated_env_lines_and_skips_wrong_estate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    expected = "56EC1117-38A4-4F38-A135-408F04AF9A89"
+    volumes = tmp_path / "Volumes"
+    _fake_usb(volumes, "00000000-0000-0000-0000-000000000001", volume="Another")
+    estate = _fake_usb(volumes, expected, volume="Estate 1")
+    project = _fresh_checkout(tmp_path)
+    (project / ".env").write_text(
+        f"# keep me\nDEEPSEEK_API_KEY=abc\nPDFS_ESTATE_ID={expected}\n", encoding="utf-8"
+    )
+    monkeypatch.setattr("estate_volume.os.path.ismount", lambda path: True)
+    monkeypatch.setattr("src.analyst_console.server.subprocess.run", lambda *_a, **_kw: None)
+
+    environment = {"PDFS_ESTATE_ID": expected}
+    device = EstateDevice(project, environment, _IdleJobs(), object(), volumes_root=volumes)
+    assert device.connect()["connected"] is True
+
+    text = (project / ".env").read_text(encoding="utf-8")
+    assert "# keep me" in text and "DEEPSEEK_API_KEY=abc" in text
+    assert f"PDFS_DOCUMENT_ESTATE={estate.resolve()}" in text
+    assert text.count("PDFS_ESTATE_ID=") == 1
+
+
+def test_estate_connect_rejects_usb_with_other_estate_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    volumes = tmp_path / "Volumes"
+    _fake_usb(volumes, "00000000-0000-0000-0000-000000000001")
+    project = _fresh_checkout(tmp_path)
+    monkeypatch.setattr("estate_volume.os.path.ismount", lambda path: True)
+    monkeypatch.setattr("src.analyst_console.server.subprocess.run", lambda *_a, **_kw: None)
+    monkeypatch.setattr("src.analyst_console.server.time.sleep", lambda *_a: None)
+
+    environment = {"PDFS_ESTATE_ID": "56EC1117-38A4-4F38-A135-408F04AF9A89"}
+    device = EstateDevice(project, environment, _IdleJobs(), object(), volumes_root=volumes)
+    with pytest.raises(OperationError, match="No encontré el USB Estate"):
+        device.connect()
+    assert not (project / ".env").exists()
 
 
 def test_mass_refresh_requires_estate_and_exclusive_alpha(

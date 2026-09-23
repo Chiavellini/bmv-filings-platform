@@ -123,11 +123,21 @@ def test_walmex_config_and_filings_cached():
 
     ``data/reports`` is deliberately excluded from Git, so its absence in a
     clean clone is an environment condition rather than a code failure.
+
+    ``PDFS_REPORTS_DIR`` may also point at an estate's ``views/reports`` — the
+    compatibility view, which holds PDFs and legacy Markdown. The current parsed
+    Markdown lives in its sibling ``views/parsed``, so counting only the first
+    directory reports zero for a corpus that is fully present. Read them as one
+    union, the way root's ``build_segments._report_sources`` does. Deriving the
+    sibling from ``REPORTS_DIR`` rather than the estate bridge keeps soft
+    self-contained (see ``src/shared/paths.py``); when ``REPORTS_DIR`` is soft's
+    own ``data/reports`` the extra candidate simply does not exist.
     """
     from src.shared.paths import REPORTS_DIR
 
     assert (SOFT_ROOT / "configs" / "walmex.yaml").is_file()
-    reports = REPORTS_DIR / "walmex"
-    if not reports.is_dir():
+    candidates = (REPORTS_DIR / "walmex", REPORTS_DIR.parent / "parsed" / "walmex")
+    present = [d for d in candidates if d.is_dir()]
+    if not present:
         pytest.skip("optional WALMEX filing corpus is not attached")
-    assert len(list(reports.glob("*.md"))) >= 20
+    assert sum(len(list(d.glob("*.md"))) for d in present) >= 20

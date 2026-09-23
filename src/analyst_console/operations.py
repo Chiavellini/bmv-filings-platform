@@ -84,6 +84,8 @@ OPERATIONS = {
             "Generar modelo de segmentos",
             "models",
             "Crea el modelo de Segmentos listo para el analista.",
+            # The directed pre-build sync writes the Estate catalog.
+            mutates=True,
             company_source="segments",
         ),
         Operation(
@@ -189,15 +191,20 @@ def operation_command(
             markdown, analyst_csv, metadata = resolve_prepared_request(
                 Path(raw_state_dir).resolve(), str(params.get("request") or "")
             )
+            # console_segments.py runs a strict directed sync when the issuer is
+            # not already fresh, then build_segments.run(estate_only=True).
             argv = [
                 str(root_python),
-                "scripts/build_segments.py",
+                "scripts/console_segments.py",
                 str(markdown),
+                "--slug",
+                str(metadata.get("slug") or ""),
                 "--analyst-metrics",
                 str(analyst_csv),
                 "--analyst-company",
                 str(metadata.get("ticker") or metadata.get("company") or ""),
-                "--estate-only",
+                "--result",
+                str(markdown.parent / "result.json"),
             ]
             cwd = project_root
         else:

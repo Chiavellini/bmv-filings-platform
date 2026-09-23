@@ -15,6 +15,7 @@ def test_refresh_builds_registry_directed_estate_commands(tmp_path: Path, monkey
         alpha_go_index_path=estate / "indexes" / "alpha_go.db",
     )
     monkeypatch.setattr(refresh, "_require_estate", lambda: bridge)
+    monkeypatch.delenv("PDFS_ALPHA_TARGET_ID", raising=False)
     original_is_file = Path.is_file
 
     def installed_runtime(path: Path) -> bool:
@@ -49,6 +50,11 @@ def test_refresh_builds_registry_directed_estate_commands(tmp_path: Path, monkey
     assert str(bridge.catalog_path) in delivery
     assert str(bridge.alpha_go_index_path) in delivery
     assert str(bridge.alpha_go_corpus_dir) in delivery
+    # With no explicit target the certified index generation is used; v1 named
+    # a superseded partial index whose receipts must not be reused
+    # (docs/ALPHA_GO_ESTATE_SYNC.md "Index generations").
+    target = delivery[delivery.index("--alpha-target-id") + 1]
+    assert target == "portable-estate-v2"
 
     news = calls[2][1]
     assert news[-2:] == ["--companies", "ac"]

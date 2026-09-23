@@ -87,3 +87,19 @@ def test_params_from_state_is_the_inverse_and_omits_empties():
                                           "_pending_reader_doc": "ac/2025-4T"}
     assert _params_from_state(query="", companies=[], doc_type_labels=[], industries=[],
                               reader_doc=None) == {}
+
+
+def test_index_error_tells_analyst_to_connect_the_usb(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from app import streamlit_app
+
+    monkeypatch.delenv("ALPHA_GO_INDEX_DB", raising=False)
+    monkeypatch.setattr(
+        streamlit_app, "ESTATE_BRIDGE", SimpleNamespace(alpha_go_index_path=tmp_path / "absent.db")
+    )
+    message = streamlit_app._index_error_message(RuntimeError("no such table: meta"))
+    assert "USB Estate is not connected" in message and "Conectar Estate" in message
+
+    monkeypatch.setenv("ALPHA_GO_INDEX_DB", str(tmp_path / "local.db"))
+    assert "Build it first" in streamlit_app._index_error_message(RuntimeError("x"))

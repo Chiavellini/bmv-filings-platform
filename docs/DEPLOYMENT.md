@@ -108,7 +108,7 @@ python3 scripts/process_estate_outbox.py run --apply \
   --enable-alpha-go \
   --alpha-corpus data/document_estate/projections/alpha-go \
   --alpha-index data/document_estate/indexes/alpha_go.db \
-  --alpha-target-id portable-estate-v1 \
+  --alpha-target-id portable-estate-v2 \
   --alpha-config alpha-go/configs/alpha_go.yaml --json
 
 # Periodic authoritative safety net for legacy/no-event writes and removals.
@@ -116,7 +116,7 @@ python3 scripts/process_estate_outbox.py reconcile-alpha --apply \
   --estate-root data/document_estate \
   --alpha-corpus data/document_estate/projections/alpha-go \
   --alpha-index data/document_estate/indexes/alpha_go.db \
-  --alpha-target-id portable-estate-v1 \
+  --alpha-target-id portable-estate-v2 \
   --alpha-config alpha-go/configs/alpha_go.yaml --json
 
 # Read-only equality proof: eligible estate == manifest == matching index rows.

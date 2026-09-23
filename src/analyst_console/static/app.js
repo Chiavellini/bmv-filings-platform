@@ -41,12 +41,12 @@ async function api(path, options = {}) {
   return payload;
 }
 
-function toast(message, error = false) {
+function toast(message, error = false, duration = 3600) {
   const element = $("#toast");
   element.textContent = message;
   element.className = `toast show${error ? " error" : ""}`;
   clearTimeout(element._timer);
-  element._timer = setTimeout(() => { element.className = "toast"; }, 3600);
+  element._timer = setTimeout(() => { element.className = "toast"; }, duration);
 }
 
 function status(element, text, tone = "ready") {
@@ -334,6 +334,21 @@ function collectExtractorRequest() {
   };
 }
 
+function segmentsResultToast(job, opened) {
+  if (job.summary?.status === "candidate_unverified") {
+    return {
+      text: `Hoja ${opened ? "abierta" : "generada"} como candidato para revisión: no se pudo `
+        + "verificar hoy que la biblioteca esté al día (frescura no verificada). "
+        + "La versión publicada no cambió.",
+      error: true,
+    };
+  }
+  return {
+    text: opened ? "Hoja de segmentos terminada y abierta en Excel." : `${job.label}: ${job.message.toLocaleLowerCase("es-MX")}.`,
+    error: false,
+  };
+}
+
 function extractorResultToast(job, opened) {
   const summary = job.summary;
   if (!summary || typeof summary.found !== "number") {
@@ -496,6 +511,9 @@ function ensurePolling(watchedJobId = null, openResult = false) {
           if (watched.operation === "pdf_extract") {
             const result = extractorResultToast(watched, opened);
             toast(result.text, result.error);
+          } else if (watched.operation === "segments_model") {
+            const result = segmentsResultToast(watched, opened);
+            toast(result.text, result.error, result.error ? 12000 : 3600);
           } else if (opened) {
             toast("Hoja de segmentos terminada y abierta en Excel.");
           }
@@ -634,7 +652,8 @@ $("#estate-toggle").addEventListener("click", async () => {
     toast(payload.message || "Estate conectado.");
     await refresh();
   } catch (error) {
-    toast(error.message, true);
+    button.textContent = "Conectar Estate";
+    toast(error.message, true, 8000);
   } finally {
     button.disabled = false;
   }

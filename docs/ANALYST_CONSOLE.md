@@ -7,24 +7,117 @@ Excel.
 
 ## Destination Mac: one-time preparation
 
-The person preparing the destination Mac installs the repository environment
-and its loopback bridge once:
+Requirements: an Apple Silicon Mac (Alpha Go pins `torch==2.13.0`, which has no
+Intel-Mac wheels), macOS 14 Sonoma or later (Safari's **Add to Dock**),
+[Homebrew](https://brew.sh), Excel, internet for the install, and the Estate
+USB. Ports 8765 (bridge) and 8501 (Alpha Go) must be free.
+
+**1. Interpreters.** Each module declares its own Python. Do not substitute
+`python3`, and do not use 3.14 (its Homebrew build breaks `openpyxl`, so every
+Excel build fails):
+
+```bash
+brew install python@3.13 python@3.12 python@3.11
+for v in 3.13 3.12 3.11; do python$v -c "import pyexpat, ssl; print('$v ok')"; done
+```
+
+All three must print `ok`. A Homebrew bottle built for a newer macOS point
+release can link a system `libexpat` symbol the installed macOS lacks. Then
+even `pip` fails, with `Symbol not found: _XML_SetAllocTrackerActivationThreshold`.
+This happened to `python@3.12` 3.12.14 on macOS 26.0.1. Either update macOS, or
+use a self-contained interpreter from [uv](https://docs.astral.sh/uv/) for that
+version and use it wherever the steps below say `python3.12`:
+
+```bash
+brew install uv
+uv python install 3.12
+PY312="$(uv python find 3.12)"    # then: "$PY312" -m venv .venv312
+```
+
+**2. Clone** under `~/Code`, not `~/Desktop`, `~/Documents` or `~/Downloads`.
+macOS privacy controls can stop the background bridge from reading those
+folders, and iCloud sync can evict files:
+
+```bash
+mkdir -p ~/Code && cd ~/Code
+git clone https://github.com/Chiavellini/bmv-filings-platform.git
+cd bmv-filings-platform
+```
+
+**3. Environments.** The root one runs the bridge, the Extractor and the Estate
+tools, and Alpha Go has its own. Soft's is needed only for the Soft card:
 
 ```bash
 python3.13 -m venv .venv
 .venv/bin/python -m pip install -e ".[test]"
+
+(cd alpha-go && python3.12 -m venv .venv312 && .venv312/bin/pip install -r requirements.txt)
+
+# optional, Soft card only
+(cd soft && python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt)
+```
+
+**4. Settings file.** `cp .env.example .env` and change nothing. Every line in
+it is either commented out or a safe default, and the Estate values are filled
+in by **Conectar Estate** in step 7. Never copy another Mac's `.env`, because it
+holds that Mac's absolute paths.
+
+**5. Bridge.** Install once. It starts at login and restarts itself if it exits:
+
+```bash
 .venv/bin/python scripts/install_analyst_console.py install
 ```
 
-Then open
+The launchd agent records this clone's absolute path, so re-run `install` if the
+repository moves. The bridge reads `.env` only at start. After editing `.env` by
+hand, restart it with
+`launchctl kickstart -k gui/$(id -u)/com.bmv.analyst-console`.
+
+**6. Dock icon.** Open
 [`https://chiavellini.github.io/bmv-filings-platform/`](https://chiavellini.github.io/bmv-filings-platform/)
 in Safari, choose **File → Add to Dock**, and keep **BMV** in the Dock. This
-GitHub Pages URL—not a `file://` path or `localhost`—is the permanent entry
+GitHub Pages URL, not a `file://` path or `localhost`, is the permanent entry
 point. Closing it or restarting the Mac never requires a manual restart.
+
+**7. Estate.** Plug in the USB, wait for it to appear in Finder, then press
+**Conectar Estate** on the launchpad. The bridge finds the drive by its
+`.bmv-estate-volume.json` sentinel and writes `PDFS_ESTATE_MOUNT_ROOT`,
+`PDFS_DOCUMENT_ESTATE` and `PDFS_ESTATE_ID` into `.env`. If macOS asks whether
+Python may access files on a removable volume, choose **Allow**. If it was
+denied, the Estate stays "desconectado" until access is granted under System
+Settings → Privacy & Security → Files and Folders. Alpha Go runs offline: its
+embedding model is read from the USB's
+`models/paraphrase-multilingual-MiniLM-L12-v2/` and is never downloaded.
+
+**8. Check.** Everything here is read-only:
+
+```bash
+set -a; . ./.env; set +a
+.venv/bin/python scripts/check_estate_connection.py --require-alpha-index --json
+```
+
+Expect `"connected": true` and `"problems": []`. Then open Alpha Go from the
+launchpad and run one search. The launchpad refuses to open Alpha until the Estate
+is connected, because Alpha reads its search index from the USB. The **first**
+launch after installing takes a minute or two while Python compiles the new
+environment. Later launches take seconds.
 
 The external Estate must be mounted for estate-backed actions. When it is not
 mounted, the launchpad remains available and reports the connection problem
-without attempting a fallback write.
+without attempting a fallback write. The PDF extractor needs neither the Estate
+nor the network.
+
+**Segments sheets and freshness.** A workbook is published to `outputs/latest/`
+only when the issuer has a successful strict Estate sync from the last 24
+hours. **Generar una hoja de segmentos** handles this itself. If the issuer is
+not already fresh, it first runs a strict one-issuer sync (this needs the
+network and writes the USB catalog), then builds. If that sync cannot prove
+freshness, for example offline or with a source coverage gap, the sheet still
+opens, but as a **candidate for review**. The launchpad says *frescura no
+verificada*, the build manifest records the missing receipt, and the published
+workbook in `outputs/latest/` is left unchanged. **Actualizar biblioteca
+completa** does not make issuers fresh for this purpose, because it tolerates
+coverage gaps.
 
 ## Local bridge
 
@@ -95,8 +188,11 @@ available without leaking one company's KPIs into another.
 
 For each run the bridge writes a private Markdown specification and matching
 normalized analyst-request CSV under `data/analyst_console/requests/`. Both are
-passed to `scripts/build_segments.py`, preserving the pinned-metric,
-analyst-fidelity, and fresh-Estate publication gates.
+passed to `scripts/console_segments.py`. It runs a strict directed sync when the
+issuer is not already fresh, then calls `scripts/build_segments.py` with its
+pinned-metric, analyst-fidelity, and fresh-Estate publication gates intact.
+A stale-Estate build comes back as a labelled review candidate. Any other
+failed gate fails the job (see "Segments sheets and freshness" above).
 
 ## Directed Estate refresh
 

@@ -37,7 +37,10 @@ def has_corpus(slug: str | None = None) -> bool:
     target = REPORTS_DIR / slug if slug else REPORTS_DIR
     if not target.is_dir():
         return False
-    return any(target.glob("*.md")) or any(target.iterdir())
+    # A directory tree with no files is not a corpus. A Segments run without an
+    # attached estate leaves an empty ``data/reports/<slug>/`` behind, and that
+    # alone used to un-skip test_no_regression into 17 false failures.
+    return any(path.is_file() for path in target.rglob("*"))
 
 
 def skip_without_corpus(slug: str | None = None) -> None:

@@ -4,7 +4,7 @@ Deliberately deferred items, recorded so they are decisions rather than
 surprises. Each entry says what is wrong, why it was not fixed, and what fixing
 it would cost. Nothing here blocks day-to-day use; several block *distribution*.
 
-Last reviewed: 2026-07-29.
+Last reviewed: 2026-09-22.
 
 ---
 
@@ -208,3 +208,104 @@ real and has been purged (catalog backed up first to
 `catalog.db.pre-acme-purge-2026-08-07.backup`); the residual manifest
 SHA/count mismatch that remains afterward is the expected behavior described
 above, not further leakage.
+
+## 11. `PDFS_REPORTS_DIR` redirects `REPORTS_DIR` at a view that holds no Markdown
+
+Attaching an estate exports `PDFS_REPORTS_DIR=<estate>/views/reports`, and root, `soft/`,
+`alpha-go/`, and `earnings/vendor/alpha-go/` each bind their own `REPORTS_DIR` from it **at module
+import time**. That is deliberate, but it silently changes what a "reports directory" contains:
+
+| | `views/reports/<slug>/` | `views/parsed/<slug>/` |
+|---|---|---|
+| Holds | PDFs, legacy Markdown, XBRL facts JSON | current versioned acquisition derivatives (`.md`) |
+| Configurable | yes — `estate.json` `reports_view`, `PDFS_REPORTS_DIR` | no — hardcoded, `src/shared/paths.py` |
+| On duplicate periods | loses | wins (`src/extract/pipeline.py`) |
+| Constant exists in | root, soft, alpha-go, earnings | **root only** |
+
+A walmex slice of the certified estate is 387 PDFs and zero `.md` in the reports view, with its 49
+parsed Markdown files in the sibling parsed view. Any consumer that globs `*.md` in one directory
+therefore reports an empty corpus for a corpus that is fully present. Root already solved this
+three times — `scripts/build_segments.py::_report_sources`, `scripts/report_coverage.py::_corpus_dirs`,
+and `src/eval/compare_extractions.py` — each reading the views as one ordered union. **Follow that
+union in any new consumer.**
+
+Found 2026-08-13 by the second-machine acceptance run, which hit it twice:
+`tests/test_paths.py::test_dir_constants_are_expected_children` asserted the repo-local child
+unconditionally, and `soft/tests/test_smoke.py::test_walmex_config_and_filings_cached` counted
+Markdown in the reports view alone. Both failed *because* the operator followed the documented
+setup. Both are fixed.
+
+**Still open — the guard in `tests/_corpus.py` disagrees with the constant its callers read.**
+It hardcodes `REPORTS_DIR = ROOT/"data"/"reports"` while `test_paths.py`, `test_era_gate.py`, and
+`test_ebitda_quarter_patterns.py` go on to read `src.shared.paths.REPORTS_DIR`. Under an estate the
+two point at different trees, so `skip_without_corpus()` reports "corpus not checked out" for a
+corpus that is attached — a silent false *skip*, the mirror image of the two failures above.
+
+**Not fixed because** the obvious repair makes things worse. Pointing the guard at the overridable
+constant is not enough: `has_corpus()` returns true for *any* non-empty directory
+(`... or any(target.iterdir())`), so a PDF-only view reads as a present corpus and
+`tests/test_no_regression.py` — whose own comment says it "reads every company's parsed filings" —
+un-skips and fails all 17 companies. Measured against a synthetic estate-shaped tree: 1 failure
+before, 17 after. A correct fix also has to make `has_corpus()` require the Markdown its callers
+actually read, and that cannot be validated without the USB attached, since whether
+`views/reports/<slug>/` carries legacy Markdown varies by issuer.
+
+**Also still open**: `soft/` has no `conftest.py` at all, so it has no equivalent of the autouse
+`_bundle_env_isolation` fixture that `tests/test_estate_bridge.py` and
+`tests/test_alpha_index_completeness.py` use to keep an exported `.env` out of hermetic tests. Note
+that a fixture cannot fix path-constant tests anyway — those constants bind at import, so such
+tests must derive their expectation from the environment instead.
+
+## 12. The certified estate carries no soft-derived XBRL facts
+
+`EstateReader.xbrl_facts_map("walmex", project="soft")` returns `{}` against the connected bundle:
+no artifact anywhere in the catalog matches `*_facts.json` for walmex under that project.
+
+The cause is structural rather than walmex-specific. `project="soft"` rows are written by exactly
+one place — `scripts/build_document_estate.py`, which calls
+`import_tree(estate, "soft", ROOT/"soft"/"data"/"reports")` against **the builder host's local soft
+corpus**. A bundle exported from a host where that tree is absent or empty carries no such rows,
+and because `import_tree` calls `reset_project()` first, a rebuild on such a host also wipes any
+that a previous build had registered.
+
+`tests/test_estate_reader.py::test_live_catalog_walmex_soft_facts` now skips on absent data instead
+of failing — its `skipif` marker gated on the catalog *file* existing, never on its contents. The
+project-filter contract it covers is exercised hermetically by
+`test_project_filter_separates_soft_and_root_facts` against the synthetic catalog, so little is
+lost.
+
+**Cost to fix**: re-run soft's XBRL derivation and register the artifacts. That is an estate write,
+so it needs the USB attached and belongs with the other deliberate write operations, not in a test
+run.
+
+## 13. Two complete dashboard panels are unreachable from the UI
+
+`alpha-go/app/components/panels.py` defines `render_summary` and `render_financials` — both fully
+implemented, the latter backed by all of `app/components/financials.py` — and **nothing calls
+either**. `app/streamlit_app.py` dispatches `render_search`, `render_trends` and Ask
+(`app/components/ask.py`, over `src/qa/ask.py`), and
+`alpha-go/tests/test_dashboard_modes.py::test_explore_modes_are_search_trends_ask` locks the mode
+list in: `assert _EXPLORE_MODES == ("Search", "Trends", "Ask")`. What *is* reachable besides the
+three modes lives inside the Search reader pane: a per-document Smart Summary
+(`_render_smart_summary`) and a Document/Company toggle whose Company pane is the company card
+(`_render_company_card`). The card's **Load financials** button reaches
+`financials.render_financials_table` directly, so only the `panels.render_financials` wrapper is
+dead. The older cited-Q&A module `src/qa/rag.py` is still library-only.
+
+That financials table reads `alpha-go/data/corpus/<slug>/*.md` (`app/components/financials.py`), a
+repo-local tree that neither a fresh clone nor the Estate provides. With only the USB attached it
+therefore always shows "No parsed reports for <slug>". It degrades cleanly, but it is empty on every
+machine that has no local corpus. Pointing it at the Estate's parsed view needs the USB to confirm the
+file layout.
+
+Four documents once claimed the standalone panels shipped and sent the second-machine tester
+hunting for them; they were corrected on 2026-08-13, and corrected again on 2026-09-22 after commit
+5f72f20c added Ask and the company card (`ALPHA_ESTATE_SECOND_MACHINE_TEST.md`,
+`ALPHA_ESTATE_AGENT_HANDOFF.md`, `alpha-go/README.md`, `alpha-go/docs/ROADMAP.md`). `ROADMAP.md`
+also documented `render_doc_viewer`, a function that no longer exists — in-document reading happens
+inside `render_search` via `html_view.py`/`pdf_view.py`.
+
+**Still open**: whether to wire the two standalone panels in or delete them. Wiring means extending
+`_EXPLORE_MODES` and updating `test_dashboard_modes.py`, and neither panel has any test coverage
+(`tests/test_summarize.py` exercises `src/qa/summarize.py` directly, never the panel). Until that is
+decided the docs describe what is reachable, not what is implemented.

@@ -158,8 +158,8 @@ class JobManager:
                         check=False,
                     )
                 succeeded = completed.returncode == 0
-                artifacts = self._artifacts_for(job, before) if succeeded else []
                 summary = self._summary_for(job) if succeeded else None
+                artifacts = self._artifacts_for(job, before, summary) if succeeded else []
                 detail = None if succeeded else self._failure_detail(log_path)
                 with self._lock:
                     job.exit_code = completed.returncode
@@ -186,10 +186,13 @@ class JobManager:
                     self._write(job)
 
     def _summary_for(self, job: Job) -> dict[str, Any] | None:
-        if job.operation != "pdf_extract":
-            return None
         request = str(job.params.get("request") or "")
-        path = self.project_root / "outputs" / "extractor" / request / "summary.json"
+        if job.operation == "segments_model":
+            path = self.state_dir / "requests" / request / "result.json"
+        elif job.operation == "pdf_extract":
+            path = self.project_root / "outputs" / "extractor" / request / "summary.json"
+        else:
+            return None
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -223,12 +226,24 @@ class JobManager:
                         pass
         return result
 
-    def _artifacts_for(self, job: Job, before: dict[Path, int]) -> list[Path]:
+    def _artifacts_for(
+        self,
+        job: Job,
+        before: dict[Path, int],
+        summary: dict[str, Any] | None = None,
+    ) -> list[Path]:
         candidates: list[Path] = []
         if job.operation == "soft_model":
             candidates = list((self.project_root / "soft" / "outputs").glob("*/excel/*.xlsx"))
         elif job.operation == "segments_model":
-            candidates = list((self.project_root / "outputs" / "latest").glob("*.xlsx"))
+            # The wrapper names the exact workbook: the published handoff, or an
+            # unpublished review candidate when Estate freshness is unproven.
+            workbook = (summary or {}).get("workbook")
+            outputs = (self.project_root / "outputs").resolve()
+            if workbook and Path(workbook).resolve().is_relative_to(outputs):
+                candidates = [Path(workbook)]
+            else:
+                candidates = list((self.project_root / "outputs" / "latest").glob("*.xlsx"))
         elif job.operation == "pdf_extract":
             folder = (
                 self.project_root / "outputs" / "extractor"
@@ -276,6 +291,10 @@ class JobManager:
 def _summary_message(summary: dict[str, Any] | None) -> str | None:
     if not summary:
         return None
+    if summary.get("status") == "candidate_unverified":
+        return "Candidato para revisión: frescura del Estate no verificada"
+    if summary.get("status") == "published":
+        return "Publicado y listo para abrir"
     found, requested = summary.get("found"), summary.get("requested")
     if not isinstance(found, int) or not isinstance(requested, int):
         return None

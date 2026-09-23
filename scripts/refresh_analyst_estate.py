@@ -75,7 +75,7 @@ def main(argv: list[str] | None = None) -> int:
         quarterly.extend(("--only", issuer))
     _run("Documentos trimestrales dirigidos", quarterly, cwd=ROOT, dry_run=args.dry_run)
 
-    target_id = os.environ.get("PDFS_ALPHA_TARGET_ID", "portable-estate-v1")
+    target_id = os.environ.get("PDFS_ALPHA_TARGET_ID", "portable-estate-v2")
     delivery = [
         str(root_cli / "process-estate-outbox"),
         "run",

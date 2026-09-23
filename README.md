@@ -91,9 +91,14 @@ estate-v1/
 For a transferred USB, keep the checked-in bridge relative and create an
 untracked `.env` from `.env.example`:
 
+On an analyst Mac, follow the step-by-step setup in
+[`docs/ANALYST_CONSOLE.md`](docs/ANALYST_CONSOLE.md): after `cp .env.example .env`,
+**Conectar Estate** on the launchpad writes the three Estate values itself. For
+command-line use, uncomment them instead:
+
 ```bash
 cp .env.example .env
-# Set the destination computer's actual values in .env:
+# Uncomment and set the destination computer's actual values in .env:
 # PDFS_ESTATE_MOUNT_ROOT=<mounted USB root>
 # PDFS_DOCUMENT_ESTATE=<mounted USB root>/bmv-estate-v1
 # PDFS_ESTATE_ID=<ID from .bmv-estate-volume.json>
