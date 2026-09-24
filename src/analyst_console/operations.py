@@ -104,8 +104,36 @@ OPERATIONS = {
 }
 
 
+_CATALOG_CACHE: dict[Path, tuple[tuple[float, ...], dict[str, list[dict[str, str]]]]] = {}
+
+
+def _catalog_signature(project_root: Path) -> tuple[float, ...]:
+    """Cheap staleness key: the registry plus the soft inputs directory."""
+    stamps: list[float] = []
+    for candidate in (
+        project_root / "configs" / "issuers.yaml",
+        project_root / "soft" / "inputs",
+    ):
+        try:
+            stamps.append(candidate.stat().st_mtime)
+        except OSError:
+            stamps.append(-1.0)
+    return tuple(stamps)
+
+
 def company_catalog(project_root: Path) -> dict[str, list[dict[str, str]]]:
-    """Return the only company values accepted by model operations."""
+    """Return the only company values accepted by model operations.
+
+    Cached on the registry's mtime. This is called from ``bootstrap()``, which the
+    launchpad polls every 1.8 s, and rebuilding it parses ``configs/issuers.yaml``
+    (179 issuers) plus every file in ``soft/inputs`` -- measured at ~8.8 s cold and
+    0.7-1.5 s warm. Uncached, the first page load appeared to hang and every poll
+    burned most of the polling interval re-reading files that had not changed.
+    """
+    signature = _catalog_signature(project_root)
+    cached = _CATALOG_CACHE.get(project_root)
+    if cached is not None and cached[0] == signature:
+        return cached[1]
 
     def rows(folder: Path) -> list[dict[str, str]]:
         result = []
@@ -139,12 +167,14 @@ def company_catalog(project_root: Path) -> dict[str, list[dict[str, str]]]:
     ]
     segment_companies.sort(key=lambda row: row["name"].casefold())
 
-    return {
+    catalog = {
         "soft": rows(project_root / "soft" / "inputs"),
         # Segment extraction is backed by the canonical BMV issuer registry,
         # not by the small set of hand-written Markdown examples in inputs/.
         "segments": segment_companies,
     }
+    _CATALOG_CACHE[project_root] = (signature, catalog)
+    return catalog
 
 
 def operation_command(

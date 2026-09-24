@@ -182,12 +182,36 @@ class AlphaLauncher:
             return False
 
     def _pid(self) -> int | None:
+        """The PID of a *live* Alpha Go, or None.
+
+        Alpha Go is spawned with Popen and never waited on, so when it exits it
+        becomes a zombie -- and ``os.kill(pid, 0)`` succeeds for a zombie. That
+        made a crashed or stopped Alpha Go report ``running: True`` forever:
+        ``launch()`` short-circuited on the stale pid, returned success, and the
+        launchpad navigated the analyst to a dead http://127.0.0.1:8501. Only
+        restarting the bridge cleared it. Reap the child here so "exited" is
+        distinguishable from "running".
+        """
         try:
             pid = int(self.pid_path.read_text(encoding="utf-8").strip())
-            os.kill(pid, 0)
-            return pid
         except (OSError, ValueError):
             return None
+        try:
+            reaped, _status = os.waitpid(pid, os.WNOHANG)
+            if reaped == pid:
+                self.pid_path.unlink(missing_ok=True)
+                return None
+        except ChildProcessError:
+            pass  # Not our child -- e.g. the pid file outlived a bridge restart.
+        except OSError:
+            self.pid_path.unlink(missing_ok=True)
+            return None
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            self.pid_path.unlink(missing_ok=True)
+            return None
+        return pid
 
     def status(self) -> dict[str, Any]:
         pid = self._pid()
@@ -485,6 +509,43 @@ class ConsoleApplication:
             self.jobs,
             self.alpha,
         )
+        # Warm the company catalog off the critical path, so the analyst's first
+        # page load does not pay for parsing the 179-issuer registry. The bridge
+        # starts at login, so this finishes long before the launchpad is opened.
+        # Done on a thread rather than inline: blocking __init__ for seconds would
+        # delay the port bind and slow every consumer that constructs an
+        # application. A failure is not fatal -- bootstrap() rebuilds and reports.
+        def _warm_catalog() -> None:
+            try:
+                company_catalog(self.project_root)
+            except Exception:  # noqa: BLE001 - warming must never break startup
+                pass
+
+        threading.Thread(
+            target=_warm_catalog, name="analyst-catalog-warm", daemon=True
+        ).start()
+
+    def prepare_estate_write(self, key: str, confirmation: object) -> None:
+        """Refuse an estate-writing operation unless the estate is really there.
+
+        ``estate_refresh_all`` had these preconditions; ``soft_expand_apply`` --
+        which downloads filings into the estate -- had none, and went straight to
+        ``jobs.create``. Its only de-facto protection was an unrelated crash
+        earlier in the same script.
+        """
+        operation = OPERATIONS[key]
+        validate_confirmation(operation, confirmation)
+        if self.jobs.active():
+            raise OperationError(
+                "Hay una tarea en proceso. Espera a que termine antes de "
+                "escribir en el Estate."
+            )
+        status = self.estate.status()
+        if not status["connected"]:
+            raise OperationError(
+                status.get("detail")
+                or "Conecta el USB Estate antes de ampliar la biblioteca."
+            )
 
     def prepare_estate_refresh(self, confirmation: object) -> None:
         """Make the USB index exclusively available to the fleet refresh."""
@@ -746,6 +807,10 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                 if operation_key == "estate_refresh_all":
                     self.server.application.prepare_estate_refresh(
                         body.get("confirmation")
+                    )
+                elif operation_key == "soft_expand_apply":
+                    self.server.application.prepare_estate_write(
+                        operation_key, body.get("confirmation")
                     )
                 job = self.server.application.jobs.create(
                     operation_key,

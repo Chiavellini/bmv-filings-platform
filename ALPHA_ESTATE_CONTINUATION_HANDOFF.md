@@ -81,7 +81,7 @@ index then asserted the gate passed. That fixture now builds a real index via `t
 ### Semantic index — BUILT, **certified 10/10**, not yet promoted
 
 ```
-/private/tmp/claude-501/-Users-bernardodelrio-Code-bmv-filings-platform/\
+/private/tmp/claude-501/-Users-<username>-Code-bmv-filings-platform/\
 2449713e-1bfb-4456-a419-aee334f587ad/scratchpad/build/alpha_go_semantic.db
 ```
 1,745,862,656 bytes · finished 2026-08-04 17:42
@@ -163,7 +163,7 @@ independent confirmation — it is read-only and takes ~3 minutes (`PRAGMA quick
 ```bash
 cd ~/Code/bmv-filings-platform
 set -a; . ./.env; set +a
-S=/private/tmp/claude-501/-Users-bernardodelrio-Code-bmv-filings-platform/2449713e-1bfb-4456-a419-aee334f587ad/scratchpad
+S=/private/tmp/claude-501/-Users-<username>-Code-bmv-filings-platform/2449713e-1bfb-4456-a419-aee334f587ad/scratchpad
 ./.venv/bin/python "$S/promotion_checks.py" "$S/build/alpha_go_semantic.db" --expected-dim 384
 ```
 

@@ -14,6 +14,30 @@ from pathlib import Path
 
 import pytest
 
+# ---------------------------------------------------------------------------
+# Estate isolation — must run before any `src` import
+# ---------------------------------------------------------------------------
+# ``PDFS_DOCUMENT_ESTATE`` deliberately overrides ``estate.json``, and
+# ``src/shared/paths.py`` resolves the bridge at *import* time.  A shell with
+# ``.env`` exported — exactly what the deployment instructions ask for — would
+# therefore point every tmp_path bundle and every default path at the real
+# external estate.  On 2026-08-07 that leaked fixture rows into the production
+# catalog.  Clearing the variables here, before the first ``src`` import,
+# guarantees the suite always runs against the checkout-relative estate.
+#
+# The autouse fixture below repeats this per test so a test that sets one of
+# these variables cannot leak it into the next.
+ESTATE_ENV_VARS = (
+    "PDFS_DOCUMENT_ESTATE",
+    "PDFS_ESTATE_BRIDGE",
+    "PDFS_REPORTS_DIR",
+    "PDFS_ESTATE_MOUNT_ROOT",
+    "PDFS_ESTATE_ID",
+)
+
+for _name in ESTATE_ENV_VARS:
+    os.environ.pop(_name, None)
+
 # Ensure project root is on the path when running from tests/
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
@@ -116,6 +140,18 @@ def _read_report(stem: str) -> str:
     from src.shared.materialize import materialize
     materialize([path], per_file_timeout=180)
     return path.read_text(encoding="utf-8")
+
+
+@pytest.fixture(autouse=True)
+def _estate_env_isolation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Resolve estate paths from the checkout, never from the operator's shell.
+
+    Defence in depth for the module-level clearing above: a test that sets one
+    of these variables must not leak it into the next test.  See
+    ``ESTATE_ENV_VARS`` for why this matters.
+    """
+    for name in ESTATE_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture(scope="session", autouse=True)

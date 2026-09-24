@@ -14,6 +14,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from estate_bridge import EstateBridgeError, load_estate_bridge  # noqa: E402
+from estate_volume import (  # noqa: E402
+    ESTATE_ID_ENV,
+    MOUNT_ROOT_ENV,
+    inspect_estate_volume,
+)
 
 
 def inspect_connection(
@@ -45,12 +50,19 @@ def inspect_connection(
                     counts[table] = connection.execute(
                         f"SELECT COUNT(*) FROM {table}"
                     ).fetchone()[0]
+        volume = inspect_estate_volume(
+            bridge.estate_root,
+            mount_root=os.environ.get(MOUNT_ROOT_ENV),
+            expected_estate_id=os.environ.get(ESTATE_ID_ENV),
+        )
         result.update(
             {
                 "connected": integrity == "ok",
                 "sqlite_quick_check": integrity,
                 "counts": counts,
                 "alpha_go_index_available": bridge.alpha_go_index_path.is_file(),
+                "identity_verified": volume.identity_verified,
+                "identity_problems": list(volume.problems),
             }
         )
         return result, 0 if result["connected"] else 1
@@ -138,6 +150,16 @@ def main(argv: list[str] | None = None) -> int:
                 else "not present in bundle"
             )
         )
+        if result.get("identity_verified"):
+            print("Estate identity: VERIFIED against the volume sentinel")
+        else:
+            print(
+                f"Estate identity: UNVERIFIED — set {MOUNT_ROOT_ENV} and "
+                f"{ESTATE_ID_ENV} together to prove this is the right disk "
+                "and that it is actually mounted"
+            )
+            for problem in result.get("identity_problems") or []:
+                print(f"- {problem}")
     else:
         print("Estate connection failed:", file=sys.stderr)
         for problem in result.get("problems") or []:

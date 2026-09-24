@@ -67,6 +67,7 @@ src/
   eval/       compare_extractions.py                  # accuracy vs ground truth
   model/      financial_model.py, sport_metrics.py    # metric registry + configs glue
   shared/     paths.py, validator.py, report_index.py, document_estate.py # cross-cutting helpers
+  analyst_console/ loopback bridge + published launchpad assets (the analyst's entry point)
 scripts/      build_segments.py                        # one-command markdown → Segments xlsx
 configs/      <company>.yaml + <company>_segments.yaml, xbrl_concepts.yaml
 data/
@@ -76,7 +77,6 @@ data/
   style/               optional private reference workbooks (not in Git)
 docs/         current guides, architecture, deployment, and verification records
 tests/        pytest suite
-archive/      retired/duplicate artifacts (safe to delete)
 ```
 
 All resource paths resolve through `src/shared/paths.py` (`PROJECT_ROOT`, `CONFIGS_DIR`,

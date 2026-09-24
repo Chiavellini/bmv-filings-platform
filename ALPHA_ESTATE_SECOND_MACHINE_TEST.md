@@ -23,11 +23,14 @@ to report, not a result to paper over.
 1. Never erase, format, repartition, force-unmount, or rename the USB.
 2. Never delete or modify Estate document objects under `blobs/`.
 3. Never inject test documents, fixture rows, or fake outbox events into the production Estate —
-   this exact class of bug (leaked pytest fixtures reaching the real catalog) was found and fixed
-   on 2026-08-07; do not reintroduce it. If you run any test suite, confirm first that Estate
-   env vars (`PDFS_DOCUMENT_ESTATE`, `PDFS_ESTATE_BRIDGE`, `PDFS_REPORTS_DIR`,
-   `PDFS_ESTATE_MOUNT_ROOT`, `PDFS_ESTATE_ID`) are **not** exported into the test shell, or that
-   the suite's autouse fixture clears them.
+   this exact class of bug (leaked pytest fixtures reaching the real catalog) was found on
+   2026-08-07; do not reintroduce it. The root suite now clears the five Estate variables
+   (`PDFS_DOCUMENT_ESTATE`, `PDFS_ESTATE_BRIDGE`, `PDFS_REPORTS_DIR`, `PDFS_ESTATE_MOUNT_ROOT`,
+   `PDFS_ESTATE_ID`) in `tests/conftest.py` — at import time, before the first `src` import, and
+   again per test — so a sourced `.env` can no longer redirect fixtures at the real Estate.
+   `tests/test_estate_env_isolation.py` proves it. Confirm that test passes before running any
+   other suite with the USB attached, and take a `catalog.db` SHA-256 before and after as
+   independent evidence.
 4. Treat the catalog and existing indexes/checkpoints as read-only unless a step below explicitly
    says to write.
 5. Do not run `sync --apply`, `process-estate-outbox run --apply`, or `reconcile-alpha --apply`
@@ -72,6 +75,11 @@ python3.13 -m venv .venv
 .venv/bin/python -m pip install -e ".[test]"
 ```
 
+This test only reads, so the `browser` extra is not required. A machine that
+will *acquire* documents needs `-e ".[test,browser]"` plus
+`.venv/bin/python -m playwright install chromium`; `scripts/check_download_runtime.py`
+reports which issuers degrade without it.
+
 Alpha Go environment:
 ```bash
 cd alpha-go
@@ -93,6 +101,12 @@ python3.11 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 cd ..
 ```
+
+All four interpreters must be the declared versions — 3.13 root, 3.12 Alpha Go,
+3.11 Soft and Earnings. If `python3.12` or `python3.11` is missing, install it
+(`uv python install 3.12.13`) rather than substituting the machine's default.
+Do **not** use Homebrew's `python3.14`: its `pyexpat` is broken, which silently
+breaks every `openpyxl` import and therefore every Excel build.
 
 Mount the USB Estate, find its actual root, then point `.env` at it:
 ```bash
@@ -231,8 +245,8 @@ Wrong Estate ID:
 ### 4.7 Full test suites (no-estate baseline, then estate-attached)
 
 ```bash
-.venv/bin/python -m pytest -q -m "not network"
-cd alpha-go && .venv312/bin/python -m pytest -q -m "not network" && cd ..
+.venv/bin/python -m pytest -q -m "not network and not model"
+cd alpha-go && .venv312/bin/python -m pytest -q -m "not network and not model" && cd ..
 cd soft && .venv/bin/python -m pytest -q -m "not network and not model" && cd ..
 cd earnings && .venv/bin/python -m pytest -q -m "not network and not model" && cd ..
 ```

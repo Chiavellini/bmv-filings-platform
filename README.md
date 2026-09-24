@@ -73,6 +73,21 @@ python3.13 -m venv .venv
 .venv/bin/python -m pip install -e ".[test]"
 ```
 
+Nine issuers download through a headless browser or an impersonating HTTP
+client. `[test]` does not install those, and the failure is silent — the
+downloader degrades instead of erroring. Add the `browser` extra if this
+machine will acquire documents, then verify:
+
+```bash
+.venv/bin/python -m pip install -e ".[test,browser]"
+.venv/bin/python -m playwright install chromium
+.venv/bin/python scripts/check_download_runtime.py
+```
+
+`check_download_runtime.py` exits non-zero and names the affected issuers when a
+runtime is missing. A machine that only reads an existing estate does not need
+this.
+
 ## Connect a local document estate
 
 [`estate.json`](estate.json) is the single user-facing bridge between the code
@@ -169,7 +184,7 @@ native-service, launchd, health, and migration details are in
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest -q -m "not network"
+.venv/bin/python -m pytest -q -m "not network and not model"
 ```
 
 A fresh clone has no `data/reports/` corpus (15 GB, gitignored), so tests that
@@ -230,6 +245,6 @@ tested database/object-storage backend contract. See
 - [Airflow and second-computer portability contract](docs/deployment/AIRFLOW_PORTABILITY.md)
 - [Document estate](docs/DOCUMENT_ESTATE.md) — including the table-ownership map
 - [Deployment and worker safety](docs/DEPLOYMENT.md)
-- [Extraction pipeline deep-dive and documentation index](docs/README.md)
+- [Extraction pipeline deep-dive](docs/README.md)
 - [Known issues and deferred work](docs/KNOWN_ISSUES.md)
 - [Sweep baseline, 2026-07-29](docs/sweep/BASELINE_2026-07-29.md)

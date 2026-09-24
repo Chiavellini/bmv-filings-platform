@@ -5,11 +5,12 @@ from pathlib import Path
 import threading
 import time
 from urllib.error import HTTPError
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 import pytest
 
-from src.analyst_console.jobs import JobManager
+from src.analyst_console.jobs import Job, JobManager
 from src.analyst_console.operations import (
     Operation,
     OperationError,
@@ -17,7 +18,12 @@ from src.analyst_console.operations import (
     operation_command,
     validate_confirmation,
 )
-from src.analyst_console.server import ConsoleApplication, EstateDevice, create_server
+from src.analyst_console.server import (
+    AlphaLauncher,
+    ConsoleApplication,
+    EstateDevice,
+    create_server,
+)
 from src.analyst_console.segments import SegmentRequestStore, metric_catalog
 
 
@@ -221,6 +227,41 @@ def console_server(tmp_path: Path):
         thread.join(timeout=2)
 
 
+def test_launchpad_works_on_a_port_other_than_the_default(console_server: str) -> None:
+    """The launchpad must not be welded to 8765.
+
+    Two policies apply to this page: the response header sets `connect-src 'self'`
+    and the document meta sets its own. Browsers enforce the *intersection*, so a
+    meta that named only `http://127.0.0.1:8765` produced an empty intersection on
+    every other port -- the page loaded and then failed every fetch. That made the
+    launchpad unusable whenever 8765 was already taken, with no fallback.
+
+    `console_server` binds an ephemeral port, so this asserts the real condition.
+    """
+    port = urlparse(console_server).port
+    assert port != 8765, "fixture should bind an ephemeral port"
+
+    with urlopen(f"{console_server}/", timeout=3) as response:
+        html = response.read().decode("utf-8")
+        header_csp = response.headers["Content-Security-Policy"]
+
+    # The header stays port-agnostic...
+    assert "connect-src 'self'" in header_csp
+    # ...and the meta must intersect with it non-emptily.
+    assert "connect-src 'self'" in html
+
+    # app.js must resolve the API base from the serving origin, not the meta alone,
+    # so a page served from this ephemeral port talks back to this port.
+    with urlopen(f"{console_server}/app.js", timeout=3) as response:
+        script = response.read().decode("utf-8")
+    assert "location.origin" in script
+    assert "127.0.0.1|localhost" in script.replace("\\", "")
+
+    # And the bridge on this non-default port is genuinely reachable.
+    with urlopen(f"{console_server}/api/bootstrap", timeout=5) as response:
+        assert response.status == 200
+
+
 def test_console_serves_launchpad_and_bootstrap(console_server: str) -> None:
     with urlopen(f"{console_server}/", timeout=3) as response:
         html = response.read().decode("utf-8")
@@ -244,7 +285,10 @@ def test_console_serves_launchpad_and_bootstrap(console_server: str) -> None:
     assert 'aria-label="Cerrar">' not in html
     assert 'content="http://127.0.0.1:8765"' in html
     assert 'href="./" aria-label="Inicio del lanzador BMV"' in html
-    assert "connect-src http://127.0.0.1:8765" in html
+    # The meta CSP must allow BOTH the serving origin and the default local port:
+    # browsers intersect it with the response header's `connect-src 'self'`, so pinning
+    # only 8765 made the launchpad unusable on any other port.
+    assert "connect-src 'self' http://127.0.0.1:8765" in html
     assert "#analyst-launchpad" in html
     assert "Pipeline" not in html
     assert "Earnings Study" not in html
@@ -629,3 +673,131 @@ def test_mass_refresh_requires_estate_and_exclusive_alpha(
 
     application.prepare_estate_refresh("ACTUALIZAR ESTATE")
     assert alpha.stopped is True
+
+
+# ---------------------------------------------------------------------------
+# Estate-write safety: operations that touch the shipped USB
+# ---------------------------------------------------------------------------
+
+
+def test_soft_expand_apply_refuses_without_an_estate(console_server: str) -> None:
+    """`soft_expand_apply` downloads filings into the estate and must be gated.
+
+    It previously went straight to ``jobs.create`` with no estate check and no
+    active-job check -- unlike ``estate_refresh_all``, which had both. The only
+    thing actually stopping it was an unrelated crash further down the script,
+    so fixing that crash without adding this gate would have removed a barrier
+    rather than added one.
+    """
+    request = Request(
+        f"{console_server}/api/jobs",
+        data=json.dumps(
+            {"operation": "soft_expand_apply", "confirmation": "AMPLIAR ESTATE"}
+        ).encode("utf-8"),
+        method="POST",
+        headers={"Content-Type": "application/json", "X-Analyst-Console": "1"},
+    )
+    with pytest.raises(HTTPError) as refused:
+        urlopen(request, timeout=5)
+
+    assert refused.value.code == 400
+    detail = json.loads(refused.value.read().decode("utf-8"))["error"]
+    assert "Estate" in detail
+
+
+def test_soft_expand_apply_still_requires_the_confirmation_phrase(
+    console_server: str,
+) -> None:
+    request = Request(
+        f"{console_server}/api/jobs",
+        data=json.dumps(
+            {"operation": "soft_expand_apply", "confirmation": "ampliar estate"}
+        ).encode("utf-8"),
+        method="POST",
+        headers={"Content-Type": "application/json", "X-Analyst-Console": "1"},
+    )
+    with pytest.raises(HTTPError) as refused:
+        urlopen(request, timeout=5)
+
+    assert refused.value.code == 400
+    assert "AMPLIAR ESTATE" in json.loads(refused.value.read().decode("utf-8"))["error"]
+
+
+def test_review_operations_do_not_default_their_reports_into_the_estate() -> None:
+    """"Revisar cobertura Soft" and "Buscar trimestres faltantes" are reviews.
+
+    Both defaulted their report path into the estate root while registered as
+    ``mutates=False`` -- so they took no writer lock and could write to the
+    shipped USB concurrently with ``estate_refresh_all``, which holds that lock
+    believing it is the only writer.
+    """
+    import scripts.audit_soft_quarterly_coverage as coverage
+    import scripts.expand_soft_quarterlies as expand
+
+    from estate_bridge import load_estate_bridge
+
+    estate_root = load_estate_bridge(project_root=ROOT).estate_root.resolve()
+    for default in (coverage.DEFAULT_JSON, expand.DEFAULT_REPORT):
+        resolved = Path(default).resolve()
+        assert not resolved.is_relative_to(estate_root), (
+            f"{resolved} defaults inside the estate; a review must not write there"
+        )
+        assert resolved.is_relative_to(ROOT / "outputs")
+
+
+def test_soft_master_artifacts_exclude_the_file_it_never_writes(tmp_path: Path) -> None:
+    """`soft_coverage_dense.html` is written by build_dense.py, not build_master.py.
+
+    It was listed as a `soft_master` artifact candidate and could never match.
+    """
+    manager = JobManager(
+        project_root=ROOT, state_dir=tmp_path / "state", environment={}
+    )
+    job = Job(
+        id="deadbeefcafe",
+        operation="soft_master",
+        label="Actualizar matriz de cobertura",
+        node="soft",
+        status="completed",
+        params={},
+    )
+    candidates = manager._artifacts_for(job, before={})
+    assert not any("soft_coverage_dense" in str(path) for path in candidates)
+
+
+def test_alpha_launcher_does_not_report_a_dead_process_as_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A crashed Alpha Go must not look like a running one.
+
+    Alpha Go is spawned with Popen and never waited on, so on exit it becomes a
+    zombie -- and `os.kill(pid, 0)` succeeds for a zombie. The console therefore
+    reported `running: True` indefinitely, `launch()` short-circuited on the
+    stale pid and returned success, and the launchpad navigated the analyst away
+    from itself to a dead http://127.0.0.1:8501. Only a bridge restart cleared it.
+    """
+    import subprocess
+
+    state = tmp_path / "state"
+    state.mkdir()
+    launcher = AlphaLauncher(ROOT, state, {})
+    # Isolate the pid logic: `running` is `port_open or pid`, and port 8501 is
+    # global to the machine, so a real Alpha Go running elsewhere would mask this.
+    monkeypatch.setattr(AlphaLauncher, "_port_open", staticmethod(lambda: False))
+
+    # A real child of this process that exits immediately: the exact shape of a
+    # crashed Alpha Go, including the unreaped zombie.
+    child = subprocess.Popen(["/usr/bin/true"])
+    # Deliberately do NOT call child.wait() -- the unreaped zombie is the bug.
+    (state / "alpha.pid").write_text(f"{child.pid}\n", encoding="utf-8")
+
+    # Give the kernel a moment to move it to zombie state.
+    for _ in range(50):
+        if child.poll() is not None:
+            break
+        time.sleep(0.05)
+
+    status = launcher.status()
+    assert status["running"] is False, "a dead Alpha Go was reported as running"
+    assert status["managed"] is False
+    assert not (state / "alpha.pid").exists(), "the stale pid file should be cleared"

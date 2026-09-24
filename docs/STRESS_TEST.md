@@ -1,7 +1,14 @@
 # Pipeline Stress Test — Phase-by-Phase Health
 
-Date: 2026-06-21. Environment: Python 3.14, system interpreter. Test suite baseline:
-**433 passed, 1 skipped** (`python3 -m pytest -q`, 238s).
+Date: 2026-06-21. **Historical snapshot — do not treat the numbers below as a
+current baseline.** It was taken under Python 3.14 on the system interpreter,
+which `pyproject.toml` now forbids (`requires-python = ">=3.13,<3.14"`), and its
+"433 passed, 1 skipped" predates most of the suite. The authoritative baseline is
+[the current release gate](deployment/RELEASE_GATE_2026-09-07.md); the declared
+interpreter is 3.13.9, pinned in `.python-version`.
+
+The phase-by-phase findings below are still useful reading; the environment and
+counts are not.
 
 Scope: full 6-stage pipeline (download → parse → 4-tier extraction cascade → validate → compare →
 excel), measured against `data/ground_truth/*.csv`. Companies with local reports: **SPORT, WALMEX,
@@ -112,7 +119,7 @@ Prose is the noisiest tier everywhere; the table tier is materially more accurat
 
 ## Phase 6 — Excel output (fixed & verified)
 `excels/WALMEX.xlsx`, `excels/LACOMER.xlsx`, `excels/SPORT.xlsx` generated via
-`scripts/build_excels.py` (SPORT currency scaled ÷1000 miles→P$mn). Revenue cross-checked vs ground
+`scripts/build_segments.py` (SPORT currency scaled ÷1000 miles→P$mn). Revenue cross-checked vs ground
 truth for the latest 5 quarters: **all three companies <0.1% error**. New segments specs:
 `configs/lacomer_segments.yaml`, `configs/sport_segments.yaml` (WALMEX already had one).
 
@@ -125,4 +132,4 @@ Ground truth exists but no reports are downloaded for:
   reportes link avoids a failed crawl.
 
 Once links arrive: download → parse → add a `metric_map` to `compare_extractions.COMPANIES` →
-author a `*_segments.yaml` → `scripts/build_excels.py <co>`.
+author a `*_segments.yaml` → `scripts/build_segments.py <co>`.

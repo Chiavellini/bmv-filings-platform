@@ -251,9 +251,11 @@ class JobManager:
             )
             candidates = sorted(folder.glob("*.xlsx")) + sorted(folder.glob("*.csv"))
         elif job.operation == "soft_master":
+            # `soft_coverage_dense.html` was listed here too, but build_master.py never
+            # writes it -- only build_dense.py / refresh_daily.py do, and neither is
+            # reachable from the console. It could never match.
             candidates = [
                 self.project_root / "soft" / "outputs" / "_master" / "soft_coverage_master.html",
-                self.project_root / "soft" / "outputs" / "_master" / "soft_coverage_dense.html",
             ]
 
         changed = []

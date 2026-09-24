@@ -54,9 +54,10 @@ DEFAULT_ESTATE = ESTATE_BRIDGE.catalog_path
 DEFAULT_ARCHIVE = SOFT_ROOT / "data" / "cache" / "bmv_archive.html"
 DEFAULT_REPORTS = SOFT_ROOT / "data" / "reports"
 DEFAULT_ALPHA_COMPANIES = ROOT / "alpha-go" / "configs" / "bmv_corpus.yaml"
-DEFAULT_REPORT = (
-    ESTATE_BRIDGE.estate_root / "expansion" / "soft_xbrl_backfill.json"
-)
+# Repo-local for the same reason as the coverage audit: planning is exposed as
+# "Buscar trimestres faltantes" and must not write to the estate. The --apply path
+# still downloads into the estate, and is gated in the console.
+DEFAULT_REPORT = ROOT / "outputs" / "expansion" / "soft_xbrl_backfill.json"
 
 
 def _company_tickers(config_root: Path) -> dict[str, str]:
@@ -72,6 +73,14 @@ def _company_tickers(config_root: Path) -> dict[str, str]:
 
 
 def _existing_periods(estate_path: Path) -> dict[str, set[str]]:
+    # Without this the missing catalog surfaces as a bare
+    # "sqlite3.OperationalError: unable to open database file", which the console
+    # shows to the analyst verbatim.
+    if not estate_path.is_file():
+        raise SystemExit(
+            f"ERROR: no encuentro el catálogo del Estate en {estate_path}. "
+            "Conecta el USB Estate antes de buscar trimestres faltantes."
+        )
     conn = sqlite3.connect(f"file:{estate_path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     rows = conn.execute("""
@@ -111,6 +120,12 @@ def build_worklist(
     tickers = _company_tickers(config_root)
     existing = _existing_periods(estate_path)
     alpha_aliases = _alpha_ticker_slugs(alpha_companies)
+    if not archive_path.is_file():
+        raise SystemExit(
+            f"ERROR: falta el índice del archivo BMV en {archive_path}. "
+            "Un clon nuevo no lo incluye; genéralo antes de buscar trimestres "
+            "faltantes (soft/scripts/_complete_universe.sh descarga el índice)."
+        )
     filings = parse_archive_index(archive_path.read_text(encoding="utf-8"))
     available: dict[str, dict[str, XbrlFiling]] = {}
     for filing in filings:

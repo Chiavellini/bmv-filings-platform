@@ -30,17 +30,44 @@ _REASON = (
 )
 
 
+def _holds_files(folder: Path) -> bool:
+    """True when `folder` contains at least one real file, one level deep.
+
+    The corpus is ``data/reports/<slug>/<file>`` with an optional ``xbrl/``
+    subdirectory, so two levels is the whole layout.
+    """
+    try:
+        for entry in folder.iterdir():
+            if entry.is_file():
+                return True
+            if entry.is_dir() and any(child.is_file() for child in entry.iterdir()):
+                return True
+    except OSError:
+        return False
+    return False
+
+
 def has_corpus(slug: str | None = None) -> bool:
-    """True when the corpus — or one company's slice of it — is on disk."""
+    """True when the corpus — or one company's slice of it — is on disk.
+
+    This checks for actual *files*. It previously returned True for
+    ``any(target.iterdir())``, so a single empty directory was enough: a failed
+    `build_segments` run left behind an empty ``data/reports/ac/``, which
+    un-skipped 17 corpus tests that then failed for want of data they never had.
+    That inverts this module's contract -- a skip says "I do not have this data",
+    a failure says "this code is broken" -- and `certify_clean_clone.py` treats
+    any failure on a data-less clone as a release defect.
+    """
     if not REPORTS_DIR.is_dir():
         return False
     target = REPORTS_DIR / slug if slug else REPORTS_DIR
     if not target.is_dir():
         return False
-    # A directory tree with no files is not a corpus. A Segments run without an
-    # attached estate leaves an empty ``data/reports/<slug>/`` behind, and that
-    # alone used to un-skip test_no_regression into 17 false failures.
-    return any(path.is_file() for path in target.rglob("*"))
+    if slug:
+        return _holds_files(target)
+    return _holds_files(target) or any(
+        _holds_files(child) for child in target.iterdir() if child.is_dir()
+    )
 
 
 def skip_without_corpus(slug: str | None = None) -> None:

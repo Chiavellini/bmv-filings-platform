@@ -11,7 +11,14 @@ const MAX_UPLOAD_BYTES = 60 * 1024 * 1024;
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-const LOCAL_API = document.querySelector('meta[name="analyst-console-api"]')?.content || "http://127.0.0.1:8765";
+const META_API = document.querySelector('meta[name="analyst-console-api"]')?.content || "http://127.0.0.1:8765";
+// The bridge serves this page itself, so when it is loaded from any loopback origin,
+// talk back to that same origin. The meta value is the fallback for the hosted GitHub
+// Pages copy, which has no bridge of its own and must reach the default local port.
+// Keeping the port in one place also means the launchpad still works when 8765 is taken.
+const LOCAL_API = /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?$/.test(location.origin)
+  ? location.origin
+  : META_API;
 const METRIC_SECTIONS = {
   income: "Estado de resultados",
   balance: "Balance general",
