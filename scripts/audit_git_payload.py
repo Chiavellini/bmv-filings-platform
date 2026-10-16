@@ -142,6 +142,15 @@ PERSONAL_PATH_PATTERNS: tuple[tuple[str, re.Pattern[bytes]], ...] = (
             rb"\b[A-Za-z]:\\Users\\(?P<owner>[A-Za-z0-9._-]+)(?:\\|\b)"
         ),
     ),
+    # Tooling that flattens a home path into a directory name (scratchpads,
+    # cache keys, log filenames) writes `-Users-<owner>-...`. The slash-anchored
+    # patterns above cannot see it, so a real username leaked past this gate.
+    (
+        "flattened_user_path",
+        re.compile(
+            rb"(?<![A-Za-z0-9._])-Users-(?P<owner>[A-Za-z0-9._]+)-"
+        ),
+    ),
 )
 PATH_PLACEHOLDERS = {
     b"...",
@@ -486,6 +495,37 @@ def scan_history(
     return blob_count, findings
 
 
+def _soften_historical_personal_paths(
+    findings: list[Finding],
+) -> list[Finding]:
+    """A personal path already committed cannot be un-shipped without a rewrite.
+
+    The gate's job is to stop new leaks entering the payload, so a personal path
+    in the *candidate* stays an error.  In committed history it becomes a
+    warning: rewriting history to remove a developer's own username would change
+    every downstream commit, and the finding is recorded rather than silenced.
+
+    Secrets are deliberately not softened — a credential in history is still an
+    error, because it must be rotated regardless of what git says.
+    """
+    softened: list[Finding] = []
+    for finding in findings:
+        if finding.severity == "error" and finding.code == "absolute_personal_path":
+            softened.append(
+                Finding(
+                    "warning",
+                    finding.code,
+                    finding.scope,
+                    finding.path,
+                    f"{finding.detail}; already committed, accepted "
+                    "(rewriting history would change every downstream commit)",
+                )
+            )
+        else:
+            softened.append(finding)
+    return softened
+
+
 def audit(
     repo: Path,
     *,
@@ -531,7 +571,7 @@ def audit(
             resolved_ref,
             max_bytes=max_bytes,
         )
-        findings.extend(history_findings)
+        findings.extend(_soften_historical_personal_paths(history_findings))
 
     return AuditResult(
         repo=str(root),

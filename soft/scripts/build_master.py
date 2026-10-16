@@ -1152,6 +1152,20 @@ def build_master(only: set[str] | None, *, no_network: bool, skip_existing: bool
     # names) is written to the PRIMARY soft_coverage_master.{xlsx,csv,html} — the file certify /
     # refresh_daily read — and the full 136-universe build is demoted to *_full.{csv,html}. Without
     # --core the full universe stays primary (backward-compatible).
+    # A matrix where no company yielded a single value is not a result, it is a
+    # missing corpus. Exiting 0 here made the Analyst Console show a green
+    # "listo para abrir" over a completely blank deliverable (0 of 3,925 cells
+    # populated) and then happily open it. Check before writing, so no blank
+    # artifact is left on disk for the console to advertise.
+    _filled, _applicable, _ = coverage_counts(rows)
+    if rows and _filled == 0:
+        raise SystemExit(
+            "ERROR: la matriz salió vacía — ninguna empresa aportó datos "
+            f"({len(rows)} empresas, {_applicable} celdas aplicables, 0 llenas). "
+            "Suele faltar el corpus de reportes en soft/data/reports/, o el Estate "
+            "no está conectado. No se escribió ninguna matriz."
+        )
+
     if core and not only:
         core_rows = [r for r in rows if r["slug"] not in _CORE_EXCLUDE]
         excluded = sorted(r["name"] for r in rows if r["slug"] in _CORE_EXCLUDE)

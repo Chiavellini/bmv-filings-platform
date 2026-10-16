@@ -19,7 +19,12 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from estate_bridge import BRIDGE_ENV, ESTATE_ROOT_ENV, REPORTS_VIEW_ENV, load_estate_bridge
-from estate_volume import ESTATE_ID_ENV, inspect_estate_environment, read_estate_id
+from estate_volume import (
+    ESTATE_ID_ENV,
+    SENTINEL_NAME,
+    inspect_estate_environment,
+    read_estate_id,
+)
 
 from .extractor import MAX_UPLOAD_BYTES, ExtractorRequestStore, latest_extract
 from .jobs import JobManager
@@ -97,11 +102,19 @@ def _persist_estate_location(
     environment: dict[str, str],
     mount_root: Path,
     estate_root: Path,
+    estate_id: str,
 ) -> None:
-    """Persist a verified relocated USB without touching unrelated .env keys."""
+    """Persist a verified relocated USB without touching unrelated .env keys.
+
+    The mount root and the estate ID are validated as a pair
+    (``estate_volume.inspect_estate_volume``), so both are always written: a
+    fresh Mac whose ``.env`` is missing or blank must be connectable from the
+    launchpad alone.
+    """
     replacements = {
         "PDFS_ESTATE_MOUNT_ROOT": str(mount_root),
         "PDFS_DOCUMENT_ESTATE": str(estate_root),
+        ESTATE_ID_ENV: estate_id,
         "PDFS_ALPHA_CORPUS": str(estate_root / "projections" / "alpha-go"),
         "PDFS_ALPHA_INDEX": str(estate_root / "indexes" / "alpha_go.db"),
     }
@@ -169,12 +182,36 @@ class AlphaLauncher:
             return False
 
     def _pid(self) -> int | None:
+        """The PID of a *live* Alpha Go, or None.
+
+        Alpha Go is spawned with Popen and never waited on, so when it exits it
+        becomes a zombie -- and ``os.kill(pid, 0)`` succeeds for a zombie. That
+        made a crashed or stopped Alpha Go report ``running: True`` forever:
+        ``launch()`` short-circuited on the stale pid, returned success, and the
+        launchpad navigated the analyst to a dead http://127.0.0.1:8501. Only
+        restarting the bridge cleared it. Reap the child here so "exited" is
+        distinguishable from "running".
+        """
         try:
             pid = int(self.pid_path.read_text(encoding="utf-8").strip())
-            os.kill(pid, 0)
-            return pid
         except (OSError, ValueError):
             return None
+        try:
+            reaped, _status = os.waitpid(pid, os.WNOHANG)
+            if reaped == pid:
+                self.pid_path.unlink(missing_ok=True)
+                return None
+        except ChildProcessError:
+            pass  # Not our child -- e.g. the pid file outlived a bridge restart.
+        except OSError:
+            self.pid_path.unlink(missing_ok=True)
+            return None
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            self.pid_path.unlink(missing_ok=True)
+            return None
+        return pid
 
     def status(self) -> dict[str, Any]:
         pid = self._pid()
@@ -193,6 +230,16 @@ class AlphaLauncher:
                 return self.status()
             if not self.python.is_file():
                 raise OperationError("Alpha Go todavía no está instalado en esta Mac.")
+            # Alpha binds its index path from this environment at startup, so a
+            # copy started before the USB is connected keeps pointing at an empty
+            # local index even after "Conectar Estate". Refuse instead.
+            if not self.environment.get("ALPHA_GO_INDEX_DB") and not _runtime_bridge(
+                self.project_root, self.environment
+            ).alpha_go_index_path.is_file():
+                raise OperationError(
+                    "Conecta el USB Estate antes de abrir Alpha Go: su índice de búsqueda "
+                    "vive en el USB."
+                )
             self.state_dir.mkdir(parents=True, exist_ok=True)
             log = self.log_path.open("a", encoding="utf-8")
             process = subprocess.Popen(
@@ -208,9 +255,16 @@ class AlphaLauncher:
                     str(ALPHA_PORT),
                     "--browser.gatherUsageStats",
                     "false",
+                    # Without headless mode a first run on a fresh account
+                    # (no ~/.streamlit/credentials.toml) stops at Streamlit's
+                    # interactive "Email:" onboarding prompt and never binds
+                    # the port. The launchpad opens the URL itself.
+                    "--server.headless",
+                    "true",
                 ],
                 cwd=self.alpha_root,
                 env=self.environment,
+                stdin=subprocess.DEVNULL,
                 stdout=log,
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
@@ -250,11 +304,13 @@ class EstateDevice:
         environment: dict[str, str],
         jobs: JobManager,
         alpha: AlphaLauncher,
+        volumes_root: Path = Path("/Volumes"),
     ):
         self.project_root = project_root
         self.environment = environment
         self.jobs = jobs
         self.alpha = alpha
+        self.volumes_root = volumes_root
         self._lock = threading.Lock()
 
     def status(self) -> dict[str, Any]:
@@ -278,16 +334,29 @@ class EstateDevice:
             "alpha_index": bridge.alpha_go_index_path.is_file(),
         }
 
-    def _matching_mounted_estate(self) -> tuple[Path, Path] | None:
+    def _matching_mounted_estate(self) -> tuple[Path, Path, str] | None:
+        """Find the mounted estate by its sentinel, not by a configured path.
+
+        Candidates per volume, in order: the configured estate directory name,
+        the volume root, then any direct child carrying the sentinel. The last
+        form is what lets a fresh Mac (no ``.env``, so the configured name is
+        the repo-local default) still find ``/Volumes/<USB>/bmv-estate-v1``.
+        """
         configured = _runtime_bridge(self.project_root, self.environment)
         expected = str(self.environment.get(ESTATE_ID_ENV) or "").strip().upper()
         estate_name = configured.estate_root.name
-        volumes = Path("/Volumes")
-        if not volumes.is_dir():
+        if not self.volumes_root.is_dir():
             return None
-        for mount in sorted(volumes.iterdir()):
-            for candidate in (mount / estate_name, mount):
-                sentinel = candidate / ".bmv-estate-volume.json"
+        for mount in sorted(self.volumes_root.iterdir()):
+            candidates = [mount / estate_name, mount]
+            try:
+                candidates.extend(
+                    sorted(sentinel.parent for sentinel in mount.glob(f"*/{SENTINEL_NAME}"))
+                )
+            except OSError:
+                continue
+            for candidate in dict.fromkeys(candidates):
+                sentinel = candidate / SENTINEL_NAME
                 if not sentinel.is_file():
                     continue
                 try:
@@ -297,7 +366,7 @@ class EstateDevice:
                 if expected and observed != expected:
                     continue
                 if (candidate / "catalog.db").is_file():
-                    return mount.resolve(), candidate.resolve()
+                    return mount.resolve(), candidate.resolve(), observed
         return None
 
     def connect(self) -> dict[str, Any]:
@@ -326,12 +395,13 @@ class EstateDevice:
                     "en Finder y vuelve a intentar."
                 )
 
-            mount_root, estate_root = match
+            mount_root, estate_root, estate_id = match
             _persist_estate_location(
                 self.project_root,
                 self.environment,
                 mount_root,
                 estate_root,
+                estate_id,
             )
             result = self.status()
             if not result["connected"]:
@@ -439,6 +509,43 @@ class ConsoleApplication:
             self.jobs,
             self.alpha,
         )
+        # Warm the company catalog off the critical path, so the analyst's first
+        # page load does not pay for parsing the 179-issuer registry. The bridge
+        # starts at login, so this finishes long before the launchpad is opened.
+        # Done on a thread rather than inline: blocking __init__ for seconds would
+        # delay the port bind and slow every consumer that constructs an
+        # application. A failure is not fatal -- bootstrap() rebuilds and reports.
+        def _warm_catalog() -> None:
+            try:
+                company_catalog(self.project_root)
+            except Exception:  # noqa: BLE001 - warming must never break startup
+                pass
+
+        threading.Thread(
+            target=_warm_catalog, name="analyst-catalog-warm", daemon=True
+        ).start()
+
+    def prepare_estate_write(self, key: str, confirmation: object) -> None:
+        """Refuse an estate-writing operation unless the estate is really there.
+
+        ``estate_refresh_all`` had these preconditions; ``soft_expand_apply`` --
+        which downloads filings into the estate -- had none, and went straight to
+        ``jobs.create``. Its only de-facto protection was an unrelated crash
+        earlier in the same script.
+        """
+        operation = OPERATIONS[key]
+        validate_confirmation(operation, confirmation)
+        if self.jobs.active():
+            raise OperationError(
+                "Hay una tarea en proceso. Espera a que termine antes de "
+                "escribir en el Estate."
+            )
+        status = self.estate.status()
+        if not status["connected"]:
+            raise OperationError(
+                status.get("detail")
+                or "Conecta el USB Estate antes de ampliar la biblioteca."
+            )
 
     def prepare_estate_refresh(self, confirmation: object) -> None:
         """Make the USB index exclusively available to the fleet refresh."""
@@ -700,6 +807,10 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                 if operation_key == "estate_refresh_all":
                     self.server.application.prepare_estate_refresh(
                         body.get("confirmation")
+                    )
+                elif operation_key == "soft_expand_apply":
+                    self.server.application.prepare_estate_write(
+                        operation_key, body.get("confirmation")
                     )
                 job = self.server.application.jobs.create(
                     operation_key,

@@ -2,7 +2,8 @@
 name = "alpha-go"
 version = "0.1.0"
 description = "Local AlphaSense — a self-contained financial-document search & intelligence platform."
-requires-python = ">=3.10"
+# matches .python-version (3.12.13), CI, and certify_clean_clone.py
+requires-python = ">=3.12,<3.13"
 
 # Self-contained: alpha-go vendors the reusable parent infra under its own src/ and
 # resolves it via the same `import src.<role>.<module>` namespace. Running from the

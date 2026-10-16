@@ -172,7 +172,7 @@ PDFS_ALPHA_CORPUS="/absolute/path/to/estate/projections/alpha-go"
 PDFS_ALPHA_INDEX="/absolute/path/to/estate/indexes/alpha_go.db"
 PDFS_ALPHA_CONFIG="/absolute/path/to/repository/alpha-go/configs/alpha_go.yaml"
 PDFS_ALPHA_PYTHON="/absolute/path/to/repository/alpha-go/.venv312/bin/python"
-PDFS_ALPHA_TARGET_ID="portable-estate-v1"
+PDFS_ALPHA_TARGET_ID="portable-estate-v2"
 ```
 
 Seed and certify `<estate>/projections/alpha-go` with a full reconcile, then

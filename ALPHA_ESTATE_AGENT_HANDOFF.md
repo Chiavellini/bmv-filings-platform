@@ -360,11 +360,15 @@ Launch the real Streamlit dashboard on loopback and verify:
 - company, period, industry, and document-type filtering;
 - highlighted snippets and source/PDF navigation;
 - mention trends;
-- Smart Summaries;
-- financials panel;
 - offline HTML/CSV export;
 - upload behavior using a disposable fixture or clearly isolated user test area;
 - cache refresh after a disposable incremental index commit.
+
+The Explore page exposes exactly three modes, Search, Trends and Ask, enforced by
+`alpha-go/tests/test_dashboard_modes.py`; the reader pane carries the per-document Smart Summary and
+the company card. The standalone `render_summary` and `render_financials` panels in
+`app/components/panels.py` are not wired into the UI (`docs/KNOWN_ISSUES.md`); do not record their
+absence as a dashboard failure.
 
 If cited Q&A, news synchronization, SEC ingestion, or another optional feature requires credentials
 or network access, do not fabricate success. Verify its fail-closed/configuration behavior and list

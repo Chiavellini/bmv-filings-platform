@@ -64,13 +64,16 @@ Built on real data: index of 477 reports / 53,997 chunks / 53,997 MiniLM embeddi
 
 - [x] `app/components/panels.py::render_search`: lists Hits with highlighted snippets (HTML via
       `app/components/highlight.py`) + "open in Document tab".
-- [x] `render_doc_viewer`: renders the parsed markdown with the matched span highlighted.
-- [x] `render_financials`: per-company metric table via the vendored cascade
-      (`app/components/financials.py`); cached + graceful fallback.
+- [x] `render_trends`: mention trends over the filtered scope.
 - [x] `streamlit_app.py`: `@st.cache_resource` retriever (model + vectors load once, stay warm),
       `HF_HUB_OFFLINE` for offline model load, `session_state` doc selection.
 - [x] Tests: `highlight_html` spans/escaping; vector-matrix cache parity. Manual:
-      `.venv/bin/python -m streamlit run app/streamlit_app.py`.
+      `cd alpha-go && .venv312/bin/python -m streamlit run app/streamlit_app.py`.
+- [~] `render_financials`: per-company metric table via the vendored cascade
+      (`app/components/financials.py`); cached + graceful fallback. **Module complete, not wired** —
+      the Explore page exposes Search, Trends and Ask only (`tests/test_dashboard_modes.py`).
+- [ ] `render_doc_viewer`: no longer exists. In-document reading is handled inside `render_search`
+      via `app/components/html_view.py` / `pdf_view.py` ("Read in context").
 
 ## Phase 5 — Q&A (optional) ✅
 
@@ -147,8 +150,11 @@ Built on real data: index of 477 reports / 53,997 chunks / 53,997 MiniLM embeddi
 - [x] Opt-in LLM tier (same citation contract as `rag.answer`): numbered passages → bulleted
       takeaways with `[n]` markers mapped back to real points; disk-cached; degrades to extractive.
       Gated on the `summary` config block + a resolvable provider key (off by default).
-- [x] Dashboard: 📝 Summary tab (`panels.render_summary`) — company/period picker, sentiment
-      badges, "📖 Read in context", "Summarize results" thematic mode, "✨ Sharpen with LLM".
+- [~] `panels.render_summary` — company/period picker, sentiment badges, "📖 Read in context",
+      "Summarize results" thematic mode, "✨ Sharpen with LLM". **Module complete, not wired**:
+      there is no Summary tab in the dashboard (the reader shows a per-document Smart Summary
+      instead). The Explore page exposes Search, Trends and Ask, enforced by
+      `tests/test_dashboard_modes.py`. See `docs/KNOWN_ISSUES.md`.
 - [x] Tests (`tests/test_summarize.py`, 15) + eval harness (`scripts/eval_summary.py`,
       `eval/summary_gold.yaml`): coverage@N + boilerplate-rate, tuning|heldout split, two-phase
       author-then-score (never tune on held-out). Seed gold (ACME fixture) scores 100% coverage /

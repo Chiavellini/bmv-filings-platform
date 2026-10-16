@@ -132,6 +132,8 @@ def test_native_price_fetch_fires_for_ticker_only_name(monkeypatch):
     monkeypatch.setattr(native, "_clave_and_ticker", lambda slug: (None, "BAFARB MM"))
     monkeypatch.setattr(native, "_native_shares_out", lambda *a, **k: None)
     monkeypatch.setattr(native.market_data, "fetch_prices", _rec_prices)
+    monkeypatch.setattr(native.market_data, "fetch_key_stats",
+                        lambda *a, **k: {"shares_out": None, "dividend_yield": None})
     native.build_native_pack(_native_spec("BAFARB MM"), _fund(), with_prices=True,
                              with_macro=False, with_peers=False, offline=True, verify_ssl=False)
     assert calls, "price fetch must fire for a ticker-only name"
@@ -147,6 +149,8 @@ def test_native_price_fetch_skipped_when_neither_clave_nor_ticker(monkeypatch):
     monkeypatch.setattr(native, "_native_shares_out", lambda *a, **k: None)
     monkeypatch.setattr(native.market_data, "fetch_prices",
                         lambda *a, **k: calls.append(1) or {"last": None})
+    monkeypatch.setattr(native.market_data, "fetch_key_stats",
+                        lambda *a, **k: {"shares_out": None, "dividend_yield": None})
     native.build_native_pack(_native_spec(None), _fund(), with_prices=True,
                              with_macro=False, with_peers=False, offline=True, verify_ssl=False)
     assert not calls, "no clave and no ticker → price fetch must be skipped"

@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "direction",
+    "conviction",
+    "reason_code",
+    "reason_code_secondary",
+    "headline_rev_growth_pct",
+    "organic_constant_fx_growth_pct",
+    "one_off_items",
+    "adjusted_vs_reported_ebitda_gap_pct",
+    "ex_associate_net_income_note",
+    "guidance_direction",
+    "beat_quality",
+    "rationale"
+  ],
+  "properties": {
+    "direction": {
+      "type": "string",
+      "enum": ["up", "down", "flat"]
+    },
+    "conviction": {
+      "type": "string",
+      "enum": ["high", "medium", "low"]
+    },
+    "reason_code": {
+      "$ref": "#/$defs/reasonCode"
+    },
+    "reason_code_secondary": {
+      "anyOf": [
+        {"$ref": "#/$defs/reasonCode"},
+        {"type": "null"}
+      ]
+    },
+    "headline_rev_growth_pct": {
+      "type": ["number", "null"]
+    },
+    "organic_constant_fx_growth_pct": {
+      "type": ["number", "null"]
+    },
+    "one_off_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["label", "direction", "approx_amount", "material"],
+        "properties": {
+          "label": {"type": "string"},
+          "direction": {
+            "type": "string",
+            "enum": ["flatters", "depresses"]
+          },
+          "approx_amount": {"type": ["number", "null"]},
+          "material": {"type": "boolean"}
+        }
+      }
+    },
+    "adjusted_vs_reported_ebitda_gap_pct": {
+      "type": ["number", "null"]
+    },
+    "ex_associate_net_income_note": {
+      "type": ["string", "null"]
+    },
+    "guidance_direction": {
+      "type": "string",
+      "enum": ["raised", "maintained", "lowered", "withdrawn", "none"]
+    },
+    "beat_quality": {
+      "type": "string",
+      "enum": ["high", "low", "na"]
+    },
+    "rationale": {"type": "string"}
+  },
+  "$defs": {
+    "reasonCode": {
+      "type": "string",
+      "enum": [
+        "vs_expectativas",
+        "guia_outlook",
+        "margenes_calidad",
+        "partida_unica",
+        "valuacion_tecnico",
+        "sector_macro",
+        "otro"
+      ]
+    }
+  }
+}

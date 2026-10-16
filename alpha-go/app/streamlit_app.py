@@ -251,6 +251,16 @@ def _suggestions(index_revision_token: int):
     return out
 
 
+def _index_error_message(exc: Exception) -> str:
+    """Tell an analyst what to do, not only what failed."""
+    detail = f"({type(exc).__name__}: {exc})"
+    if not os.getenv("ALPHA_GO_INDEX_DB") and not ESTATE_BRIDGE.alpha_go_index_path.is_file():
+        return ("The USB Estate is not connected, so there is no search index to open "
+                f"{detail}. Plug in the USB, press **Conectar Estate** in the BMV launchpad, "
+                "then close this window and open Alpha Go again from the launchpad.")
+    return f"Could not open the index {detail}. Build it first: `python3 scripts/build_index.py`."
+
+
 def _page_search() -> None:
     """Explore page: sidebar filters + the Search / Trends tabs over the offline corpus."""
     st.title("alpha-go")
@@ -259,8 +269,7 @@ def _page_search() -> None:
     try:
         store, retriever, config = _resources()
     except Exception as exc:  # noqa: BLE001 — surface a clear message instead of a stack trace
-        st.error(f"Could not open the index ({type(exc).__name__}: {exc}). "
-                 "Build it first: `python3 scripts/build_index.py`.")
+        st.error(_index_error_message(exc))
         return
 
     n_docs = store.count("documents")
@@ -465,8 +474,7 @@ def _page_upload() -> None:
     try:
         store, retriever, config = _resources()
     except Exception as exc:  # noqa: BLE001 — surface a clear message instead of a stack trace
-        st.error(f"Could not open the index ({type(exc).__name__}: {exc}). "
-                 "Build it first: `python3 scripts/build_index.py`.")
+        st.error(_index_error_message(exc))
         return
     upload_panel.render_upload(
         st,

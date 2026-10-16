@@ -1,9 +1,18 @@
 # alpha-go — a local AlphaSense
 
 Offline financial-document **search & intelligence** over a corpus of company reports:
-cross-document keyword + semantic search, highlighted snippets, mention trends, extractive
-**Smart Summaries**, a per-company financials panel, and optional cited Q&A — driven from a
-local Streamlit dashboard.
+cross-document keyword + semantic search, highlighted snippets, mention trends, and offline
+evidence export — driven from a local Streamlit dashboard whose Explore page exposes three modes,
+Search, Trends and Ask. The document reader shows an extractive **Smart Summary** of the open
+document and a Document/Company toggle whose Company pane is the issuer's company card (built from
+the local index and BMV catalog only). Ask plans and retrieves evidence for a question; with no LLM
+configured (the default) it returns a cited evidence pack.
+
+The company card's **Load financials** button runs the per-company financials table
+(`app/components/financials.py`). It reads a repo-local `data/corpus/<slug>/`, not the Estate, so with
+only the USB attached it reports "No parsed reports". The standalone `render_summary` and
+`render_financials` Explore panels in `app/components/panels.py` remain unwired — see
+`docs/KNOWN_ISSUES.md`.
 
 alpha-go is a subproject with its own search/UI code and a shared root-level data contract.
 `../estate.json` is the single bridge to the portable document estate, Alpha Go index,

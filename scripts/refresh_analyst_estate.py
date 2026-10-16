@@ -75,7 +75,12 @@ def main(argv: list[str] | None = None) -> int:
         quarterly.extend(("--only", issuer))
     _run("Documentos trimestrales dirigidos", quarterly, cwd=ROOT, dry_run=args.dry_run)
 
-    target_id = os.environ.get("PDFS_ALPHA_TARGET_ID", "portable-estate-v1")
+    # One identifier per index generation, never reused: `portable-estate-v1`
+    # named the partial 10-document generation, replaced on 2026-08-04 by the
+    # complete 384-dimension build.  Defaulting to v1 would let receipts from the
+    # partial generation appear to satisfy the current index.  See
+    # docs/ALPHA_GO_ESTATE_SYNC.md, "Index generations".
+    target_id = os.environ.get("PDFS_ALPHA_TARGET_ID", "portable-estate-v2")
     delivery = [
         str(root_cli / "process-estate-outbox"),
         "run",

@@ -5,11 +5,12 @@ from pathlib import Path
 import threading
 import time
 from urllib.error import HTTPError
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 import pytest
 
-from src.analyst_console.jobs import JobManager
+from src.analyst_console.jobs import Job, JobManager
 from src.analyst_console.operations import (
     Operation,
     OperationError,
@@ -17,7 +18,12 @@ from src.analyst_console.operations import (
     operation_command,
     validate_confirmation,
 )
-from src.analyst_console.server import ConsoleApplication, EstateDevice, create_server
+from src.analyst_console.server import (
+    AlphaLauncher,
+    ConsoleApplication,
+    EstateDevice,
+    create_server,
+)
 from src.analyst_console.segments import SegmentRequestStore, metric_catalog
 
 
@@ -131,6 +137,34 @@ def test_job_manager_runs_argv_and_persists_log(tmp_path: Path, monkeypatch) -> 
     assert "summary" in job.public() and "detail" in job.public()
 
 
+def test_segments_job_surfaces_unverified_candidate(tmp_path: Path, monkeypatch) -> None:
+    """A stale-Estate build hands back its review candidate, clearly labelled."""
+    project = tmp_path / "project"
+    candidate = project / "outputs" / "Soriana" / "excel" / "Soriana_segments.xlsx"
+    candidate.parent.mkdir(parents=True)
+    candidate.write_bytes(b"xlsx")
+    (project / "outputs" / "latest").mkdir(parents=True)
+    (project / "outputs" / "latest" / "Other.xlsx").write_bytes(b"published elsewhere")
+    state = tmp_path / "state"
+    request_id = "0123456789abcdef"
+    request_dir = state / "requests" / request_id
+    request_dir.mkdir(parents=True)
+    result = {"status": "candidate_unverified", "fresh": False, "workbook": str(candidate)}
+    (request_dir / "result.json").write_text(json.dumps(result), encoding="utf-8")
+
+    def command(_root, key, *_args, **_kwargs):
+        return Operation(key, key, "models", key, mutates=True), ["/usr/bin/true"], tmp_path
+
+    monkeypatch.setattr("src.analyst_console.jobs.operation_command", command)
+    manager = JobManager(project, state, {})
+    job = _wait_for(manager, manager.create("segments_model", {"request": request_id})["id"])
+
+    assert job.status == "completed"
+    assert job.artifacts == [str(candidate.resolve())]
+    assert job.message == "Candidato para revisión: frescura del Estate no verificada"
+    assert job.summary["fresh"] is False
+
+
 def test_job_manager_reads_extract_summary_and_failure_detail(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -193,14 +227,49 @@ def console_server(tmp_path: Path):
         thread.join(timeout=2)
 
 
+def test_launchpad_works_on_a_port_other_than_the_default(console_server: str) -> None:
+    """The launchpad must not be welded to 8765.
+
+    Two policies apply to this page: the response header sets `connect-src 'self'`
+    and the document meta sets its own. Browsers enforce the *intersection*, so a
+    meta that named only `http://127.0.0.1:8765` produced an empty intersection on
+    every other port -- the page loaded and then failed every fetch. That made the
+    launchpad unusable whenever 8765 was already taken, with no fallback.
+
+    `console_server` binds an ephemeral port, so this asserts the real condition.
+    """
+    port = urlparse(console_server).port
+    assert port != 8765, "fixture should bind an ephemeral port"
+
+    with urlopen(f"{console_server}/", timeout=3) as response:
+        html = response.read().decode("utf-8")
+        header_csp = response.headers["Content-Security-Policy"]
+
+    # The header stays port-agnostic...
+    assert "connect-src 'self'" in header_csp
+    # ...and the meta must intersect with it non-emptily.
+    assert "connect-src 'self'" in html
+
+    # app.js must resolve the API base from the serving origin, not the meta alone,
+    # so a page served from this ephemeral port talks back to this port.
+    with urlopen(f"{console_server}/app.js", timeout=3) as response:
+        script = response.read().decode("utf-8")
+    assert "location.origin" in script
+    assert "127.0.0.1|localhost" in script.replace("\\", "")
+
+    # And the bridge on this non-default port is genuinely reachable.
+    with urlopen(f"{console_server}/api/bootstrap", timeout=5) as response:
+        assert response.status == 200
+
+
 def test_console_serves_launchpad_and_bootstrap(console_server: str) -> None:
     with urlopen(f"{console_server}/", timeout=3) as response:
         html = response.read().decode("utf-8")
     assert "Todo lo que necesitas" not in html
     assert "Cada herramienta conserva su propio espacio" not in html
     assert "Lanzadores de proyectos" in html
-    assert 'href="./app.css?v=12"' in html
-    assert 'src="./app.js?v=12"' in html
+    assert 'href="./app.css?v=14"' in html
+    assert 'src="./app.js?v=14"' in html
     assert html.count('class="module-option" data-dialog=') == 2
     assert 'data-open="latest_extract"' in html
     assert 'id="extractor-file" type="file" accept="application/pdf,.pdf" multiple' in html
@@ -216,7 +285,10 @@ def test_console_serves_launchpad_and_bootstrap(console_server: str) -> None:
     assert 'aria-label="Cerrar">' not in html
     assert 'content="http://127.0.0.1:8765"' in html
     assert 'href="./" aria-label="Inicio del lanzador BMV"' in html
-    assert "connect-src http://127.0.0.1:8765" in html
+    # The meta CSP must allow BOTH the serving origin and the default local port:
+    # browsers intersect it with the response header's `connect-src 'self'`, so pinning
+    # only 8765 made the launchpad unusable on any other port.
+    assert "connect-src 'self' http://127.0.0.1:8765" in html
     assert "#analyst-launchpad" in html
     assert "Pipeline" not in html
     assert "Earnings Study" not in html
@@ -285,10 +357,13 @@ def test_segments_request_creates_strict_markdown_and_analyst_contract(
         environment={"ANALYST_CONSOLE_STATE_DIR": str(tmp_path / "state")},
     )
     assert operation.key == "segments_model"
-    assert argv[1:3] == ["scripts/build_segments.py", str(request_dir / "input.md")]
+    assert operation.mutates is True  # the directed pre-build sync writes the catalog
+    assert argv[1:3] == ["scripts/console_segments.py", str(request_dir / "input.md")]
+    assert argv[argv.index("--slug") + 1] == "soriana"
     assert "--analyst-metrics" in argv
-    assert "--estate-only" in argv
+    assert argv[argv.index("--result") + 1] == str(request_dir / "result.json")
     assert "--force-download" not in argv
+    assert "--allow-stale-estate" not in argv
     assert cwd == ROOT
 
 
@@ -360,6 +435,56 @@ def test_github_pages_origin_can_reach_local_bridge(console_server: str) -> None
     assert rejected.value.headers["Access-Control-Allow-Origin"] == pages_origin
 
 
+def test_alpha_launch_never_waits_for_streamlit_onboarding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fresh Mac has no ~/.streamlit/credentials.toml; the launch must be headless."""
+    from src.analyst_console import server
+
+    _pretend_project_pythons_are_installed(monkeypatch)
+    captured: dict = {}
+
+    class Finished:
+        pid = 4242
+
+        def poll(self):
+            return 0
+
+    def popen(argv, **kwargs):
+        captured["argv"], captured["kwargs"] = argv, kwargs
+        return Finished()
+
+    monkeypatch.setattr(server.subprocess, "Popen", popen)
+    monkeypatch.setattr(server.AlphaLauncher, "_port_open", staticmethod(lambda: False))
+    index = tmp_path / "alpha_go.db"
+    index.write_bytes(b"")
+    launcher = server.AlphaLauncher(ROOT, tmp_path, {"ALPHA_GO_INDEX_DB": str(index)})
+    with pytest.raises(OperationError, match="no pudo iniciar"):
+        launcher.launch()
+
+    argv = captured["argv"]
+    assert argv[argv.index("--server.headless") + 1] == "true"
+    assert argv[argv.index("--server.address") + 1] == "127.0.0.1"
+    assert captured["kwargs"]["stdin"] is server.subprocess.DEVNULL
+
+
+def test_alpha_launch_requires_the_estate_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Started without the USB, Alpha would keep an empty index after connecting."""
+    from src.analyst_console import server
+
+    _pretend_project_pythons_are_installed(monkeypatch)
+    monkeypatch.setattr(server.AlphaLauncher, "_port_open", staticmethod(lambda: False))
+    monkeypatch.setattr(
+        server.subprocess, "Popen", lambda *_a, **_kw: pytest.fail("must not start Alpha")
+    )
+    environment = {"PDFS_DOCUMENT_ESTATE": str(tmp_path / "unplugged" / "bmv-estate-v1")}
+    launcher = server.AlphaLauncher(ROOT, tmp_path, environment)
+    with pytest.raises(OperationError, match="Conecta el USB Estate"):
+        launcher.launch()
+
+
 def test_console_rejects_non_loopback_binding(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="local"):
         create_server(host="0.0.0.0", state_dir=tmp_path, port=0)
@@ -405,6 +530,107 @@ def test_estate_connect_explains_when_usb_is_absent(monkeypatch) -> None:
         device.connect()
 
 
+def _fake_usb(volumes: Path, estate_id: str, *, volume: str = "Estate") -> Path:
+    """A mounted-USB-shaped tree: ``<volumes>/<volume>/bmv-estate-v1``."""
+    estate = volumes / volume / "bmv-estate-v1"
+    estate.mkdir(parents=True)
+    (estate / ".bmv-estate-volume.json").write_text(
+        json.dumps({"schema_version": 1, "estate_id": estate_id}), encoding="utf-8"
+    )
+    (estate / "catalog.db").write_bytes(b"")
+    return estate
+
+
+def _fresh_checkout(tmp_path: Path) -> Path:
+    """A project root with the tracked bridge file and no ``.env`` at all."""
+    project = tmp_path / "clone"
+    project.mkdir()
+    (project / "estate.json").write_text(
+        (ROOT / "estate.json").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    return project
+
+
+class _IdleJobs:
+    def active(self):
+        return []
+
+
+def test_estate_connect_from_blank_env_finds_usb_by_sentinel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fresh Mac with no .env must become connected with one click.
+
+    Without a .env the configured estate directory is the repo-local
+    ``document_estate`` default, so discovery has to go by the sentinel; and
+    the mount root and estate ID are validated as a pair, so both must land in
+    the rewritten .env.
+    """
+    estate_id = "56EC1117-38A4-4F38-A135-408F04AF9A89"
+    volumes = tmp_path / "Volumes"
+    (volumes / "Unrelated").mkdir(parents=True)
+    estate = _fake_usb(volumes, estate_id)
+    project = _fresh_checkout(tmp_path)
+    monkeypatch.setattr("estate_volume.os.path.ismount", lambda path: True)
+    monkeypatch.setattr("src.analyst_console.server.subprocess.run", lambda *_a, **_kw: None)
+
+    environment: dict[str, str] = {}
+    device = EstateDevice(project, environment, _IdleJobs(), object(), volumes_root=volumes)
+    result = device.connect()
+
+    assert result["connected"] is True
+    written = dict(
+        line.split("=", 1)
+        for line in (project / ".env").read_text(encoding="utf-8").splitlines()
+    )
+    assert written["PDFS_ESTATE_MOUNT_ROOT"] == str((volumes / "Estate").resolve())
+    assert written["PDFS_DOCUMENT_ESTATE"] == str(estate.resolve())
+    assert written["PDFS_ESTATE_ID"] == estate_id
+    assert written["PDFS_ALPHA_INDEX"] == str(estate.resolve() / "indexes" / "alpha_go.db")
+    assert environment["PDFS_ESTATE_ID"] == estate_id
+
+
+def test_estate_connect_keeps_unrelated_env_lines_and_skips_wrong_estate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    expected = "56EC1117-38A4-4F38-A135-408F04AF9A89"
+    volumes = tmp_path / "Volumes"
+    _fake_usb(volumes, "00000000-0000-0000-0000-000000000001", volume="Another")
+    estate = _fake_usb(volumes, expected, volume="Estate 1")
+    project = _fresh_checkout(tmp_path)
+    (project / ".env").write_text(
+        f"# keep me\nDEEPSEEK_API_KEY=abc\nPDFS_ESTATE_ID={expected}\n", encoding="utf-8"
+    )
+    monkeypatch.setattr("estate_volume.os.path.ismount", lambda path: True)
+    monkeypatch.setattr("src.analyst_console.server.subprocess.run", lambda *_a, **_kw: None)
+
+    environment = {"PDFS_ESTATE_ID": expected}
+    device = EstateDevice(project, environment, _IdleJobs(), object(), volumes_root=volumes)
+    assert device.connect()["connected"] is True
+
+    text = (project / ".env").read_text(encoding="utf-8")
+    assert "# keep me" in text and "DEEPSEEK_API_KEY=abc" in text
+    assert f"PDFS_DOCUMENT_ESTATE={estate.resolve()}" in text
+    assert text.count("PDFS_ESTATE_ID=") == 1
+
+
+def test_estate_connect_rejects_usb_with_other_estate_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    volumes = tmp_path / "Volumes"
+    _fake_usb(volumes, "00000000-0000-0000-0000-000000000001")
+    project = _fresh_checkout(tmp_path)
+    monkeypatch.setattr("estate_volume.os.path.ismount", lambda path: True)
+    monkeypatch.setattr("src.analyst_console.server.subprocess.run", lambda *_a, **_kw: None)
+    monkeypatch.setattr("src.analyst_console.server.time.sleep", lambda *_a: None)
+
+    environment = {"PDFS_ESTATE_ID": "56EC1117-38A4-4F38-A135-408F04AF9A89"}
+    device = EstateDevice(project, environment, _IdleJobs(), object(), volumes_root=volumes)
+    with pytest.raises(OperationError, match="No encontré el USB Estate"):
+        device.connect()
+    assert not (project / ".env").exists()
+
+
 def test_mass_refresh_requires_estate_and_exclusive_alpha(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -447,3 +673,131 @@ def test_mass_refresh_requires_estate_and_exclusive_alpha(
 
     application.prepare_estate_refresh("ACTUALIZAR ESTATE")
     assert alpha.stopped is True
+
+
+# ---------------------------------------------------------------------------
+# Estate-write safety: operations that touch the shipped USB
+# ---------------------------------------------------------------------------
+
+
+def test_soft_expand_apply_refuses_without_an_estate(console_server: str) -> None:
+    """`soft_expand_apply` downloads filings into the estate and must be gated.
+
+    It previously went straight to ``jobs.create`` with no estate check and no
+    active-job check -- unlike ``estate_refresh_all``, which had both. The only
+    thing actually stopping it was an unrelated crash further down the script,
+    so fixing that crash without adding this gate would have removed a barrier
+    rather than added one.
+    """
+    request = Request(
+        f"{console_server}/api/jobs",
+        data=json.dumps(
+            {"operation": "soft_expand_apply", "confirmation": "AMPLIAR ESTATE"}
+        ).encode("utf-8"),
+        method="POST",
+        headers={"Content-Type": "application/json", "X-Analyst-Console": "1"},
+    )
+    with pytest.raises(HTTPError) as refused:
+        urlopen(request, timeout=5)
+
+    assert refused.value.code == 400
+    detail = json.loads(refused.value.read().decode("utf-8"))["error"]
+    assert "Estate" in detail
+
+
+def test_soft_expand_apply_still_requires_the_confirmation_phrase(
+    console_server: str,
+) -> None:
+    request = Request(
+        f"{console_server}/api/jobs",
+        data=json.dumps(
+            {"operation": "soft_expand_apply", "confirmation": "ampliar estate"}
+        ).encode("utf-8"),
+        method="POST",
+        headers={"Content-Type": "application/json", "X-Analyst-Console": "1"},
+    )
+    with pytest.raises(HTTPError) as refused:
+        urlopen(request, timeout=5)
+
+    assert refused.value.code == 400
+    assert "AMPLIAR ESTATE" in json.loads(refused.value.read().decode("utf-8"))["error"]
+
+
+def test_review_operations_do_not_default_their_reports_into_the_estate() -> None:
+    """"Revisar cobertura Soft" and "Buscar trimestres faltantes" are reviews.
+
+    Both defaulted their report path into the estate root while registered as
+    ``mutates=False`` -- so they took no writer lock and could write to the
+    shipped USB concurrently with ``estate_refresh_all``, which holds that lock
+    believing it is the only writer.
+    """
+    import scripts.audit_soft_quarterly_coverage as coverage
+    import scripts.expand_soft_quarterlies as expand
+
+    from estate_bridge import load_estate_bridge
+
+    estate_root = load_estate_bridge(project_root=ROOT).estate_root.resolve()
+    for default in (coverage.DEFAULT_JSON, expand.DEFAULT_REPORT):
+        resolved = Path(default).resolve()
+        assert not resolved.is_relative_to(estate_root), (
+            f"{resolved} defaults inside the estate; a review must not write there"
+        )
+        assert resolved.is_relative_to(ROOT / "outputs")
+
+
+def test_soft_master_artifacts_exclude_the_file_it_never_writes(tmp_path: Path) -> None:
+    """`soft_coverage_dense.html` is written by build_dense.py, not build_master.py.
+
+    It was listed as a `soft_master` artifact candidate and could never match.
+    """
+    manager = JobManager(
+        project_root=ROOT, state_dir=tmp_path / "state", environment={}
+    )
+    job = Job(
+        id="deadbeefcafe",
+        operation="soft_master",
+        label="Actualizar matriz de cobertura",
+        node="soft",
+        status="completed",
+        params={},
+    )
+    candidates = manager._artifacts_for(job, before={})
+    assert not any("soft_coverage_dense" in str(path) for path in candidates)
+
+
+def test_alpha_launcher_does_not_report_a_dead_process_as_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A crashed Alpha Go must not look like a running one.
+
+    Alpha Go is spawned with Popen and never waited on, so on exit it becomes a
+    zombie -- and `os.kill(pid, 0)` succeeds for a zombie. The console therefore
+    reported `running: True` indefinitely, `launch()` short-circuited on the
+    stale pid and returned success, and the launchpad navigated the analyst away
+    from itself to a dead http://127.0.0.1:8501. Only a bridge restart cleared it.
+    """
+    import subprocess
+
+    state = tmp_path / "state"
+    state.mkdir()
+    launcher = AlphaLauncher(ROOT, state, {})
+    # Isolate the pid logic: `running` is `port_open or pid`, and port 8501 is
+    # global to the machine, so a real Alpha Go running elsewhere would mask this.
+    monkeypatch.setattr(AlphaLauncher, "_port_open", staticmethod(lambda: False))
+
+    # A real child of this process that exits immediately: the exact shape of a
+    # crashed Alpha Go, including the unreaped zombie.
+    child = subprocess.Popen(["/usr/bin/true"])
+    # Deliberately do NOT call child.wait() -- the unreaped zombie is the bug.
+    (state / "alpha.pid").write_text(f"{child.pid}\n", encoding="utf-8")
+
+    # Give the kernel a moment to move it to zombie state.
+    for _ in range(50):
+        if child.poll() is not None:
+            break
+        time.sleep(0.05)
+
+    status = launcher.status()
+    assert status["running"] is False, "a dead Alpha Go was reported as running"
+    assert status["managed"] is False
+    assert not (state / "alpha.pid").exists(), "the stale pid file should be cleared"

@@ -131,3 +131,66 @@ def test_clean_safe_candidate_passes_without_history_scan(tmp_path: Path) -> Non
     assert result.dirty_entries == 0
     assert result.findings == []
     assert not result.failed
+
+
+# Assembled at runtime so this file does not itself contain the pattern.
+LEAKED_PATH = "/private/tmp/claude-501/" + "-Users-" + "someone" + "-Code-project/x\n"
+
+
+def test_flattened_home_path_in_the_candidate_is_an_error(tmp_path: Path) -> None:
+    """`-Users-<owner>-` is how tooling encodes a home path into a directory name.
+
+    The slash-anchored patterns cannot see it, which is how a real username
+    reached committed history past this gate.
+    """
+    repo = _repository(tmp_path / "repo")
+    (repo / "NOTES.md").write_text(LEAKED_PATH, encoding="utf-8")
+    _commit_all(repo, "initial")
+
+    result = payload.audit(repo, include_history=False)
+
+    personal = [f for f in result.findings if f.code == "absolute_personal_path"]
+    assert personal, "flattened home path was not detected"
+    assert personal[0].severity == "error"
+    assert result.failed
+    assert "someone" not in personal[0].detail, "must not echo the owner name"
+
+
+def test_flattened_home_path_only_in_history_is_a_warning(tmp_path: Path) -> None:
+    """Already committed and since removed: recorded, but not a release blocker.
+
+    Rewriting history to strip a developer's own username would change every
+    downstream commit. The finding stays visible; it just does not fail the gate.
+    """
+    repo = _repository(tmp_path / "repo")
+    (repo / "NOTES.md").write_text(LEAKED_PATH, encoding="utf-8")
+    _commit_all(repo, "leaked")
+    (repo / "NOTES.md").write_text("scrubbed\n", encoding="utf-8")
+    _commit_all(repo, "scrubbed")
+
+    result = payload.audit(repo, include_history=True)
+
+    personal = [f for f in result.findings if f.code == "absolute_personal_path"]
+    assert personal, "history finding disappeared entirely"
+    assert all(f.scope == "history" for f in personal)
+    assert all(f.severity == "warning" for f in personal)
+    assert not result.failed
+
+
+def test_history_secrets_are_still_errors(tmp_path: Path) -> None:
+    """Only personal paths are softened — a committed credential must be rotated."""
+    repo = _repository(tmp_path / "repo")
+    private_key_header = "-----BEGIN " + "RSA PRIVATE KEY-----"
+    (repo / "notes.txt").write_text(
+        f"{private_key_header}\nnot-a-real-key\n", encoding="utf-8"
+    )
+    _commit_all(repo, "leaked")
+    (repo / "notes.txt").unlink()
+    _commit_all(repo, "removed")
+
+    result = payload.audit(repo, include_history=True)
+
+    history_errors = [
+        f for f in result.findings if f.scope == "history" and f.severity == "error"
+    ]
+    assert history_errors, "a credential in history must remain a release blocker"

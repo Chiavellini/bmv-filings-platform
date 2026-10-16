@@ -11,7 +11,14 @@ const MAX_UPLOAD_BYTES = 60 * 1024 * 1024;
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-const LOCAL_API = document.querySelector('meta[name="analyst-console-api"]')?.content || "http://127.0.0.1:8765";
+const META_API = document.querySelector('meta[name="analyst-console-api"]')?.content || "http://127.0.0.1:8765";
+// The bridge serves this page itself, so when it is loaded from any loopback origin,
+// talk back to that same origin. The meta value is the fallback for the hosted GitHub
+// Pages copy, which has no bridge of its own and must reach the default local port.
+// Keeping the port in one place also means the launchpad still works when 8765 is taken.
+const LOCAL_API = /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?$/.test(location.origin)
+  ? location.origin
+  : META_API;
 const METRIC_SECTIONS = {
   income: "Estado de resultados",
   balance: "Balance general",
@@ -41,12 +48,12 @@ async function api(path, options = {}) {
   return payload;
 }
 
-function toast(message, error = false) {
+function toast(message, error = false, duration = 3600) {
   const element = $("#toast");
   element.textContent = message;
   element.className = `toast show${error ? " error" : ""}`;
   clearTimeout(element._timer);
-  element._timer = setTimeout(() => { element.className = "toast"; }, 3600);
+  element._timer = setTimeout(() => { element.className = "toast"; }, duration);
 }
 
 function status(element, text, tone = "ready") {
@@ -334,6 +341,21 @@ function collectExtractorRequest() {
   };
 }
 
+function segmentsResultToast(job, opened) {
+  if (job.summary?.status === "candidate_unverified") {
+    return {
+      text: `Hoja ${opened ? "abierta" : "generada"} como candidato para revisión: no se pudo `
+        + "verificar hoy que la biblioteca esté al día (frescura no verificada). "
+        + "La versión publicada no cambió.",
+      error: true,
+    };
+  }
+  return {
+    text: opened ? "Hoja de segmentos terminada y abierta en Excel." : `${job.label}: ${job.message.toLocaleLowerCase("es-MX")}.`,
+    error: false,
+  };
+}
+
 function extractorResultToast(job, opened) {
   const summary = job.summary;
   if (!summary || typeof summary.found !== "number") {
@@ -496,6 +518,9 @@ function ensurePolling(watchedJobId = null, openResult = false) {
           if (watched.operation === "pdf_extract") {
             const result = extractorResultToast(watched, opened);
             toast(result.text, result.error);
+          } else if (watched.operation === "segments_model") {
+            const result = segmentsResultToast(watched, opened);
+            toast(result.text, result.error, result.error ? 12000 : 3600);
           } else if (opened) {
             toast("Hoja de segmentos terminada y abierta en Excel.");
           }
@@ -634,7 +659,8 @@ $("#estate-toggle").addEventListener("click", async () => {
     toast(payload.message || "Estate conectado.");
     await refresh();
   } catch (error) {
-    toast(error.message, true);
+    button.textContent = "Conectar Estate";
+    toast(error.message, true, 8000);
   } finally {
     button.disabled = false;
   }
