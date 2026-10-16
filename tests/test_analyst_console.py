@@ -268,8 +268,8 @@ def test_console_serves_launchpad_and_bootstrap(console_server: str) -> None:
     assert "Todo lo que necesitas" not in html
     assert "Cada herramienta conserva su propio espacio" not in html
     assert "Lanzadores de proyectos" in html
-    assert 'href="./app.css?v=13"' in html
-    assert 'src="./app.js?v=13"' in html
+    assert 'href="./app.css?v=14"' in html
+    assert 'src="./app.js?v=14"' in html
     assert html.count('class="module-option" data-dialog=') == 2
     assert 'data-open="latest_extract"' in html
     assert 'id="extractor-file" type="file" accept="application/pdf,.pdf" multiple' in html

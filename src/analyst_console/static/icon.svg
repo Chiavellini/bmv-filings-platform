@@ -1,6 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="BMV">
-  <rect width="512" height="512" rx="112" fill="#0b1830"/>
-  <rect x="112" y="265" width="68" height="119" rx="18" fill="#a7e8c3"/>
-  <rect x="222" y="138" width="68" height="246" rx="18" fill="#ffffff"/>
-  <rect x="332" y="207" width="68" height="177" rx="18" fill="#2978ff"/>
+  <rect width="512" height="512" fill="#000000"/>
+  <rect x="16" y="16" width="480" height="480" fill="none" stroke="#ffa028" stroke-width="12"/>
+  <rect x="112" y="265" width="68" height="119" fill="#ff433d"/>
+  <rect x="222" y="138" width="68" height="246" fill="#ffa028"/>
+  <rect x="332" y="207" width="68" height="177" fill="#3ad16b"/>
 </svg>

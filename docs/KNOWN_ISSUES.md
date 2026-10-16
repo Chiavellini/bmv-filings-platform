@@ -348,13 +348,14 @@ the production estate.
 
 Two structural constraints worth knowing before changing anything:
 
-- **Port 8765 cannot be overridden at runtime.** It is hardcoded in five places,
-  including the Content-Security-Policy of the published GitHub Pages asset
-  (`src/analyst_console/static/index.html`, `connect-src http://127.0.0.1:8765`).
-  The hosted launchpad can only ever talk to that port, so changing it means
-  rebuilding and republishing the static assets. Local testing must serve a
-  modified copy of the assets rather than rebinding the bridge. Port 8501
-  (Streamlit) is likewise fixed, with no fallback if either port is taken.
+- **The hosted launchpad is tied to port 8765.** The Content-Security-Policy of
+  the published GitHub Pages asset (`src/analyst_console/static/index.html`,
+  `connect-src http://127.0.0.1:8765`) means the hosted copy can only ever talk
+  to that port, so changing it means rebuilding and republishing the static
+  assets. The copy the bridge serves itself is not tied: `app.js` talks back to
+  whatever loopback origin served it, so a bridge started with `--port <other>`
+  works for local testing. Port 8501 (Streamlit) is still fixed, with no
+  fallback if it is taken.
 - **`ANALYST_CONSOLE_PAGES_ORIGIN` is the only runtime knob**, and the origin
   `https://chiavellini.github.io` is hardcoded in both the installer and the
   server. Moving the repository to a different GitHub organization breaks the
